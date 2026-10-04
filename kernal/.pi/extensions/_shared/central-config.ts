@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { env as kenv } from "./env.ts";
 import * as session from "./outfitter-session.ts";
 import { parseEnvText } from "../connect/lib.ts";
-import { kernalSection, readSettings } from "../connect/settings.ts";
+import { kernalSection, readSettings, updateKernal } from "../connect/settings.ts";
 
 export type SettingValue = string | number | boolean;
 export type OverrideRule = "none" | "opt-out" | "any";
@@ -81,11 +81,11 @@ export interface KnownSetting {
 }
 
 /** The schema version this Kernal was built against. */
-export const KNOWN_SCHEMA_VERSION = 1;
+export const KNOWN_SCHEMA_VERSION = 2;
 
 const PERSONAL: readonly Level[] = ["fleet", "user", "profile", "device", "local"];
 
-/** The v1 keys (spec §3.2). */
+/** The v1 keys (spec §3.2), and v2's Sentry signals (#424). */
 export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "router.baseUrl", type: "url", secret: false, levels: ["fleet", "local"], override: "none", default: "https://router.kernal.one/v1", env: ["LITELLM_BASE_URL"], description: "The LiteLLM router this machine's router key is for." },
   { key: "router.key", type: "string", secret: true, levels: ["device", "local"], override: "any", env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"], description: "This device's own router key, minted at sign-in." },
@@ -101,7 +101,24 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "telemetry.sentry.enabled", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Send errors to Sentry. Only the fleet turns it on; a machine may turn it off." },
   { key: "telemetry.sentry.dsn", type: "url", secret: false, levels: ["fleet"], override: "none", description: "Where Sentry events go." },
   { key: "telemetry.sentry.tracesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0.05, description: "Share of agent runs traced." },
+  // #424: each off by default, turned on for the fleet only; a machine may turn one off (/sentry).
+  { key: "telemetry.sentry.agentTraces", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "AI agent monitoring: agent runs, model calls (model, tokens, cost) and tool calls as gen_ai spans." },
+  { key: "telemetry.sentry.agentContent", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Prompts, outputs and tool arguments/results on agent spans, redacted (needs agentTraces)." },
+  { key: "telemetry.sentry.metrics", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Counters: agent runs, tool and model calls, tokens, spend, errors." },
+  { key: "telemetry.sentry.logs", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Server logs to Sentry (Outfitter and Drives; a laptop sends none)." },
+  { key: "telemetry.sentry.profilesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0, description: "Share of traces profiled (Outfitter and Drives; not Kernal's binary)." },
 ];
+
+/** The legacy settings.json flags (`kernal.<flag>: false`) that were each key's local opt-out
+ * before `/sentry` moved to this machine's config layer (config.local.json, where /admin's "Only
+ * this machine" saves too). Still read as opt-outs, so a laptop keeps an earlier `/sentry off`;
+ * never written again, and cleared by `setLocalOptOut(key, false)` (`/sentry … on`, /admin). */
+export const SENTRY_LOCAL_FLAGS: Readonly<Record<string, string>> = {
+  "telemetry.sentry.enabled": "sentry",
+  "telemetry.sentry.agentTraces": "sentryAgentTraces",
+  "telemetry.sentry.agentContent": "sentryAgentContent",
+  "telemetry.sentry.metrics": "sentryMetrics",
+};
 
 const BY_KEY = new Map(KNOWN_SETTINGS.map((d) => [d.key, d]));
 
@@ -233,8 +250,11 @@ export interface CentralConfigDeps {
   env: () => NodeJS.ProcessEnv;
   /** The merged .env files, nearest last (default: the files connect's loadEnv reads). */
   dotenv: () => Record<string, string>;
-  /** The agent settings.json (for `kernal.sentry: false`). */
+  /** The agent settings.json (for the legacy Sentry opt-out flags, SENTRY_LOCAL_FLAGS). */
   settings: () => Record<string, unknown>;
+  /** Changes the agent settings.json's `kernal` section (default: updateKernal); only to clear a
+   * legacy Sentry flag (SENTRY_LOCAL_FLAGS). */
+  saveKernal: (patch: Record<string, unknown>) => void;
   fetch: typeof fetch;
   now: () => number;
   /** One-line warnings (default: stderr). */
@@ -280,6 +300,7 @@ function deps(): CentralConfigDeps {
     env: d.env ?? (() => process.env),
     dotenv: d.dotenv ?? readDotenv,
     settings: d.settings ?? (() => readSettings()),
+    saveKernal: d.saveKernal ?? ((patch) => updateKernal(patch)),
     fetch: d.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a)),
     now: d.now ?? Date.now,
     warn: d.warn ?? ((line) => console.error(line)),
@@ -365,8 +386,10 @@ function localLayers(decl: KnownSetting, overrides: Record<string, unknown>, set
   const out: Layer[] = [];
   const own = coerce(decl, overrides[decl.key]);
   if (own !== undefined) out.push({ value: own, source: "local" });
-  // telemetry.sentry.enabled's local level is the existing `kernal.sentry: false` (spec §3.2).
-  if (decl.key === "telemetry.sentry.enabled" && kernalSection(settings).sentry === false) {
+  // The Sentry keys' legacy opt-outs, `kernal.sentry: false` (#374) and `kernal.sentryAgentTraces:
+  // false` and so on (SENTRY_LOCAL_FLAGS): still a local `false` beside config.local.json's.
+  const flag = SENTRY_LOCAL_FLAGS[decl.key];
+  if (flag && kernalSection(settings)[flag] === false) {
     out.push({ value: false, source: "local", sourceName: "settings.json" });
   }
   const fromVars = (read: (name: string) => string | undefined, source: "dotenv" | "env") => {
@@ -596,6 +619,34 @@ export function setLocalOverride(key: string, value: SettingValue | undefined): 
   writeWhole(localOverridesPath(), JSON.stringify({ version: 1, values }, null, 2) + "\n");
   // Re-resolve from the same cache with the new local layer.
   state().resolved.clear();
+}
+
+/**
+ * A Sentry key's opt-out on this machine (`/sentry off|on`, `/sentry agent|content|metrics off|on`,
+ * and /admin's "Only this machine"): one place, config.local.json, so either tool undoes the other.
+ * `off` saves `false`; clearing removes the key there and the legacy settings.json flag
+ * (SENTRY_LOCAL_FLAGS) too, so it really undoes any earlier opt-out. Only ever an opt-out: nothing
+ * here turns a key on (the fleet does). Throws for any other key or a disk error.
+ */
+export function setLocalOptOut(key: string, off: boolean): void {
+  const flag = SENTRY_LOCAL_FLAGS[key];
+  if (!flag) throw new Error(`${key} has no local opt-out`);
+  if (off) return setLocalOverride(key, false);
+  // The legacy flag first: settings.json is only touched when it holds one (a hand edit in progress
+  // that isn't JSON is then left alone), and setLocalOverride re-resolves with both cleared.
+  const d = deps();
+  if (kernalSection(d.settings())[flag] !== undefined) d.saveKernal({ [flag]: undefined });
+  setLocalOverride(key, undefined);
+}
+
+/** True when the legacy settings.json flag (SENTRY_LOCAL_FLAGS) opts `key` out on this machine. */
+export function legacyOptOut(key: string, settings: Record<string, unknown> = safeSettings()): boolean {
+  const flag = SENTRY_LOCAL_FLAGS[key];
+  return !!flag && kernalSection(settings)[flag] === false;
+}
+
+function safeSettings(): Record<string, unknown> {
+  try { return deps().settings(); } catch { return {}; }
 }
 
 // ---------- secrets delivered at start-up ----------

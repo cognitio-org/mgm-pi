@@ -21,13 +21,17 @@ import type * as SentryNode from "@sentry/node";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { SentryDecision } from "./config.ts";
+import { NO_SIGNALS, signalsOf, type SentryDecision, type Signals } from "./config.ts";
 import { scrubEvent, type CrashRecord } from "./lib.ts";
 
 /** A started-but-not-yet-ended span: the handle index.ts holds between a start and end event. */
 export interface SentrySpan {
   setStatus(outcome: "ok" | "error"): void;
+  /** Attributes learned after the start (a model call's usage, a tool's result). */
+  setAttributes(attributes: Record<string, string | number | boolean>): void;
   end(): void;
+  /** False when the sampler dropped it (then so are its children): no point building content. */
+  sampled?: boolean;
   /** The SDK's own span, for parenting another span to this one. */
   raw?: unknown;
 }
@@ -36,8 +40,8 @@ export interface SentryInit {
   dsn: string;
   environment: string;
   release?: string;
-  /** Read on every event and trace; the live gate. */
-  gate: () => { sending: boolean; tracesSampleRate: number };
+  /** Read on every event, trace and metric; the live gate. */
+  gate: () => { sending: boolean; tracesSampleRate: number; signals: Signals };
 }
 
 /** The subset of the `@sentry/node` module surface this extension uses, as an interface so tests
@@ -52,6 +56,8 @@ export interface SentryLike {
   startInactiveSpan(options: { name: string; op: string; attributes?: Record<string, string | number | boolean>; parent?: SentrySpan; onlyIfParent?: boolean }): SentrySpan;
   /** A crash pi recorded in an earlier run (lib.ts CrashRecord), as a fatal event. */
   captureCrash(crash: CrashRecord): void;
+  /** A counter (`Sentry.metrics.count`); sent only while the metrics signal is on (#424). */
+  count(name: string, value: number, attributes?: Record<string, string>): void;
   /** Waits (at most `timeoutMs`) until what is queued has been sent. */
   flush(timeoutMs: number): Promise<boolean>;
 }
@@ -71,7 +77,44 @@ function toSpanStatus(outcome: "ok" | "error"): { code: 1 | 2 } {
  *     uncaught exception as before, which OnUncaughtException still reports. (In interactive mode
  *     pi's own handler exits first, so a crash there is in pi's crash report, not Sentry.)
  */
-const DROPPED_INTEGRATIONS = new Set(["Console", "OnUnhandledRejection"]);
+const DROPPED_INTEGRATIONS = new Set([
+  "Console",
+  "OnUnhandledRejection",
+  // The AI SDK auto-instrumentations (#424): Kernal makes its own gen_ai spans from pi's events
+  // (agent.ts), behind the fleet's agentTraces and agentContent settings. These would add a second,
+  // ungated span per model call if they ever hooked pi's provider SDKs.
+  "OpenAI", "Anthropic_AI", "Google_GenAI", "Mistral", "Groq", "TogetherAI", "LangChain", "LangGraph", "Mastra", "VercelAI",
+]);
+
+/** The agent content attributes (agent.ts) that only agentContent allows on a span. */
+export const CONTENT_ATTRIBUTES = ["gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments", "gen_ai.tool.call.result", "kernal.content.dropped"] as const;
+
+/** A transaction without agent content on any of its spans: the backstop, at the wire, for content
+ * recorded before an opt-out landed (index.ts stops recording at once; this drops what is queued). */
+export function stripAgentContent<E extends { spans?: Array<{ data?: Record<string, unknown> }>; contexts?: { trace?: { data?: Record<string, unknown> } } }>(event: E): E {
+  const strip = (data: Record<string, unknown> | undefined) => {
+    if (!data) return data;
+    const out = { ...data };
+    for (const k of CONTENT_ATTRIBUTES) delete out[k];
+    return out;
+  };
+  const trace = event.contexts?.trace;
+  return {
+    ...event,
+    ...(event.spans ? { spans: event.spans.map((span) => ({ ...span, data: strip(span.data) })) } : {}),
+    ...(trace ? { contexts: { ...event.contexts, trace: { ...trace, data: strip(trace.data) } } } : {}),
+  };
+}
+
+/** A metric as it leaves: without `server.address` (@sentry/node adds the hostname to every metric,
+ * and it is usually the person's name) and with the home directory as `~` in its attributes. */
+export function scrubMetric<M extends { attributes?: Record<string, unknown> }>(metric: M, home: string): M {
+  const { "server.address": _host, ...attributes } = metric.attributes ?? {};
+  for (const [k, v] of Object.entries(attributes)) {
+    if (typeof v === "string" && home && home !== "/") attributes[k] = v.split(home).join("~");
+  }
+  return { ...metric, attributes };
+}
 
 /**
  * `@sentry/node` ships with the other extension packages in the agent dir's npm/ (kernal/.pi/npm,
@@ -112,7 +155,11 @@ export const realSentry: SentryLike = {
       tracePropagationTargets: [],
       tracesSampler: ({ parentSampled }) => (sending() ? (parentSampled ?? options.gate().tracesSampleRate) : 0),
       beforeSend: (event) => (sending() ? scrubEvent(event, home) : null),
-      beforeSendTransaction: (event) => (sending() ? scrubEvent(event, home) : null),
+      // Agent content only while agentContent is still on when the transaction leaves (#424 review).
+      beforeSendTransaction: (event) => (sending() ? scrubEvent(options.gate().signals.agentContent ? event : stripAgentContent(event as any), home) : null),
+      // Metrics only with their own fleet setting on too (#424). The SDK collects them whenever it
+      // runs; index.ts counts nothing while off, and this drops anything that slips past.
+      beforeSendMetric: (metric) => (sending() && options.gate().signals.metrics ? scrubMetric(metric, home) : null),
       // The gate again, at the wire: besides events, the SDK sends client reports (counts of what
       // the gates above dropped) and a session at exit. While off, nothing at all leaves.
       transport: (transportOptions) => {
@@ -139,6 +186,9 @@ export const realSentry: SentryLike = {
       fingerprint: ["crash", error.name, ...(frames.length ? frames : [error.message])],
     });
   },
+  count(name, value, attributes) {
+    state().sdk!.metrics.count(name, value, attributes ? { attributes } : undefined);
+  },
   async flush(timeoutMs) {
     return (await state().sdk?.flush(timeoutMs)) ?? true;
   },
@@ -150,7 +200,9 @@ export const realSentry: SentryLike = {
     });
     return {
       setStatus: (outcome) => { span.setStatus(toSpanStatus(outcome)); },
+      setAttributes: (attributes) => { span.setAttributes(attributes); },
       end: () => { span.end(); },
+      sampled: span.isRecording(),
       raw: span,
     };
   },
@@ -166,6 +218,8 @@ interface ProcessState {
   failed: boolean;
   sending: boolean;
   tracesSampleRate: number;
+  /** The #424 signals in force (config.ts Signals); all off unless sending. */
+  signals: Signals;
   /** The latest decision, which wins when a start that began earlier finishes. */
   want?: SentryDecision;
   /** The loaded SDK module (realSentry only). */
@@ -181,7 +235,7 @@ type Slot = { [SLOT]?: ProcessState };
 
 function state(): ProcessState {
   const g = globalThis as Slot;
-  return (g[SLOT] ??= { started: false, failed: false, sending: false, tracesSampleRate: 0, instance: 0 });
+  return (g[SLOT] ??= { started: false, failed: false, sending: false, tracesSampleRate: 0, signals: { ...NO_SIGNALS }, instance: 0 });
 }
 
 /** A new extension instance (pi re-instantiates on /new, /resume, /fork, /reload): returns its
@@ -218,6 +272,12 @@ export function sending(): boolean {
   return state().sending;
 }
 
+/** The #424 signals in force right now: all off while nothing is sent. */
+export function liveSignals(): Signals {
+  const s = state();
+  return s.sending ? s.signals : { ...NO_SIGNALS };
+}
+
 /**
  * Puts a decision into force for the whole process. Off: stop sending at once. On: start the SDK the
  * first time (resolving when it has), then send. A different DSN than the one the SDK started with
@@ -230,9 +290,11 @@ export async function applySentry(decision: SentryDecision, runtime: { environme
   s.want = decision;
   if (!decision.on) {
     s.sending = false;
+    s.signals = { ...NO_SIGNALS };
     return;
   }
   s.tracesSampleRate = decision.tracesSampleRate;
+  s.signals = signalsOf(decision);
   if (s.failed) return;
   if (s.dsn === undefined) {
     s.dsn = decision.dsn;

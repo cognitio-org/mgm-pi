@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decide, defaultEnvironment, describe as describeDecision, optedOut, releaseName } from "../.pi/extensions/sentry/config.ts";
+import { NO_SIGNALS, decide, defaultEnvironment, describe as describeDecision, optedOut, releaseName } from "../.pi/extensions/sentry/config.ts";
 import { applySentry, sending, _resetSentryState, type SentryLike, type SentryInit, type SentrySpan } from "../.pi/extensions/sentry/client.ts";
 import { CRASH_MAX_AGE_MS, agentRunError, agentRunReport, crashesToReport, scrubEvent, toolSpanAttributes } from "../.pi/extensions/sentry/lib.ts";
 import { MAX_CACHE_AGE_MS, cachedFleetSettings, parseFleetSettings, refreshFleetSettings, type FleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
@@ -47,31 +47,38 @@ function fakeSentry() {
   const captured: { error: unknown; context?: any }[] = [];
   const crashes: any[] = [];
   const spans: { name: string; op: string; attributes?: any; parent?: string; onlyIfParent?: boolean; status?: "ok" | "error"; ended: boolean }[] = [];
+  const counts: { name: string; value: number; attributes?: Record<string, string> }[] = [];
+  let flushes = 0;
   const sentry: SentryLike = {
     init(options) { inits.push(options); },
     captureException(error, context) { captured.push({ error, context }); return "event-id"; },
     captureCrash(crash) { crashes.push(crash); },
-    async flush() { return true; },
+    count(name, value, attributes) { counts.push({ name, value, ...(attributes ? { attributes } : {}) }); },
+    async flush() { flushes++; return true; },
     startInactiveSpan(options) {
       const rec = { name: options.name, op: options.op, attributes: options.attributes, parent: (options.parent?.raw as any)?.name, onlyIfParent: options.onlyIfParent, status: undefined as "ok" | "error" | undefined, ended: false };
       spans.push(rec);
-      const span: SentrySpan = { setStatus: (o) => { rec.status = o; }, end: () => { rec.ended = true; }, raw: rec };
+      const span: SentrySpan = { setStatus: (o) => { rec.status = o; }, setAttributes: (a) => { rec.attributes = { ...rec.attributes, ...a }; }, end: () => { rec.ended = true; }, raw: rec };
       return span;
     },
   };
-  return { sentry, inits, captured, spans, crashes };
+  return { sentry, inits, captured, spans, crashes, counts, flushes: () => flushes };
 }
 
 describe("sentry config: both Outfitter and the person must say yes", () => {
   test("on only with a Dongle, the fleet on, and no local opt-out", () => {
-    assert.deepEqual(decide(ON, { optedOut: false, hasDongle: true }), { on: true, dsn: DSN, tracesSampleRate: 0.05 });
+    assert.deepEqual(decide(ON, { optedOut: false, hasDongle: true }), { on: true, dsn: DSN, tracesSampleRate: 0.05, signals: NO_SIGNALS });
     assert.deepEqual(decide(OFF, { optedOut: false, hasDongle: true }), { on: false, why: "fleet" });
     assert.deepEqual(decide(ON, { optedOut: false, hasDongle: false }), { on: false, why: "no-dongle" });
     assert.deepEqual(decide(ON, { optedOut: true, hasDongle: true }), { on: false, why: "laptop" });
   });
 
-  test("kernal.sentry: false is the only opt-out; anything else follows the fleet", () => {
+  test("only a local false opts out (config.local.json or the legacy kernal.sentry); anything else follows the fleet", () => {
     assert.equal(optedOut({ kernal: { sentry: false } }), true);
+    const local = (value: boolean, source = "local") => ({ "telemetry.sentry.enabled": { value, source, override: "opt-out", locked: false } }) as any;
+    assert.equal(optedOut({}, local(false)), true, "config.local.json's false (/sentry off, /admin)");
+    assert.equal(optedOut({}, local(true)), false);
+    assert.equal(optedOut({}, local(false, "fleet")), false, "the fleet's off is not this laptop's opt-out");
     assert.equal(optedOut({ kernal: { sentry: true } }), false, "true cannot force it on");
     assert.equal(optedOut({ kernal: {} }), false);
     assert.equal(optedOut({}), false);
@@ -212,7 +219,8 @@ describe("applySentry: the process-wide live gate", () => {
       captureException: () => "id",
       captureCrash: () => {},
       flush: async () => true,
-      startInactiveSpan: () => ({ setStatus() {}, end() {} }),
+      count: () => {},
+      startInactiveSpan: () => ({ setStatus() {}, setAttributes() {}, end() {} }),
     };
     const starting = applySentry({ on: true, dsn: DSN, tracesSampleRate: 0.05 }, runtime, slow);
     await applySentry({ on: false, why: "laptop" }, runtime, slow);
@@ -228,7 +236,8 @@ describe("applySentry: the process-wide live gate", () => {
       captureException: () => "id",
       captureCrash: () => {},
       flush: async () => true,
-      startInactiveSpan: () => ({ setStatus() {}, end() {} }),
+      count: () => {},
+      startInactiveSpan: () => ({ setStatus() {}, setAttributes() {}, end() {} }),
     };
     const errors: unknown[] = [];
     const original = console.error;
@@ -274,7 +283,7 @@ describe("crashes from earlier runs (pi's crashes.json)", () => {
   async function start(opts: { cached: FleetSettings; crashFile: string; sentFile: string }) {
     const fake = fakeSentry();
     sentryExtension(makePi() as any, {
-      sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: (() => { const f = tmpFile(); writeCache(f, opts.cached); return f; })(),
+      signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: (() => { const f = tmpFile(); writeCache(f, opts.cached); return f; })(),
       fetch: fakeFetch(opts.cached).fn, onRefresh: () => {}, crashFile: opts.crashFile, crashesSentFile: opts.sentFile, now: () => now,
     });
     await new Promise((r) => setImmediate(r));
@@ -321,6 +330,13 @@ describe("the real @sentry/node, in a child process", () => {
     assert.deepEqual(r.runChildren, ["tool.read"], "a tool call is a child span inside its run's transaction");
     assert.deepEqual(r.traceHeaders, { sentryTrace: null, baggage: null }, "no trace headers on outbound requests");
     assert.deepEqual(r.crash, { level: "fatal", type: "UncaughtException", value: "boom", hasFrames: true, source: "crash", crashedAtTag: false }, "a recorded crash arrives as a fatal event with its stack");
+    // #424: Kernal's own gen_ai spans reach Sentry (the run as a transaction, its model call in the
+    // SDK's span item), counters only with metrics on and never with the hostname, and no AI SDK
+    // auto-instrumentation runs beside them.
+    for (const name of ["OpenAI", "Anthropic_AI", "Google_GenAI", "VercelAI", "LangChain"]) assert.ok(!r.integrations.includes(name), name);
+    // Content in a gen_ai span leaves with home as ~ (the SDK moves the span after scrubbing), and
+    // content recorded before an agentContent opt-out never leaves at all.
+    assert.deepEqual(r.genAi, { agentTransaction: true, chatInputTokens: 10, chatOp: "gen_ai.chat", chatInputScrubbed: true, staleSpanSent: true, staleContent: null, metrics: ["kernal.tool.calls"], metricHasHost: false, metricTool: "read" });
   });
 });
 
@@ -379,6 +395,7 @@ describe("sentry extension wired to pi", () => {
     const saved: Array<false | undefined> = [];
     let refreshed: Promise<void> = Promise.resolve();
     sentryExtension(pi as any, {
+      signedIn: false, // not the developer's own login
       sentry: fake.sentry,
       credentials: opts.credentials ?? CREDS,
       settings: opts.settings ?? {},
@@ -448,7 +465,7 @@ describe("sentry extension wired to pi", () => {
   test("/sentry on that cannot be saved stays off and says so", async () => {
     const fake = fakeSentry();
     const pi = makePi();
-    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: tmpFile(), fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    sentryExtension(pi as any, { signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: tmpFile(), fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
     const notes: string[] = [];
     await pi.commands.get("sentry")!.handler("on", { ui: { notify: (m: string) => notes.push(m) } });
     assert.equal(sending(), false);
@@ -493,7 +510,7 @@ describe("sentry extension wired to pi", () => {
     assert.match(notes[0], /off on this laptop/);
   });
 
-  test("/sentry off stops sending at once and saves kernal.sentry: false; /sentry on clears it", async () => {
+  test("/sentry off stops sending at once and saves the opt-out; /sentry on clears it", async () => {
     const { saved, notes, command } = await load({ cached: ON });
     assert.equal(sending(), true);
     await command("off");
@@ -535,7 +552,7 @@ describe("sentry extension wired to pi", () => {
     const pi = makePi();
     const file = tmpFile();
     writeCache(file, ON);
-    sentryExtension(pi as any, { sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
+    sentryExtension(pi as any, { signedIn: false, sentry: fake.sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {}, saveOptOut: () => { throw new Error("settings.json is not valid JSON"); } });
     await new Promise((r) => setImmediate(r));
     assert.equal(sending(), true);
     const notes: string[] = [];

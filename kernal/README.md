@@ -623,13 +623,39 @@ Kernal reads that setting with your login (`kernal login`), or a deprecated Dong
 `OUTFITTER_TOKEN`). With neither, nothing is sent. A change reaches the laptop by its next start, or during a session once the
 background check finishes. When on, Kernal sends failed agent runs, uncaught crashes in `-p` mode,
 and a sample of agent-run and tool timings. Tool timings carry the tool name only, never its
-arguments or output. Every event leaves without your hostname, and with your home directory written
+arguments or output, unless the fleet turns on prompts and outputs (below). Every event leaves without your hostname, and with your home directory written
 as `~`.
 
 `/sentry` shows whether it is on and who decided. `/sentry off` stops it on this laptop
-(`kernal.sentry: false` in settings.json) and stops Kernal asking Outfitter at all. `/sentry on`
-returns to Outfitter's setting; it cannot turn Sentry on if Outfitter has it off. Details:
-`docs/reports/sentry-integration-plan.md`.
+(`telemetry.sentry.enabled: false` in `~/.kernal/config.local.json`, the same place `/admin`'s
+"Only this machine" saves, so either one undoes the other) and stops Kernal asking Outfitter at all.
+`/sentry on` returns to Outfitter's setting; it cannot turn Sentry on if Outfitter has it off. An
+older `kernal.sentry: false` in settings.json still counts as off, and `/sentry on` (or clearing it
+in `/admin`) removes it too. Details: `docs/reports/sentry-integration-plan.md`.
+
+Three more signals (#424), each off unless an operator turns it on for the fleet
+(`telemetry.sentry.*` in the central settings, shown by `/config`), and all off whenever Sentry
+itself is off:
+
+- **Agent monitoring** (`agentTraces`): the run, each model call and each tool call become Sentry's AI
+  agent spans (`gen_ai.invoke_agent`, `gen_ai.chat`, `gen_ai.execute_tool`) in place of the plain
+  timings, with the model, provider, input/output/cached tokens, cost (when pi has a price for the
+  model), finish reason, time to first chunk, and each tool's name and outcome.
+- **Prompts and outputs** (`agentContent`, needs agent monitoring): the prompt, the conversation sent
+  with each model call, the model's replies, and tool arguments and results, on those spans. Every
+  field is redacted first (`_shared/redact.ts`: Outfitter Dongles and device tokens, provider keys,
+  `KEY=value` pairs and similar), then cut to 8 KB, and one run records at most 256 KB. The system
+  prompt is never recorded.
+- **Metrics** (`metrics`): counters for agent runs, tool calls (by tool), model calls (by model),
+  input and output tokens, spend and errors, sent without your hostname.
+
+`/sentry agent off`, `/sentry content off` and `/sentry metrics off` turn one off on this laptop
+(`telemetry.sentry.agentTraces`, `agentContent` or `metrics: false` in `~/.kernal/config.local.json`,
+again shared with `/admin`); `… on` follows Outfitter again. A local `on` never turns a signal on:
+only the fleet does. The fleet's `telemetry.sentry.logs` and
+`telemetry.sentry.profilesSampleRate` never apply to Kernal: a laptop sends no logs, and pi's
+Bun-compiled binary can't load Sentry's native profiler. No request Kernal makes, LLM calls
+included, carries Sentry trace headers.
 
 ## Teleport
 

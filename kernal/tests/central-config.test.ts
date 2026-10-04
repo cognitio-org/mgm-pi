@@ -388,11 +388,20 @@ describe("override rules", () => {
     assert.equal(combine(decl("telemetry.sentry.dsn"), undefined, undefined, [L("https://k@x.test/1", "local")]), undefined);
   });
 
-  test("kernal.sentry: false in settings.json is the local opt-out", () => {
+  test("the legacy kernal.sentry: false in settings.json is still a local opt-out", () => {
     writeCacheFile(response({ "telemetry.sentry.enabled": { value: true, source: "fleet" } }));
     settings = { kernal: { sentry: false } };
     setup();
     assert.equal(getValue("telemetry.sentry.enabled"), false);
+  });
+
+  test("#424: the legacy kernal.sentryAgentTraces: false (and so on) still opt those signals out; a local true can't turn one on", () => {
+    writeCacheFile(response({ "telemetry.sentry.agentTraces": { value: true, source: "fleet" }, "telemetry.sentry.metrics": { value: true, source: "fleet" } }));
+    settings = { kernal: { sentryAgentTraces: false, sentryAgentContent: true } };
+    setup();
+    assert.equal(getValue("telemetry.sentry.agentTraces"), false);
+    assert.equal(getValue("telemetry.sentry.metrics"), true);
+    assert.equal(getValue("telemetry.sentry.agentContent"), false, "the default, whatever settings.json says");
   });
 });
 

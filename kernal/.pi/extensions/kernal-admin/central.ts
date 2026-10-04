@@ -21,7 +21,8 @@
 import { readFileSync } from "node:fs";
 import * as session from "../_shared/outfitter-session.ts";
 import {
-  KNOWN_SETTINGS, PROVIDER_ENV, coerce, describeSource, displayValue, isCentralSource, localOverridesPath, reloadConfig, resolve, setLocalOverride,
+  KNOWN_SETTINGS, PROVIDER_ENV, SENTRY_LOCAL_FLAGS, coerce, describeSource, displayValue, isCentralSource, localOverridesPath, reloadConfig, resolve,
+  setLocalOptOut, setLocalOverride,
   type ConfigValue, type KnownSetting, type ResolvedConfig, type SettingValue,
 } from "../_shared/central-config.ts";
 
@@ -186,7 +187,10 @@ export function settingsRows(r: ResolvedConfig, target: AccountTarget | undefine
     else if (decl.secret) readOnly = decl.key === "router.key" ? "this device's key from kernal login; a key of your own goes on the Connections page" : "a secret";
     else if (!canLevelAccount && !canLevelMachine) readOnly = decl.levels.includes("fleet") && decl.levels.length === 1 ? "only your Sysop sets this" : "can't be set here";
     const account = accountValues ? coerce(decl, accountValues[decl.key]) : undefined;
-    const machine = coerce(decl, machineValues[decl.key]);
+    // A Sentry opt-out still in the legacy settings.json flag shows as this machine's `false`, so
+    // "not set here" can clear it (saveSettings → setLocalOptOut).
+    const legacy = v?.source === "local" && v.sourceName === "settings.json" && v.value === false;
+    const machine = legacy ? false : coerce(decl, machineValues[decl.key]);
     return {
       key: decl.key, type: decl.type, ...(decl.values ? { choices: decl.values } : {}), ...(decl.min !== undefined ? { min: decl.min } : {}), ...(decl.max !== undefined ? { max: decl.max } : {}),
       description: decl.description, secret: decl.secret, ...(decl.default !== undefined ? { default: decl.default } : {}),
@@ -274,7 +278,12 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
     if (!Object.keys(patch).length) return { status: 200, body: { message: "Nothing to save" } };
     // Validated above, so setLocalOverride only throws on a disk error: then nothing more is written.
     try {
-      for (const [k, v] of Object.entries(patch)) setLocalOverride(k, v === null ? undefined : v);
+      // A Sentry key's opt-out goes through setLocalOptOut, as /sentry's does: clearing it removes the
+      // legacy settings.json flag too, so /admin undoes any /sentry off and the other way round.
+      for (const [k, v] of Object.entries(patch)) {
+        if (SENTRY_LOCAL_FLAGS[k] && (v === null || v === false)) setLocalOptOut(k, v === false);
+        else setLocalOverride(k, v === null ? undefined : v);
+      }
     } catch (e: any) {
       return { status: 500, body: { error: String(e?.message ?? e).slice(0, 300) } };
     }

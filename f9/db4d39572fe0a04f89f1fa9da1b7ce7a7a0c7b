@@ -1,0 +1,196 @@
+outfitter/deploy/test/secret-scope.test.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-67
+outfitter/packages/web/test/account-lib.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-106
+outfitter/packages/web/src/lib/devices.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-89
+outfitter/packages/api/src/config.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 226-229,566
+outfitter/packages/web/test/account-page.test.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-456
+outfitter/docs/protocol.md
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 405-424,701-745
+  s_38ec74cfb7fa1d::t_d271a0b28ced90 746
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 450,518,726-729,750,844-983
+  s_38ec74cfb7fa1d::t_a0fa1f47206a80 984
+outfitter/packages/agentd/test/settings.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-119
+outfitter/packages/api/src/central/settings-resolver.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 5-10,13-14,16-26,33-34,37-120,123-124,128-152,155-157,159,162-164,167-172
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 26,254-257,283
+outfitter/packages/api/test/format.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 11,111-112,114,121-123
+outfitter/packages/web/test/devices-pages.test.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-309
+outfitter/packages/web/test/devices.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-95
+outfitter/packages/agentd/test/settings-run.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-137
+outfitter/deploy/baseline.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 77-79,90,118-121
+outfitter/packages/api/test/device-store-mongo.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-154
+outfitter/packages/web/src/pages/AccountPage.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-12,15-17,19-83,90-175
+outfitter/packages/api/src/store/settings.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 54-56,60-68,71-75,77-79,81-87,89-94,96-107,111-112,115-120,126-128,130-133,135-149,151-155,157-167
+outfitter/packages/api/test/provider-keys.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-272
+outfitter/packages/web/src/api/devices.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 44-53
+outfitter/packages/api/src/store/devices.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 26,84-86,88,103-104,106,114-118,121-133,138-146,148-150,152-157,159-162,164-169,174-178,180-182,184-185,188-189,192-208,210-213,215-216,218-226,236-272,278-285,287-288,290-291,293-296,298-299,308-309,311-312,314-315,317-325,327-334,336-343,345-346,348-357
+outfitter/packages/agentd/src/protocol.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 350-358,424,441
+outfitter/deploy/service.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 76-79,214-231
+  s_38ec74cfb7fa1d::t_cb5b9fd0325caa 232
+outfitter/deploy/test/litellm-admin.test.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-98
+outfitter/packages/web/src/pages/DeviceApprovePage.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-10,13-22,24-28,30,34-205
+outfitter/packages/api/test/run-keys.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-316
+outfitter/packages/api/test/archive.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 13,256,287-288,295-297
+outfitter/packages/agentd/src/run.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 59,604-606
+outfitter/packages/api/src/agentlink.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 48,285-288,393-394,442-446,1321-1342,1382,1401,1957-1958
+outfitter/packages/api/test/device-login.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-396
+outfitter/packages/api/test/config-routes.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-393
+outfitter/deploy/litellm-admin.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-133
+outfitter/packages/api/test/device-routes.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-422
+outfitter/packages/agentd/src/settings.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-78
+outfitter/packages/web/src/App.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 56-57
+outfitter/packages/web/src/components/account/SpendPanel.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-182
+outfitter/packages/web/src/styles/devices.css
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-62
+outfitter/deploy/CLAUDE.md
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 18-21
+outfitter/packages/api/test/operator.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 14,66-67,70-74
+outfitter/packages/api/src/central/device-tokens.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 8-9,38-86
+outfitter/packages/api/src/fleet-settings.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 12-14,21,34-39,79-81,87-120
+  s_38ec74cfb7fa1d::t_b28dcce8a3d9ab 121
+outfitter/packages/api/src/central/settings-schema.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 211-312
+outfitter/deploy/config.env
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 88-93
+outfitter/packages/web/src/components/account/LocalModelsPanel.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-72
+outfitter/packages/api/src/routes/keys.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 4-7,9,11-23,25-179
+outfitter/packages/api/test/run-spec-settings.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-124
+outfitter/packages/web/src/components/account/ProviderKeysPanel.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-175
+outfitter/packages/web/src/style.css
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 14
+outfitter/packages/web/src/components/devices/DeviceRequestCard.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-106
+.github/workflows/outfitter-ci.yml
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 48-49
+outfitter/packages/api/test/fake-litellm.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-117
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 5,17-20,23,27,49-50,60,64-77,109-117,147-155,162-188,190-197,210-219,221-222,241-273
+  s_38ec74cfb7fa1d::t_16209b7d445178 274
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 6-20,23,25,71-74,83-511,515-517,519-532,537-570
+outfitter/packages/api/src/store/types.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1383-1385
+outfitter/deploy/secret-scope.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-103
+outfitter/packages/web/src/pages/DevicesPage.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-8,11-13,15-48,55-134
+outfitter/packages/api/test/settings-resolver.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-250
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 122,138
+outfitter/packages/api/src/central/run-keys.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-244
+outfitter/packages/web/src/components/account/ProfilesPanel.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-234
+outfitter/packages/web/src/components/account/SettingsEditor.tsx
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-229
+outfitter/packages/api/src/routes/tokens.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 43-46,54
+outfitter/packages/api/src/routes/operator.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 9,157-160
+outfitter/packages/api/test/device-iap.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-28
+outfitter/packages/api/test/auth.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 57-59,63-64
+outfitter/packages/api/test/spend.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-293
+kernal/.pi/extensions/kernal-admin/central.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-363
+outfitter/packages/api/src/central/device-login.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-481
+outfitter/packages/api/test/ae-agents.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 499,515,518
+outfitter/packages/web/src/lib/account.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-171
+outfitter/packages/web/src/styles/pages.css
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1095-1114
+outfitter/packages/api/src/store/mongo.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 493-508
+outfitter/deploy/README.md
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 147-148,157,280-285,699-719
+outfitter/packages/api/src/auth.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 32-39,46-47,53-55,57-59,73-78,86-87,109,128,130,132-134,138-165,172,175,178-184,186-190,193-194
+outfitter/packages/api/src/store/memory.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 428-433
+outfitter/packages/api/src/routes/config.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 5-9,11,13-27,29-374
+outfitter/packages/api/src/routes/device.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 8-9,11,13-33,35-177
+outfitter/packages/api/src/routes/hooks.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 28,121-122,129
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 16,40,44-45,51-52,68-69
+outfitter/packages/api/src/store/keys.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 36-37,45,64,70-89,92-95,97-99,101-104,107-108,110-115,117-122,127-133,135-136,138-139,143-144,146-158,165-205,214-216,218-220,222-224
+outfitter/packages/api/src/central/provider-keys.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-103
+outfitter/packages/api/test/preview-routes.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 12,26,38-39,48-49
+outfitter/packages/api/src/routes/me.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 5,35-37
+kernal/tests/admin-central.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-509
+outfitter/packages/api/test/litellm-keys.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-319
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 84-85,211-212,782
+outfitter/packages/api/test/settings-mongo.test.ts
+  s_38ec74cfb7fa1d::t_bf57fdd9d4914d 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f9db4d39572fe0a04f89f1fa9da1b7ce7a7a0c7b",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

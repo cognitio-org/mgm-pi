@@ -40,6 +40,10 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     if (email.toLowerCase().endsWith(".gserviceaccount.com")) {
       return reply.code(403).send({ error: "service accounts can't create personal tokens" });
     }
+    // #390 Dongle fix 1: a token (a Dongle or a device token) never mints another token of either
+    // kind. Otherwise one leaked Dongle could keep renewing itself past its 90 days and past a
+    // revoke of the ones it was made from. Only a person in the web app creates tokens.
+    if (req.identity?.viaToken) return reply.code(403).send({ error: "tokens are created in the web app" });
     const body = req.body as { name?: string; kind?: unknown; a2a?: unknown };
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     if (!name) return reply.code(400).send({ error: "name is required" });
@@ -47,9 +51,7 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     if (kind !== "dongle" && kind !== "a2a") return reply.code(400).send({ error: 'kind must be "dongle" or "a2a"' });
     let a2a: ApiToken["a2a"];
     if (kind === "a2a") {
-      // E9 §5.2: the owner makes A2A keys in the web UI. A Dongle (an agent on a laptop) can't
-      // mint one: that would hand a remote caller tasks in the owner's name.
-      if (req.identity?.viaToken) return reply.code(403).send({ error: "A2A keys are created in the web UI, not with a token" });
+      // E9 §5.2: the owner makes A2A keys in the web UI (a token caller was refused above).
       // Each tape needs a LiteLLM key of its own: A2A never runs on the org-wide default.
       const scope = await parseA2AKeyScope(ctx.store, body.a2a, (guruId) => ctx.a2a.litellmKeyProblem(guruId));
       if ("error" in scope) return reply.code(400).send({ error: scope.error });

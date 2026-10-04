@@ -9,6 +9,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import type { Run, Store } from "../src/store/types.ts";
 import { FakeNgrok } from "./fake-ngrok.ts";
+import { TEST_IAP_AUDIENCE, iapHeaders, useFakeIap } from "./device-iap.ts";
 
 const RUN_ID = "3f2a9c1e-0000-4000-8000-00000000abcd";
 
@@ -22,7 +23,7 @@ async function bearerFor(store: Store, email: string): Promise<Record<string, st
 async function setup(env: Record<string, string> = { PREVIEW_DOMAIN: "kernal.run", PREVIEW_ALLOW: "domain:example.com" }) {
   const store = new MemoryStore();
   const ngrok = new FakeNgrok();
-  const app = await buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com", ...env }, { store, ngrok });
+  const app = await buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com", IAP_AUDIENCE: TEST_IAP_AUDIENCE, ...env }, { store, ngrok });
   const now = new Date().toISOString();
   await store.sessions.insert({ id: "s1", guruId: "g", repo: null, status: "open", cost: 0, ownerEmail: "owner@example.com", createdAt: now, updatedAt: now });
   const run = { id: RUN_ID, sessionId: "s1", state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now } as unknown as Run;
@@ -34,7 +35,8 @@ async function setup(env: Record<string, string> = { PREVIEW_DOMAIN: "kernal.run
   }
   const owner = await bearerFor(store, "owner@example.com");
   const other = await bearerFor(store, "someone@example.com");
-  const sysop = await bearerFor(store, "sysop@example.com");
+  // #390: a token is never an operator, so the sysop signs in through (fake) IAP (useFakeIap).
+  const sysop = iapHeaders("sysop@example.com");
   return { app, store, ngrok, owner, other, sysop };
 }
 
@@ -43,7 +45,8 @@ const share = (app: TestApp, headers: Record<string, string>, port = 3000, ttlSe
   app.fastify.inject({ method: "POST", url: `/api/sessions/s1/previews/${port}/share`, headers, payload: ttlSeconds ? { ttlSeconds } : {} });
 
 describe("preview routes", () => {
-  test("GET lists the live run's previews for any viewer; only the owner or a sysop may share", async () => {
+  test("GET lists the live run's previews for any viewer; only the owner or a sysop may share", async (t) => {
+    useFakeIap(t);
     const { app, owner, other, sysop } = await setup();
     const asOther = (await list(app, other)).json();
     assert.equal(asOther.enabled, true);

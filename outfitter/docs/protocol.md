@@ -678,6 +678,52 @@ removed from `outfitter-store.ts` entirely, not left in as a fallback.
 token for that client ID *is* accepted, in `Proxy-Authorization`. The live-test identity uses it;
 see `deploy/README.md` "Live-test identity". Laptop clients still use personal tokens on link.)
 
+## Device login (#390)
+
+Kernal signs in with the person's Google account through a device-code flow (RFC 8628's shape);
+the contract is `docs/specs/central-auth.md` §1, the code `packages/api/src/central/device-login.ts`
+(logic), `routes/device.ts` (HTTP) and `store/devices.ts` (collections `deviceCodes`, `devices`).
+
+1. `POST /api/device/code` on link (public: `central/device-tokens.ts` `isPublicDevicePath`)
+   `{ deviceName, platform?, kernalVersion? }` → `{ device_code: "kdc_…", user_code: "BCDF-GHJK",
+   verification_uri, verification_uri_complete, expires_in: 600, interval: 5 }`. The
+   `verification_uri` is `OUTFITTER_WEB_ORIGIN` + `/device`.
+2. The person opens it on the web role, already signed in through IAP. `GET
+   /api/device/pending?code=` shows the device name, platform, version, the requesting IP and time;
+   `POST /api/device/approve { userCode, approve }` decides. Only a person: a Dongle or device token
+   gets 403. Approving needs the approver on the login allow-list; the approver owns the device.
+3. Kernal polls `POST /api/device/token { grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+   device_code }`: `authorization_pending`, `slow_down` (+5 s), `access_denied`, `expired_token` or
+   `invalid_grant` (400), or 200 with a 1-hour access token (`kda_`), a 30-day refresh token
+   (`kdr_`), the device and account, and what the login hooks delivered (`delivery`, `problems`;
+   `central/device-lifecycle.ts`).
+4. `POST /api/device/refresh { grant_type: "refresh_token", refresh_token }` rotates both. The
+   replaced access token stays valid until its own expiry and the replaced refresh token for 60 s;
+   a replaced refresh token used after that revokes the device (`refresh-reuse`). Every refresh
+   re-checks the allow-list; an owner no longer on it has every device revoked (`access-removed`)
+   and gets `access_denied`.
+5. `POST /api/device/revoke { token }` (`kernal logout`): always `200 {}`.
+
+The access token is a bearer on every `/api/*` route of every role, like a Dongle and with the same
+generic 401, and is verified even in dev mode (`req.identity.deviceId` is set). Tokens are stored
+as sha256 hashes only. The Devices page uses `GET /api/me/devices` and `DELETE /api/me/devices/:id`
+(a person, web role); operators have `POST /api/operator/devices/revoke { email | domain }` and
+`POST /api/operator/machine-tokens { name }` (a 90-day access token for CI, no refresh).
+
+**Allow-list**: `OUTFITTER_LOGIN_ALLOW`, which `deploy/service.sh` builds from IAP_MEMBERS plus the
+operators (PREVIEW_ALLOW's format). Operators always count. Empty outside dev mode: no device login
+(`503 login_unavailable`) and Dongles unchanged.
+
+**Dongle changes** (#390): no token (Dongle or device) creates tokens (`POST /api/me/tokens`, either
+kind: `403 tokens are created in the web app`); no token is ever an operator, on any role; and once
+`OUTFITTER_LOGIN_ALLOW` is set, a Dongle whose owner is not on it gets the generic 401.
+
+**Rate limits**, per instance: `/code` 10 per IP per 10 minutes; `/token` 120 per IP per minute;
+`/pending` and `/approve` together 20 per person per 10 minutes. Over the limit: `429 { error:
+"rate_limited", retryAfter }`. `GET /api/me` includes `ip` (the last X-Forwarded-For hop, which
+Cloud Run appends) so the approve page can warn when the code was requested from elsewhere. Every
+per-IP check uses that same hop.
+
 ## A2A server (E9 §5, PR5)
 
 `docs/specs/atlas-agent-engine-and-a2a.md` §5 is the design; this is what the link role (and

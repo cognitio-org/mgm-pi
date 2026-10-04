@@ -7,7 +7,8 @@
  */
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makePi, tmpAgentDir, stubFetch } from "./harness.ts";
@@ -79,7 +80,7 @@ beforeEach(() => {
   process.env.KERNAL_VOICE_SETTINGS = join(process.env.KERNAL_HOME_DIR, "pi-listen.json");
   tmpAgentDir();
   process.env.KERNAL_NO_DISCOVERY = "1";
-  for (const v of ["LITELLM_AGENT_KEY", "LITELLM_API_KEY", "LITELLM_BASE_URL", "OPENROUTER_API_KEY", "LMSTUDIO_BASE_URL", "KERNAL_SANDBOX"]) delete process.env[v];
+  for (const v of ["LITELLM_AGENT_KEY", "LITELLM_API_KEY", "LITELLM_BASE_URL", "OPENROUTER_API_KEY", "LMSTUDIO_BASE_URL", "KERNAL_SANDBOX", "KERNAL_ROUTER_KEY"]) delete process.env[v];
   routerKey = { key: "sk-old", baseUrl: "https://router.kernal.one/v1", alias: "kernal-device-x", expiresAt: new Date(Date.now() + 30 * DAY).toISOString() };
   calls = [];
   providerKeys = {};
@@ -138,8 +139,10 @@ describe("router key re-mint", () => {
   test("a 401 from the router re-mints once per process and registers the new key", async () => {
     const { key, refused } = await start();
     assert.equal(key("litellm"), "sk-old");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-old", "the router MCP server uses the device key too (#447)");
     await refused();
     assert.equal(key("litellm"), "sk-new");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-new", "and follows it when it is re-minted");
     await refused();
     assert.equal(calls.filter((c) => c === "/api/device/router-key").length, 1);
   });
@@ -273,5 +276,24 @@ describe("#443: the real session store, another process signs in again", () => {
     assert.equal(bearers["/api/config"].at(-1), "Bearer kda_2");
     await refreshProviderKeys({ fetch: net });
     assert.equal(bearers["/api/device/provider-keys"].at(-1), "Bearer kda_2");
+  });
+});
+
+describe("#447: the router MCP server's key", () => {
+  const mcp = JSON.parse(readFileSync(join(import.meta.dirname, "..", ".pi", "mcp.json"), "utf8")).mcpServers.litellm;
+  const run = (env: NodeJS.ProcessEnv) =>
+    spawnSync(mcp.requestHeadersCommand.command, mcp.requestHeadersCommand.args, { input: "{}", env, encoding: "utf8" });
+
+  test("each request gets the key connect is using, never written into mcp.json or the command line", () => {
+    const r = run({ PATH: process.env.PATH, KERNAL_ROUTER_KEY: "sk-device-1234" });
+    assert.equal(r.status, 0);
+    assert.deepEqual(JSON.parse(r.stdout), { "x-litellm-api-key": "Bearer sk-device-1234" });
+    assert.ok(!JSON.stringify(mcp).includes("${"), "no ${VAR} for the adapter to put into argv");
+  });
+
+  test("no router key: the command fails, so the adapter sends nothing (CI and signed-out machines)", () => {
+    const r = run({ PATH: process.env.PATH });
+    assert.notEqual(r.status, 0);
+    assert.equal(r.stdout, "");
   });
 });

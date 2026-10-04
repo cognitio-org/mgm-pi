@@ -57,7 +57,11 @@ import type {
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
 import { applyRunSettings } from "./settings.js";
-import { initSentry, withSentrySpan, captureException, flushSentry } from "./sentry.js";
+import { initSentry, withSentrySpan, captureException, flushSentry, agentTraceSignals } from "./sentry.js";
+import { AgentTracer } from "./agent-trace.js";
+
+/** gen_ai.agent.name for a Drive's agent runs (#424): Kernal on a Drive, apart from a laptop's. */
+const AGENT_NAME = "kernal-drive";
 
 /** The start-up phases the `startup` frame carries: run.spec through pi ready. Later "first ..."
  * milestones depend on the person's prompt, not on starting up. */
@@ -370,6 +374,8 @@ export class RunController {
   private settleBacklog: PiRpcEvent[] | undefined;
   /** Start-up phase timing; only set when deps.startupPhases is on (startup-phases.ts). */
   private startup: StartupPhases | undefined;
+  /** #424: AI agent spans (agent-trace.ts); only set while the fleet has agent traces on. */
+  private agentTracer: AgentTracer | undefined;
   /** The `startup` frame (phases through "pi ready"), once pi is ready. Sent then, and again after
    * every reconnect until the run ends: Link drops a non-seq frame while the socket is down, and the
    * api writes the phases once, so a repeat is harmless. */
@@ -428,6 +434,7 @@ export class RunController {
    * tests and abrupt shutdown paths that don't want the full checkpoint-then-stop sequence. */
   dispose(): void {
     this.disposed = true;
+    this.agentTracer?.close();
     this.clearIdleTimer();
     this.stopHeartbeat();
     this.tailer?.stop();
@@ -592,7 +599,7 @@ export class RunController {
     this.onLog(`run failed: ${message}`);
     captureException(err);
     this.stopping = true;
-    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
+    void Promise.all([this.bye("error", message), this.endTelemetry("internal_error")]).then(() => this.onExit(1));
   }
 
   private async begin(spec: DownRunSpec): Promise<void> {
@@ -615,6 +622,21 @@ export class RunController {
     if (spec.secrets.githubToken) this.deps.logger?.addSecret(authHeaderSecret(spec.secrets.githubToken));
     this.deps.logger?.addSecret(spec.secrets.litellmKey);
     this.deps.logger?.addSecret(spec.secrets.ngrokAuthtoken);
+    // #424: AI agent spans while the fleet has agent traces on (sentry.ts). Content, when on too,
+    // is matched against the run's secrets as they are at that moment (the GitHub token rotates).
+    const agentSignals = agentTraceSignals();
+    if (agentSignals.traces) {
+      this.agentTracer = new AgentTracer({
+        agentName: AGENT_NAME,
+        conversationId: spec.session.id,
+        content: agentSignals.content,
+        secrets: () => {
+          const secrets = this.spec?.secrets;
+          const github = secrets?.githubToken;
+          return [github, github ? authHeaderSecret(github) : undefined, secrets?.litellmKey, secrets?.ngrokAuthtoken].filter((v): v is string => !!v);
+        },
+      });
+    }
     // #241: code-server for the browser IDE, downloaded alongside the rest of the start (tar runs
     // niced, so it yields the CPU to the clone and pi). Its outcome is logged; `ide.open` (phase 2)
     // waits for it or retries it. A failure never fails the run.
@@ -1125,6 +1147,8 @@ export class RunController {
       this.reportStartup();
       return;
     }
+    // #424: AI agent spans, as each event arrives (latency measured here, not after a settle).
+    this.agentTracer?.observe(event);
     this.routePiEvent(event);
   }
 
@@ -1230,7 +1254,7 @@ export class RunController {
     this.spendTailer?.stop();
     const message = `pi exited: code=${code} signal=${signal}`;
     captureException(new Error(message));
-    void Promise.all([this.bye("error", message), flushSentry()]).then(() => this.onExit(1));
+    void Promise.all([this.bye("error", message), this.endTelemetry("internal_error")]).then(() => this.onExit(1));
   }
 
   private stopCaptureListener(): Promise<void> {
@@ -1258,6 +1282,13 @@ export class RunController {
       previews ? previews.stop() : Promise.resolve(),
       ide ? ide.stop() : Promise.resolve(),
     ]).then(() => undefined);
+  }
+
+  /** #424: ends the agent spans still open and sends what Sentry has queued (spans, logs, metrics)
+   * before the process exits; at once while Sentry is off. Runs beside the bye, not after it. */
+  private async endTelemetry(reason: string, timeoutMs?: number): Promise<void> {
+    this.agentTracer?.close(reason);
+    await flushSentry(timeoutMs);
   }
 
   /** Sends the final `bye` frame and waits, bounded by `waitMs`, for the api to close the socket
@@ -1370,7 +1401,7 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    await this.bye("idle");
+    await Promise.all([this.bye("idle"), this.endTelemetry("idle")]);
     this.onExit(0);
   }
 
@@ -1387,7 +1418,7 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    await this.bye("stop", reason);
+    await Promise.all([this.bye("stop", reason), this.endTelemetry("stopped")]);
     this.onExit(0);
   }
 
@@ -1404,7 +1435,7 @@ export class RunController {
     this.stopHeartbeat();
     this.tailer?.stop();
     this.spendTailer?.stop();
-    await this.bye("sigterm", undefined, Math.min(this.byeCloseWaitMs, SIGTERM_BYE_CLOSE_WAIT_MS));
+    await Promise.all([this.bye("sigterm", undefined, Math.min(this.byeCloseWaitMs, SIGTERM_BYE_CLOSE_WAIT_MS)), this.endTelemetry("sigterm", 1000)]);
     this.onExit(0);
   }
 

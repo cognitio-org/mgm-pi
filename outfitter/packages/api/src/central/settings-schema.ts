@@ -55,13 +55,16 @@ export interface SettingDecl {
 }
 
 /** Bumped whenever a key is added or retired (§3.6). */
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 const PERSONAL = ["fleet", "user", "profile", "device", "local"] as const;
 
 /** Router key limits (#389 follow-up, §5.2): what api/central/litellm-keys.ts mints device and run
  * keys with, read from the fleet level at mint time. Operators only: the fleet level, locked. */
 const ROUTER_LIMIT = { secret: false, levels: ["fleet"], override: "none", since: 1 } as const;
+
+/** #424's Sentry signal switches: telemetry.sentry.enabled's shape (fleet on, local opt-out). */
+const SENTRY_SIGNAL = { type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, since: 2 } as const;
 
 /** The v1 keys (spec §3.2). */
 export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
@@ -261,6 +264,42 @@ export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
     default: 0.05,
     since: 1,
     description: "Fraction of traces kept.",
+  },
+  // #424: the other Sentry signals. Stored in the fleet document's `telemetry.sentry` with the
+  // three keys above (fleet-settings.ts), and set at the fleet level only while Sentry is on
+  // (settings-resolver.ts fleetLevelValues), so all of them read off while it is off. The switches
+  // follow telemetry.sentry.enabled's rule: only the fleet turns one on, a machine may turn it off.
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.logs",
+    description: "Send server logs (Outfitter api/link and Drives) to Sentry. Kernal laptops send none.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.metrics",
+    description: "Send counters and distributions (logins, router keys, runs, tool calls, tokens, spend) to Sentry.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.agentTraces",
+    description: "Send AI agent spans (agent runs, model calls, tool calls) with models, tokens, cost and timing.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.agentContent",
+    description: "Include prompts, responses and tool inputs and outputs (redacted) in agent spans; needs agentTraces.",
+  },
+  {
+    key: "telemetry.sentry.profilesSampleRate",
+    type: "number",
+    min: 0,
+    max: 1,
+    secret: false,
+    levels: ["fleet"],
+    override: "none",
+    default: 0,
+    since: 2,
+    description: "Fraction of processes or page loads profiled (api/link, Drives, the web app; not Kernal).",
   },
 ];
 

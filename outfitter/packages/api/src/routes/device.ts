@@ -13,6 +13,7 @@ import type { RouteContext } from "./context.ts";
 import { requireOperator } from "../auth.ts";
 import { normalizeOwnerMatch } from "../tokens.ts";
 import { normalizeEmail } from "../central/user-id.ts";
+import { metrics } from "../sentry.ts";
 import { DEVICE_CODE_GRANT_TYPE, formatUserCode, normalizeUserCode } from "../central/device-tokens.ts";
 import {
   clientIp,
@@ -62,7 +63,9 @@ export async function registerDeviceRoutes(app: FastifyInstance, ctx: RouteConte
       if (!loginAvailable(ctx.config)) return reply.code(503).send({ error: "login_unavailable" });
       const body = parseDeviceCodeRequest(req.body);
       if (!body) return reply.code(400).send({ error: "invalid_request" });
-      return startDeviceCode(deps, body, ip);
+      const started = await startDeviceCode(deps, body, ip);
+      metrics.count("device.login.started");
+      return started;
     });
 
     app.post("/api/device/token", async (req, reply) => {
@@ -73,7 +76,13 @@ export async function registerDeviceRoutes(app: FastifyInstance, ctx: RouteConte
         return reply.code(400).send({ error: "invalid_request" });
       }
       const result = await exchangeDeviceCode(deps, body.device_code);
-      if (!result.ok) return reply.code(400).send(result.error);
+      if (!result.ok) {
+        // Polling (authorization_pending, slow_down) is the flow working, not a failure.
+        const reason = result.error.error;
+        if (reason !== "authorization_pending" && reason !== "slow_down") metrics.count("device.login.failed", { reason });
+        return reply.code(400).send(result.error);
+      }
+      metrics.count("device.login.completed");
       return result.answer;
     });
 
@@ -132,6 +141,7 @@ export async function registerDeviceRoutes(app: FastifyInstance, ctx: RouteConte
       if (!code) return reply.code(409).send({ error: "not_pending" });
       const result = await decideDeviceCode(deps, code, body.approve, { email: identity.email, ip: clientIp(req) });
       if ("error" in result) return reply.code(409).send(result);
+      metrics.count(result.status === "approved" ? "device.login.approved" : "device.login.denied");
       req.log.info({ approver: identity.email, status: result.status, deviceId: result.deviceId }, "device code decided");
       return result;
     });

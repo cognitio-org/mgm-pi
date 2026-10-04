@@ -54,8 +54,9 @@ export function docView(doc: SettingsDoc): SettingsDocView {
   };
 }
 
-/** The fleet document as a level view: `values` plus the three Sentry keys as stored (the DSN is
- * shown while Sentry is off too, like the operator's own GET). */
+/** The fleet document as a level view: `values` plus the Sentry keys as stored (the DSN is shown
+ * while Sentry is off too, like the operator's own GET). #424's signals are stored only while on,
+ * so a signal that is off is absent here, which reads as its default (off). */
 export function fleetView(fleet: FleetSettings): SettingsDocView {
   const s = fleet.telemetry.sentry;
   return {
@@ -66,6 +67,11 @@ export function fleetView(fleet: FleetSettings): SettingsDocView {
       "telemetry.sentry.enabled": s.enabled,
       ...(s.dsn ? { "telemetry.sentry.dsn": s.dsn } : {}),
       "telemetry.sentry.tracesSampleRate": s.tracesSampleRate,
+      ...(s.logs ? { "telemetry.sentry.logs": true } : {}),
+      ...(s.metrics ? { "telemetry.sentry.metrics": true } : {}),
+      ...(s.agentTraces ? { "telemetry.sentry.agentTraces": true } : {}),
+      ...(s.agentContent ? { "telemetry.sentry.agentContent": true } : {}),
+      ...(s.profilesSampleRate ? { "telemetry.sentry.profilesSampleRate": s.profilesSampleRate } : {}),
     },
     version: fleet.version ?? 0,
     ...(fleet.updatedAt ? { updatedAt: fleet.updatedAt } : {}),
@@ -369,6 +375,8 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
 
 /** Which Sentry key a parseSentryUpdate message is about. */
 function sentryErrorKey(message: string): string {
+  const named = /telemetry\.sentry\.(logs|metrics|agentTraces|agentContent|profilesSampleRate)\b/.exec(message);
+  if (named) return named[0];
   if (message.includes("tracesSampleRate")) return "telemetry.sentry.tracesSampleRate";
   if (/dsn/i.test(message)) return "telemetry.sentry.dsn";
   return "telemetry.sentry.enabled";

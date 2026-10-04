@@ -11,6 +11,7 @@ import { registerHookRoutes } from "./hooks.ts";
 import { registerProviderRoutes } from "./providers.ts";
 import { registerOperatorRoutes } from "./operator.ts";
 import { registerStaticRoutes } from "./static.ts";
+import { profilingWanted } from "../sentry.ts";
 import { registerSandboxRoutes } from "./sandbox.ts";
 import { registerPreviewRoutes } from "./previews.ts";
 import { registerIdeRoutes } from "./ide.ts";
@@ -53,7 +54,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerAdminRoutes(app, ctx);
     // E9.9: the approval widget's list and answer, for a person under IAP (never on link).
     await registerLaptopApprovalRoutes(app, ctx);
-    await registerStaticRoutes(app);
+    // #424: the shell allows browser profiling while the fleet settings ask for web profiles.
+    await registerStaticRoutes(app, { profiling: () => profilingWanted(ctx.fleetSettings.peek()?.telemetry.sentry) });
   } else {
     // Teleport, plus the side panel and browser companion (docs/protocol.md "Browser companion").
     // No guru, operator, or token-management routes: a Dongle that can steer is not an operator.

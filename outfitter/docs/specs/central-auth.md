@@ -417,6 +417,17 @@ v1 keys (`SETTINGS_SCHEMA_VERSION = 1`):
 | `router.keys.models` | string, comma-separated | no | fleet | none | (unset: every model) | |
 | `router.runKey.maxBudgetUsd` | number 0..100000 | no | fleet | none | 20 | |
 
+v2 keys (`SETTINGS_SCHEMA_VERSION = 2`, #424), stored in the fleet document's `telemetry.sentry`
+with the three Sentry keys above and set at the fleet level only while Sentry is on:
+
+| Key | Type | Secret | Levels | Override | Default | Env |
+|---|---|---|---|---|---|---|
+| `telemetry.sentry.logs` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.metrics` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.agentTraces` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.agentContent` | boolean (needs agentTraces) | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.profilesSampleRate` | number 0..1 | no | fleet | none | 0 | |
+
 `router.key` is never stored by Outfitter: it is the device's CA-5 key, which Kernal reads from its
 keychain (`getRouterKey`, §2.2). It is declared so `/config` and `/admin` can show its source.
 Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level (and the

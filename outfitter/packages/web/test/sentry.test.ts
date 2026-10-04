@@ -7,10 +7,13 @@ const initMock = vi.fn();
 const browserTracingIntegrationMock = vi.fn(() => ({ name: "BrowserTracing" }));
 const replayIntegrationMock = vi.fn(() => ({ name: "Replay" }));
 
+const browserProfilingIntegrationMock = vi.fn(() => ({ name: "BrowserProfiling" }));
+
 vi.mock("@sentry/react", () => ({
   init: (options: unknown) => initMock(options),
   browserTracingIntegration: () => browserTracingIntegrationMock(),
   replayIntegration: () => replayIntegrationMock(),
+  browserProfilingIntegration: () => browserProfilingIntegrationMock(),
 }));
 
 const DSN = "https://example@o0.ingest.sentry.io/1";
@@ -27,6 +30,7 @@ describe("initSentry", () => {
     initMock.mockClear();
     browserTracingIntegrationMock.mockClear();
     replayIntegrationMock.mockClear();
+    browserProfilingIntegrationMock.mockClear();
   });
 
   it("starts with the fleet's DSN and trace rate when an operator turned Sentry on", async () => {
@@ -65,6 +69,29 @@ describe("initSentry", () => {
     await initSentry(on);
     expect(initMock.mock.calls[0]?.[0]).toMatchObject({ replaysSessionSampleRate: 0.0, replaysOnErrorSampleRate: 1.0 });
     expect(initMock.mock.calls[0]?.[0]?.integrations).toEqual([{ name: "BrowserTracing" }, { name: "Replay" }]);
+  });
+
+  it("#424: no profiler unless the fleet's profile rate is above 0", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(on);
+    const options = initMock.mock.calls[0]?.[0];
+    expect(options?.integrations).not.toContainEqual({ name: "BrowserProfiling" });
+    expect(options).not.toHaveProperty("profileSessionSampleRate");
+    expect(browserProfilingIntegrationMock).not.toHaveBeenCalled();
+  });
+
+  it("#424: profiles at the fleet's rate, while a trace is open", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(async () => ({ telemetry: { sentry: { enabled: true as const, dsn: DSN, tracesSampleRate: 0.2, profilesSampleRate: 0.25 } } }));
+    const options = initMock.mock.calls[0]?.[0];
+    expect(options?.integrations).toContainEqual({ name: "BrowserProfiling" });
+    expect(options).toMatchObject({ profileSessionSampleRate: 0.25, profileLifecycle: "trace" });
+  });
+
+  it("#424: a malformed profile rate means no profiler", async () => {
+    const { initSentry } = await freshModule();
+    await initSentry(async () => ({ telemetry: { sentry: { enabled: true as const, dsn: DSN, tracesSampleRate: 0.2, profilesSampleRate: 3 } } }));
+    expect(initMock.mock.calls[0]?.[0]).not.toHaveProperty("profileSessionSampleRate");
   });
 
   it("only the first successful call starts the SDK", async () => {

@@ -209,6 +209,20 @@ export interface Config {
   voiceMonthlyCapUsd: number;
   /** Atlas Agent Engine (E9, docs/specs/atlas-agent-engine-and-a2a.md §2). See AgentEngineConfig. */
   agentEngine: AgentEngineConfig;
+  /** Central sign-in (#389, docs/specs/central-auth.md §1.6). OUTFITTER_LOGIN_ALLOW: who may sign a
+   * Kernal in with the device-code flow and keep using a token, in PREVIEW_ALLOW's format (`user:`,
+   * bare emails, `domain:`; `group:` is ignored). deploy/service.sh passes IAP_MEMBERS plus the
+   * operators. Empty outside dev mode: no device login at all, and Dongles keep today's behaviour. */
+  loginAllow: string[];
+  /** OUTFITTER_WEB_ORIGIN: the web role's origin (https://app.kernal.one), where a person approves
+   * a device code. The link role prints it in POST /api/device/code's `verification_uri`. Empty:
+   * `origin` (role "all" serves both). */
+  webOrigin: string;
+  /** OUTFITTER_LITELLM_ADMIN_KEY (Secret Manager outfitter-litellm-admin-key, both api roles, never
+   * a Drive): the LiteLLM key that creates users and mints and deletes per-device and per-run keys
+   * (central/litellm-keys.ts). Empty: no key minting; device login still works, without a router
+   * key. Separate from LITELLM_ADMIN_KEY, which only probes /health and /model/info. */
+  litellmKeyAdminKey: string;
 }
 
 /** One Agent Engine project and the service account that acts in it. */
@@ -542,5 +556,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voiceTtsUsdPer1kChars: envNonNegative("VOICE_TTS_USD_PER_1K_CHARS", 0.03, env),
     voiceMonthlyCapUsd: envNonNegative("VOICE_MONTHLY_CAP_USD", 0, env),
     agentEngine: envAgentEngine(env),
+    loginAllow: envOperators("OUTFITTER_LOGIN_ALLOW", env),
+    webOrigin: (env.OUTFITTER_WEB_ORIGIN ?? "").trim().replace(/\/+$/, ""),
+    litellmKeyAdminKey: (env.OUTFITTER_LITELLM_ADMIN_KEY ?? "").trim(),
   };
 }

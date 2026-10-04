@@ -25,6 +25,9 @@ hand if that changes.
 | **Format** | Erase an archived floppy for good: its conversation, messages and captures. There is no undo. | delete session |
 | **Peripherals** | Model and service providers and their health. | Providers |
 | **Dongles** | Your personal access tokens for Kernal on your laptop. | API tokens |
+| **Devices** | The computers where Kernal is signed in with your account (`kernal login`). Sign one out here. | device login (device-code flow) |
+| **Account** | Your Kernal settings: profiles, personal provider keys, local model sharing and router spend. | central settings |
+| **Profiles** | Named sets of Kernal settings, such as work and personal, picked per Kernal with `--profile`. | settings profiles |
 | **Control Panel** | Keys and deployment settings. | Settings |
 | **Sysop** | Someone allowed to change keys and settings. | operator |
 | **Manual** | The in-app help page (`/manual`) this glossary is drawn from. | Manual / Help |

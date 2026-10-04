@@ -20,6 +20,9 @@ import { registerAdminRoutes } from "./admin.ts";
 import { registerAgentEngineRoutes } from "./agent-engine.ts";
 import { registerA2ARoutes } from "./a2a.ts";
 import { registerLaptopApprovalRoutes } from "./laptop-approvals.ts";
+import { registerDeviceRoutes } from "./device.ts";
+import { registerConfigRoutes } from "./config.ts";
+import { registerKeyRoutes } from "./keys.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -62,6 +65,11 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerAdminRoutes(app, ctx);
   }
   await registerBrowserRoutes(app, ctx);
+  // Central sign-in and settings (#389, docs/specs/central-auth.md): each module registers its own
+  // routes per role.
+  await registerDeviceRoutes(app, ctx);
+  await registerConfigRoutes(app, ctx);
+  await registerKeyRoutes(app, ctx);
   if (ctx.config.role !== "web") {
     await registerHookRoutes(app, ctx);
     // E9 §5.1: the A2A server lives on the public link origin (and "all" in dev). The web role is

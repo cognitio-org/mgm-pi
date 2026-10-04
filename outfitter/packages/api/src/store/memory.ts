@@ -70,6 +70,9 @@ import type {
 import { AE_SESSION_EXECUTIONS } from "./types.ts";
 import type { VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { MemoryDeviceCodes, MemoryDevices } from "./devices.ts";
+import { MemorySettings } from "./settings.ts";
+import { MemoryProviderKeys, MemoryRouterKeys } from "./keys.ts";
 import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -1373,6 +1376,12 @@ export class MemoryStore implements Store {
   readonly aeSessions = new MemoryAeSessions();
   readonly a2aTasks = new MemoryA2ATasks();
   readonly fleetSettings = new MemoryFleetSettings();
+  // #389 central sign-in and settings (docs/specs/central-auth.md §9).
+  readonly deviceCodes = new MemoryDeviceCodes();
+  readonly devices = new MemoryDevices();
+  readonly settings = new MemorySettings();
+  readonly routerKeys = new MemoryRouterKeys();
+  readonly providerKeys = new MemoryProviderKeys();
 
   constructor() {
     const tables: BrowserTables = {

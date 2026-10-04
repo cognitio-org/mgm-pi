@@ -118,8 +118,22 @@ const PROXY_COMPAT = { supportsDeveloperRole: false, supportsReasoningEffort: tr
 
 export const DEFAULT_OPENROUTER_MODELS = [
   "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-3.8-flash",
-  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4", "moonshotai/kimi-k3", "z-ai/glm-5.1",
+  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "moonshotai/kimi-k3",
+  "z-ai/glm-5.1",
 ];
+
+/**
+ * The curated OpenRouter ids that OpenRouter still lists, and the ones it doesn't. A retired or
+ * mistyped id would otherwise show up in /model and only fail on the first prompt ("... is not a
+ * valid model ID"). Keeps everything when the catalogue could not be read.
+ */
+export function keepListed(curated: string[], catalogue: any): { kept: string[]; dropped: string[] } {
+  const live = new Set(((catalogue?.data ?? []) as any[]).map((m) => String(m?.id)));
+  if (!live.size) return { kept: curated, dropped: [] };
+  // Routing variants (":nitro", ":floor", ":online", ...) work on any model but aren't listed.
+  const listed = (id: string) => live.has(id) || live.has(id.replace(/:[^/:]+$/, ""));
+  return { kept: curated.filter(listed), dropped: curated.filter((id) => !listed(id)) };
+}
 
 export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
@@ -176,7 +190,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       baseUrl: normalizeBaseUrl(env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
       apiKey: cleanKey(env.OPENROUTER_API_KEY),
       keyVar: "OPENROUTER_API_KEY",
-      discover: false,
+      discover: false,                 // curated: discovery only drops ids OpenRouter no longer lists
       fallback: (env.OPENROUTER_MODELS || DEFAULT_OPENROUTER_MODELS.join(",")).split(",").map((s) => s.trim()).filter(Boolean),
       model: (id) => ({
         id, name: id, input: ["text", "image"], reasoning: true, cost: DEFAULT_PAID, contextWindow: 200000, maxTokens: 32000,

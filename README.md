@@ -8,7 +8,9 @@ exposes it to the cloud LiteLLM router.
 The coding agent built on top of this setup lives in [`kernal/`](kernal/README.md): pi with kernal's
 extensions (connections to LM Studio / the LiteLLM router / OpenRouter, budget tracking,
 compaction tuned for local models, voice input, per-user banner) and a release pipeline that ships
-self-contained bundles (`kernal/README.md` → *Releases*). Run it from any repo with `kernal`.
+self-contained bundles (`kernal/README.md` → *Releases*). Run `kernal login` once per machine (it
+brings this device's own router key and your account's settings, so `.env` needs no keys), then run
+it from any repo with `kernal`.
 
 ## Stack
 

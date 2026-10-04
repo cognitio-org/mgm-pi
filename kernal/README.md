@@ -15,10 +15,12 @@ pieces work inside, and why they are built that way, is in [docs/architecture.md
 ## Quick start for a new user
 
 1. Install a release (see *Releases and installing without Node*), or clone and `npm install` here.
-2. Run `kernal` from any project directory. The first time, type `/setup`: it asks your name, the
-   shared LiteLLM router key (ask Matthew), your own OpenRouter key, and optionally a local model
-   server (LM Studio: it lists the models the server offers and you pick one). It writes `.env`
-   next to the install and connects immediately, no restart. The router is the default backend
+2. Run `kernal login` once on this machine (see *Sign in* below): you approve it in the web app,
+   and this device gets its own router key, so no key needs pasting. Then run `kernal` from any
+   project directory. Not signed in, or for a local model server, type `/setup`: it asks your
+   name, a router key, your own OpenRouter key, and optionally a local model server (LM Studio: it
+   lists the models the server offers and you pick one). It writes `.env` next to the install and
+   connects immediately, no restart. The router is the default backend
    (`litellm/gpt-5.4-nano`, the cheapest capable route; `/connect` or `/model` for a stronger one); LM Studio is only preloaded at start when you have made it your
    default with `/connect` (or set `KERNAL_PRELOAD_LMS=1`).
 3. `/connect` picks a backend and model at any time; `/model` is pi's own picker; `/budget` shows
@@ -27,6 +29,29 @@ pieces work inside, and why they are built that way, is in [docs/architecture.md
 The banner shows your block letters: **MGM** for Matthew, **MATEK** for Matej (recognised from
 `KERNAL_USER`, git email, GitHub login or OS user), initials for anyone else, with an entrance
 animation for recognised users (`KERNAL_NO_ANIMATION=1` skips it).
+
+## Sign in (`kernal login`)
+
+```bash
+kernal login                 # prints a URL and an XXXX-XXXX code; approve it at app.kernal.one/device
+kernal whoami                # <email> on <api> (device <name>); --json for scripts
+kernal logout                # signs this device out (also from the web app's Devices page)
+```
+
+One login per machine, kept in the OS keychain (`~/.kernal/auth` holds only an index). The login
+brings this device's own router key, so router spend is tracked per person, and Kernal reads your
+account's settings (web app → Account) at start-up; `/config` shows each value and where it came
+from. `--profile <name>` picks one of your account's named profiles for that process.
+`outfitter/docs/specs/central-auth.md` has the design.
+
+**Moving off `.env` keys.** After signing in, `kernal login` offers, one key at a time, to upload
+the personal keys in Kernal's `.env` (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`; not `DEEPGRAM_API_KEY`, which bundles ship as a shared voice key) to your account and then remove them from `.env`. It also
+offers to remove a shared `LITELLM_AGENT_KEY` (once the device has its own key, which it would
+otherwise override) and a Dongle (`OUTFITTER_TOKEN`). Every answer defaults to no, nothing is asked
+without a terminal, and the file is copied to `.env.bak-<time>` before the first change. Only
+`~/localllm/.env` and the `.env` files next to the install are touched, never a project's own. Keys
+left in `.env` keep working, with a deprecation warning.
 
 ## Run (from any repo)
 
@@ -57,10 +82,13 @@ Non-interactive: `npx pi -a -p --model lmstudio/qwen/qwen3.6-35b-a3b "prompt"` (
 
 ## Secrets
 
-`/setup` writes them; or edit by hand (`.env.example` documents every key). Read from
-`~/localllm/.env` (a source checkout), then the `.env` next to the agent dir (a release bundle):
+Signed in with `kernal login`, the router key is this device's own (from the keychain) and your
+personal provider keys come from your account, so `.env` needs none of them; keys still in `.env`
+win over the account's, with a deprecation warning. Otherwise `/setup` writes them; or edit by hand
+(`.env.example` documents every key). Read from `~/localllm/.env` (a source checkout), then the
+`.env` next to the agent dir (a release bundle):
 
-- `LITELLM_AGENT_KEY` — the agent's own LiteLLM virtual key (its team decides which models and MCP servers appear). Falls back to `LITELLM_API_KEY` if unset.
+- `LITELLM_AGENT_KEY` — a hand-issued LiteLLM virtual key (its team decides which models and MCP servers appear), for a machine that is not signed in. Falls back to `LITELLM_API_KEY` if unset. Shared keys are being retired: their spend has no owner.
 - `OPENROUTER_API_KEY` — from openrouter.ai (starts with `sk-or-v1-`)
 - optional: `LMSTUDIO_BASE_URL`, `LITELLM_BASE_URL`, `OPENROUTER_MODELS`
 
@@ -591,8 +619,8 @@ notice says where it is.
 
 Off unless Outfitter turns it on. An Outfitter operator switches Sentry on or off for every machine
 at once, under Settings → Telemetry in the web app, and sets the DSN and trace sample rate there too.
-Kernal reads that setting with your Dongle (`OUTFITTER_API` + `OUTFITTER_TOKEN`). Without a Dongle,
-nothing is sent. A change reaches the laptop by its next start, or during a session once the
+Kernal reads that setting with your login (`kernal login`), or a deprecated Dongle (`OUTFITTER_API` +
+`OUTFITTER_TOKEN`). With neither, nothing is sent. A change reaches the laptop by its next start, or during a session once the
 background check finishes. When on, Kernal sends failed agent runs, uncaught crashes in `-p` mode,
 and a sample of agent-run and tool timings. Tool timings carry the tool name only, never its
 arguments or output. Every event leaves without your hostname, and with your home directory written
@@ -693,19 +721,15 @@ teleport: `list`/`/teleport list` shows every session on that Outfitter deployme
 `PUT /api/sessions/:id/import` creates the session server-side if it doesn't already exist there, so
 pushing a laptop-only session id is fine.
 
-**Auth: `OUTFITTER_TOKEN`, the only mode.** Sent as `Authorization: Bearer <token>`. Create a
-personal API token on the Outfitter web UI's Tokens page (`/tokens`); it shows the exact three
-lines to set:
+**Auth: `kernal login`.** Sent as `Authorization: Bearer <access token>`, refreshed as needed; set
+only `KERNAL_TELEPORT_STORE=outfitter` (and `OUTFITTER_API` for an Outfitter other than
+`https://link.kernal.one`). A Dongle (`OUTFITTER_TOKEN`, from the web UI's Tokens page) still works
+when this machine is not signed in, with a deprecation warning; the paste-a-Dongle flow is being
+retired.
 
-```
-export OUTFITTER_API=<link service origin>
-export OUTFITTER_TOKEN=<token>
-export KERNAL_TELEPORT_STORE=outfitter
-```
-
-Neither the token nor anything derived from it is ever written to disk by this module. A 401 from
-the API means `OUTFITTER_TOKEN` was rejected (unknown or revoked) -- create a new token on the
-Tokens page. A 403 means that account isn't allowed to use this Outfitter deployment at all.
+Neither token nor anything derived from it is ever written to disk by this module. A 401 from the
+API means the login or Dongle was rejected (signed out, revoked) -- run `kernal login` again. A 403
+means that account isn't allowed to use this Outfitter deployment at all.
 
 An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
 identity token via `gcloud auth print-identity-token` and sending it the way IAP verifies browser
@@ -741,7 +765,7 @@ ephemeral `--no-session`) and only notifies on a real failure; it never blocks o
 
 ## Outfitter admin tools
 
-With `OUTFITTER_API` and `OUTFITTER_TOKEN` set (the same pair as the Outfitter store above), Kernal
+Signed in with `kernal login` (or with a deprecated Dongle, as for the Outfitter store above), Kernal
 can administer Outfitter itself: build and save a tape, manage environments, find and read past
 sessions. In a Drive whose tape has **Admin tools** turned on, the same tools work through agentd.
 The design is in `outfitter/docs/specs/sysop-tools.md`.
@@ -766,14 +790,14 @@ The design is in `outfitter/docs/specs/sysop-tools.md`.
 
 ### Agent Engine memory (shared with your Drives)
 
-With the same pair set, Kernal uses your Outfitter's Agent Engine memory, the memory your Drives
+Signed in the same way, Kernal uses your Outfitter's Agent Engine memory, the memory your Drives
 use. A fact saved on the laptop is recalled in a Drive, and the other way round. It is yours alone,
 except memories you save as shared. The design is §3.5 of
 `outfitter/docs/specs/atlas-agent-engine-and-a2a.md`.
 
 | `/memory …` | Does |
 |---|---|
-| `auto` (the default with a Dongle) | the `memory` tool, plus memories recalled before each prompt (3 s at most, skipped on any error) |
+| `auto` (the default when signed in) | the `memory` tool, plus memories recalled before each prompt (3 s at most, skipped on any error) |
 | `tool` | the `memory` tool only, no recall cost per prompt |
 | `off` | neither; pi-memory comes back |
 | `record on` / `record off` | opt in or out of recording this laptop's prompts and Kernal's final answers (redacted, never tool output). Off by default |

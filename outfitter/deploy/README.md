@@ -671,7 +671,7 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
   `gcloud run jobs update outfitter-agent --image=<prior image>` directly — new executions pick up
   the change immediately; a Job has no live traffic to shift.
 - **IAP access**: `./access.sh` only ever *adds* members, so dropping one from `IAP_MEMBERS` in
-  `config.env` doesn't revoke it. Removing someone takes two steps:
+  `config.env` doesn't revoke it. Removing someone takes these steps:
   1. Remove the member (e.g. `user:matija.turk@gmail.com`) with
      `gcloud iap web remove-iam-policy-binding --resource-type=cloud-run --service=outfitter-api --region=us-central1 --member=<member> --role=roles/iap.httpsResourceAccessor`.
   2. Revoke their `outf_` API tokens. `outfitter-link` (public, authenticated only by the token)
@@ -683,6 +683,13 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
      Domains match exactly (not subdomains), and shared mail providers such as `@gmail.com` are
      refused: revoke those users by email. Tokens also expire on their own 90 days after creation
      (`TOKEN_TTL_MS` in `packages/api/src/tokens.ts`), so this is the fast path, not the only one.
+     Dongles are deprecated (`kernal login` replaces them, central-auth.md §12); new Kernals warn
+     while one is still in use.
+  3. Signed-in Kernals (`kernal login`, central-auth.md §1.6): with `OUTFITTER_LOGIN_ALLOW` set by
+     the deploy, a person dropped from `IAP_MEMBERS` loses every device at its next token refresh
+     (within an hour), and their Dongles are refused too. To cut them off at once, revoke their
+     devices: `POST /api/operator/devices/revoke` on `outfitter-api` with the same `{"email"}` or
+     `{"domain"}` body.
 - **Full teardown** (reverse of `baseline.sh`): delete both Cloud Run services (`outfitter-api`,
   `outfitter-link`) and the job (`outfitter-agent`), then the AR repo
   (`gcloud artifacts repositories delete outfitter --location=us-central1`), then the two

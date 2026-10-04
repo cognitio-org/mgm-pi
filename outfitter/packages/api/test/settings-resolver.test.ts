@@ -40,6 +40,8 @@ describe("schema validation", () => {
     assert.equal(coerceSettingValue(decl("router.baseUrl"), "https://r.example/v1"), "https://r.example/v1");
     assert.equal(coerceSettingValue(decl("router.baseUrl"), "ftp://r.example"), undefined);
     assert.equal(coerceSettingValue(decl("router.baseUrl"), "not a url"), undefined);
+    assert.equal(coerceSettingValue(decl("router.baseUrl"), "http://r.example/v1"), undefined, "https only by default");
+    assert.equal(coerceSettingValue(decl("router.baseUrl"), "http://r.example/v1", { allowHttp: true }), "http://r.example/v1", "http in dev mode");
   });
 
   test("parseValueWrite checks declared, secret, level and type, in that order", () => {
@@ -168,6 +170,32 @@ describe("resolveConfig", () => {
     assert.equal(personal.values["voice.language"]?.source, "user", "no device asked for");
     assert.equal(personal.deviceId, null);
     assert.equal(personal.versions.device, undefined);
+  });
+
+  test("a stored document without a values object sets nothing instead of failing", async () => {
+    const store = new MemoryStore();
+    const broken = (d: SettingsDoc, values: unknown) => ({ ...d, values }) as unknown as SettingsDoc;
+    await seed(
+      store,
+      broken(doc(settingsDocId("group", "everyone"), "group", {}), undefined),
+      broken(doc(settingsDocId("user", USER), "user", {}), "junk"),
+      broken(doc(settingsDocId("profile", USER, "work"), "profile", {}, { name: "work", isDefault: true }), null),
+      broken(doc(settingsDocId("device", "dev_1"), "device", {}, { deviceId: "dev_1" }), ["x"]),
+    );
+    const fleet = { ...defaultFleetSettings(), values: "junk" } as unknown as FleetSettings;
+    const res = await resolveConfig(store, fleet, { email: EMAIL, deviceId: "dev_1" });
+    assert.equal(res.profile, "work");
+    assert.equal(res.values["model.default"], undefined, "nothing sets it and it has no default");
+    assert.equal(res.values["router.baseUrl"]?.source, "default");
+  });
+
+  test("stored http URLs resolve only in dev mode", async () => {
+    const store = new MemoryStore();
+    const fleet: FleetSettings = { ...defaultFleetSettings(), values: { "router.baseUrl": "http://f/v1" } };
+    const prod = await resolveConfig(store, fleet, { email: EMAIL });
+    assert.equal(prod.values["router.baseUrl"]?.source, "default");
+    const dev = await resolveConfig(store, fleet, { email: EMAIL, allowHttp: true });
+    assert.equal(dev.values["router.baseUrl"]?.value, "http://f/v1");
   });
 
   test("no profiles: the profile level is skipped; an unknown profile throws with the list", async () => {

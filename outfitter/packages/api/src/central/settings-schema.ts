@@ -222,10 +222,16 @@ export const MAX_PROFILES = 20;
 const MAX_STRING_LENGTH = 1024;
 const MAX_URL_LENGTH = 2048;
 
+/** Options for coerceSettingValue and parseValueWrite. `allowHttp` (dev mode only) also accepts
+ * http:// URLs; otherwise a `url` must be https, so a Kernal never sends its router key in clear. */
+export interface CoerceOptions {
+  allowHttp?: boolean;
+}
+
 /** `value` as the declared type, or undefined when it doesn't fit. Used on writes (a misfit is a
  * 400) and again on reads, so a value stored before a validation change never reaches a Kernal
  * as the wrong type. Strings are trimmed and must not be empty: "unset" is `null` on a write. */
-export function coerceSettingValue(decl: SettingDecl, value: unknown): SettingValue | undefined {
+export function coerceSettingValue(decl: SettingDecl, value: unknown, opts: CoerceOptions = {}): SettingValue | undefined {
   switch (decl.type) {
     case "boolean":
       return typeof value === "boolean" ? value : undefined;
@@ -247,7 +253,7 @@ export function coerceSettingValue(decl: SettingDecl, value: unknown): SettingVa
       if (!v || v.length > MAX_URL_LENGTH) return undefined;
       try {
         const url = new URL(v);
-        return url.protocol === "https:" || url.protocol === "http:" ? v : undefined;
+        return url.protocol === "https:" || (opts.allowHttp && url.protocol === "http:") ? v : undefined;
       } catch {
         return undefined;
       }
@@ -264,7 +270,7 @@ export type ValueWriteError = { error: "invalid_request" } | { error: "invalid_v
 /** Validates a value write's body (§3.5): `{ values: { key: value | null } }`. Each key must be
  * declared, not retired, not secret, allowed at `level`, and valid for its type (`null` removes
  * it and needs only the first four). Answers the normalized patch. */
-export function parseValueWrite(level: WritableLevel, body: unknown): { patch: Record<string, SettingValue | null> } | ValueWriteError {
+export function parseValueWrite(level: WritableLevel, body: unknown, opts: CoerceOptions = {}): { patch: Record<string, SettingValue | null> } | ValueWriteError {
   const values = (body as { values?: unknown } | null | undefined)?.values;
   if (!values || typeof values !== "object" || Array.isArray(values)) return { error: "invalid_request" };
   const patch: Record<string, SettingValue | null> = {};
@@ -276,7 +282,7 @@ export function parseValueWrite(level: WritableLevel, body: unknown): { patch: R
       patch[key] = null;
       continue;
     }
-    const value = coerceSettingValue(decl, raw);
+    const value = coerceSettingValue(decl, raw, opts);
     if (value === undefined) return { error: "invalid_value", key };
     patch[key] = value;
   }

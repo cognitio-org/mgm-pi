@@ -111,7 +111,7 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
   ) => {
     const expected = ifMatch(req, reply);
     if (expected === undefined) return reply;
-    const parsed = parseValueWrite(level, req.body);
+    const parsed = parseValueWrite(level, req.body, { allowHttp: ctx.config.devMode });
     if ("error" in parsed) return reply.code(400).send(parsed);
     const current = await store.settings.get(id);
     if (!current && level === "profile") return reply.code(404).send({ error: "unknown_profile", profiles: await profileNames(userIdFor(req.identity!.email)) });
@@ -145,7 +145,12 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
     const fleet = withDefaults(await store.fleetSettings.get());
     try {
       reply.header("cache-control", "no-store");
-      return await resolveConfig(store, fleet, { email: identity.email, ...(profile ? { profile } : {}), ...(deviceId ? { deviceId } : {}) });
+      return await resolveConfig(store, fleet, {
+        email: identity.email,
+        ...(profile ? { profile } : {}),
+        ...(deviceId ? { deviceId } : {}),
+        allowHttp: ctx.config.devMode,
+      });
     } catch (err) {
       if (err instanceof UnknownProfileError) return reply.code(404).send({ error: "unknown_profile", profiles: err.profiles });
       throw err;
@@ -317,7 +322,7 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
   app.put("/api/operator/config/fleet", { preHandler: requireOperator }, async (req, reply) => {
     const expected = ifMatch(req, reply);
     if (expected === undefined) return reply;
-    const parsed = parseValueWrite("fleet", req.body);
+    const parsed = parseValueWrite("fleet", req.body, { allowHttp: ctx.config.devMode });
     if ("error" in parsed) return reply.code(400).send(parsed);
     const sentryPatch = Object.entries(parsed.patch).filter(([key]) => key.startsWith(SENTRY_KEY_PREFIX));
     const otherPatch = Object.fromEntries(Object.entries(parsed.patch).filter(([key]) => !key.startsWith(SENTRY_KEY_PREFIX)));

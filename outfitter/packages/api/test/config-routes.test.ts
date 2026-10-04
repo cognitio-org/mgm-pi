@@ -298,6 +298,28 @@ describe("link role: device tokens and Dongles", () => {
       await app.close();
     }
   });
+
+  test("outside dev mode a fleet URL must be https, and a stored http one never reaches a Kernal", async () => {
+    const store = new MemoryStore();
+    const app = await bareApp(store, "web");
+    try {
+      const op = as({ email: "op@x", operator: true });
+      const put = (url: string) => app.inject({ method: "PUT", url: "/api/operator/config/fleet", headers: { ...op, "if-match": 'W/"0"' }, payload: { values: { "router.baseUrl": url } } });
+      const http = await put("http://router.example/v1");
+      assert.equal(http.statusCode, 400);
+      assert.deepEqual(http.json(), { error: "invalid_value", key: "router.baseUrl" });
+      assert.equal((await put("https://router.example/v1")).statusCode, 200);
+
+      // A value stored before this rule (or by hand) falls back to the default on reads.
+      const fleet = await store.fleetSettings.get();
+      await store.fleetSettings.replaceAtVersion({ ...fleet!, values: { "router.baseUrl": "http://router.example/v1" } }, fleet!.version ?? 0);
+      const cfg = (await app.inject({ method: "GET", url: "/api/config", headers: kernal("a@example.com", "dev_a") })).json();
+      assert.equal(cfg.values["router.baseUrl"].source, "default");
+      assert.match(cfg.values["router.baseUrl"].value, /^https:/);
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 describe("the fleet level", () => {

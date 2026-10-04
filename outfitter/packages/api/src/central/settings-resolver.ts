@@ -17,6 +17,7 @@ import {
   SETTINGS_SCHEMA,
   SETTINGS_SCHEMA_VERSION,
   coerceSettingValue,
+  type CoerceOptions,
   type ConfigResponse,
   type ResolvedValue,
   type SettingDecl,
@@ -29,6 +30,8 @@ export interface ResolveRequest {
   /** Absent: the user's default profile, if any. */
   profile?: string;
   deviceId?: string;
+  /** Dev mode only: accept stored http:// URLs. Otherwise a stored http value is skipped. */
+  allowHttp?: boolean;
 }
 
 /** Thrown for a `profile` the user doesn't have (routes answer 404 unknown_profile). `profiles`
@@ -50,7 +53,7 @@ export const DEFAULT_GROUP = "everyone";
  * off, `enabled` falls to its default (false), the DSN is absent and the sample rate is the
  * schema's default. */
 export function fleetLevelValues(fleet: FleetSettings): Record<string, SettingValue> {
-  const values: Record<string, SettingValue> = { ...(fleet.values ?? {}) };
+  const values: Record<string, SettingValue> = { ...(isPlainObject(fleet.values) ? fleet.values : {}) };
   const sentry = fleet.telemetry.sentry;
   if (sentryOn(sentry)) {
     values["telemetry.sentry.enabled"] = true;
@@ -58,6 +61,15 @@ export function fleetLevelValues(fleet: FleetSettings): Record<string, SettingVa
     values["telemetry.sentry.tracesSampleRate"] = sentry.tracesSampleRate;
   }
   return values;
+}
+
+function isPlainObject(value: unknown): value is Record<string, SettingValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A stored document's values, or none when the document has no usable `values` object. */
+function storedValues(doc: Pick<SettingsDoc, "values">): Record<string, SettingValue> {
+  return isPlainObject(doc.values) ? doc.values : {};
 }
 
 interface LevelValues {
@@ -68,12 +80,12 @@ interface LevelValues {
 
 /** One key's value from the levels in authority order (fleet first), or undefined when no level
  * sets it and it has no default. */
-export function resolveKey(decl: SettingDecl, levels: readonly LevelValues[]): ResolvedValue | undefined {
+export function resolveKey(decl: SettingDecl, levels: readonly LevelValues[], opts: CoerceOptions = {}): ResolvedValue | undefined {
   const set: Array<{ level: LevelValues; value: SettingValue }> = [];
   for (const level of levels) {
     if (!decl.levels.includes(level.source)) continue;
     if (!Object.hasOwn(level.values, decl.key)) continue;
-    const value = coerceSettingValue(decl, level.values[decl.key]);
+    const value = coerceSettingValue(decl, level.values[decl.key], opts);
     if (value !== undefined) set.push({ level, value });
   }
   const localAllowed = decl.levels.includes("local");
@@ -131,16 +143,17 @@ export async function resolveConfig(
     profile = profiles.find((p) => p.isDefault);
   }
 
+  // A hand-edited or partial document may lack `values`; it then sets nothing.
   const levels: LevelValues[] = [{ source: "fleet", values: fleetLevelValues(fleet) }];
-  if (group) levels.push({ source: "group", sourceName: DEFAULT_GROUP, values: group.values });
-  if (user) levels.push({ source: "user", values: user.values });
-  if (profile) levels.push({ source: "profile", sourceName: profile.name, values: profile.values });
-  if (device) levels.push({ source: "device", values: device.values });
+  if (group) levels.push({ source: "group", sourceName: DEFAULT_GROUP, values: storedValues(group) });
+  if (user) levels.push({ source: "user", values: storedValues(user) });
+  if (profile) levels.push({ source: "profile", sourceName: profile.name, values: storedValues(profile) });
+  if (device) levels.push({ source: "device", values: storedValues(device) });
 
   const values: Record<string, ResolvedValue> = {};
   for (const decl of SETTINGS_SCHEMA) {
     if (decl.secret || decl.retired) continue;
-    const resolved = resolveKey(decl, levels);
+    const resolved = resolveKey(decl, levels, { allowHttp: req.allowHttp === true });
     if (resolved) values[decl.key] = resolved;
   }
 

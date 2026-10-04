@@ -1,0 +1,26 @@
+# cloudbuild-api.yaml plus the Sentry upload token, so the web build uploads its source maps (#423,
+# packages/web/vite.config.ts). env.sh build_api_image picks this file only when the secret
+# sentry-release-token exists (sentry-token.sh creates it):
+#   gcloud builds submit outfitter/ --config=deploy/cloudbuild-api-sentry.yaml \
+#     --substitutions=_IMAGE=<image>,_SENTRY_ORG=<org>,_SENTRY_PROJECT=<project>
+# Two files because availableSecrets can't be optional: Cloud Build fails the whole build when a
+# listed secret is missing.
+#
+# The token goes Secret Manager -> this step's environment (secretEnv) -> docker build's BuildKit
+# secret (env= reads it from that environment) -> one RUN in the Dockerfile, at /run/secrets. It is
+# never a build arg, an image layer or a log line. Cloud Build reads it as the build's service
+# account (outfitter-builder, env.sh build_service_account), which sentry-token.sh grants
+# secretAccessor on this one secret only. The name deliberately lacks the outfitter- prefix, so
+# outfitter-api's scoped access (secret-scope.sh) can't read it.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    secretEnv: ["SENTRY_AUTH_TOKEN"]
+    args: ["build", "-f", "packages/api/Dockerfile", "--secret", "id=sentry_auth_token,env=SENTRY_AUTH_TOKEN", "--build-arg", "SENTRY_ORG=${_SENTRY_ORG}", "--build-arg", "SENTRY_PROJECT=${_SENTRY_PROJECT}", "-t", "${_IMAGE}", "."]
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/sentry-release-token/versions/latest
+      env: SENTRY_AUTH_TOKEN
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY

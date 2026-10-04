@@ -1,0 +1,73 @@
+kernal/.pi/extensions/kernal-voice/lib.ts
+  s_38ec74cfb7fa1d::t_f471888f4a4879 92-94
+  s_38ec74cfb7fa1d::t_8fcb3d1ffb98ee 67-70,76-77,80
+kernal/.pi/extensions/_shared/central-apply.ts
+  s_38ec74cfb7fa1d::t_9a3a55d6b78189 26,28-29
+  s_38ec74cfb7fa1d::t_422ace7f019dd6 170-174,176-177,181-187,191,193-201,203,206-208,211
+  s_38ec74cfb7fa1d::t_ac13ad6675d4e9 213-222,224-225
+  s_38ec74cfb7fa1d::t_5a22aa16b92ed2 87-94
+  s_38ec74cfb7fa1d::t_1d6e230d55ed5c 192
+  s_38ec74cfb7fa1d::t_52bbaa0d28405f 202,204-205,209-210
+kernal/README.md
+  s_38ec74cfb7fa1d::t_51862ef73b162d 67-69
+kernal/tests/central-apply.test.ts
+  s_38ec74cfb7fa1d::t_538b2cdbc15053 328
+  s_38ec74cfb7fa1d::t_8e5bbbeefafde5 287
+  s_38ec74cfb7fa1d::t_f82d2b786d2f9d 269-270,272,276-280
+  s_38ec74cfb7fa1d::t_dffaa0612409d4 19
+  s_38ec74cfb7fa1d::t_0a89b662fa92bb 322,326-327,329-331,334-335,337,341
+  s_38ec74cfb7fa1d::t_15006bdc7d478e 336,338-340,342-343,346
+  s_38ec74cfb7fa1d::t_1f215f8e723d1a 167-188
+  s_38ec74cfb7fa1d::t_d3de01550f2420 323-325,332-333
+  s_38ec74cfb7fa1d::t_dd3df673f2ba97 452-463
+  s_38ec74cfb7fa1d::t_bf1ea13e108f77 693-713
+  s_38ec74cfb7fa1d::t_efdf409d2694b4 489-506,510-513,515-571
+  s_38ec74cfb7fa1d::t_be993c28a13fff 297
+  s_38ec74cfb7fa1d::t_f1b72a012ea212 507-509,514
+  s_38ec74cfb7fa1d::t_57dd9d1f271b46 281-282
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_253608bd176b52 35,37
+  s_38ec74cfb7fa1d::t_3a3c953d2de478 280-282
+  s_38ec74cfb7fa1d::t_691f29aa1e9ff8 530-531
+  s_38ec74cfb7fa1d::t_80345bddce7066 407-409,412-441
+  s_38ec74cfb7fa1d::t_0c16f1ade9bc51 913-925
+  s_38ec74cfb7fa1d::t_17e6d8bac6f901 23
+  s_38ec74cfb7fa1d::t_422ebfaf5632f5 514-516,518-519
+  s_38ec74cfb7fa1d::t_d36420b26c2653 691
+  s_38ec74cfb7fa1d::t_1b5b7ac1949325 286-287
+  s_38ec74cfb7fa1d::t_cac775ae070d7a 361
+  s_38ec74cfb7fa1d::t_020efd567e61db 410-411
+  s_38ec74cfb7fa1d::t_3097960b51ccb3 539-540
+  s_38ec74cfb7fa1d::t_ea259d0a846848 359
+  s_38ec74cfb7fa1d::t_7139580a80b79f 329-351
+  s_38ec74cfb7fa1d::t_76f44f578a37d8 43
+kernal/.pi/extensions/kernal-voice/index.ts
+  s_38ec74cfb7fa1d::t_a448306993d512 96
+  s_38ec74cfb7fa1d::t_f852e5f35bab35 20
+  s_38ec74cfb7fa1d::t_c914c452d029ae 53-54,61,66-72
+  s_38ec74cfb7fa1d::t_76d440cd7ebf87 26-27
+kernal/.pi/extensions/connect/index.ts
+  s_38ec74cfb7fa1d::t_45337b006409c9 321-323
+  s_38ec74cfb7fa1d::t_28f17a4238446c 29
+  s_38ec74cfb7fa1d::t_cc2f81ebbe7085 290-293,296-299,303-312
+  s_38ec74cfb7fa1d::t_d9629974de6d5a 313-314
+kernal/bin/kernal
+  s_38ec74cfb7fa1d::t_76b2b50b3aa71f 518-519
+  s_38ec74cfb7fa1d::t_6c0f9295bb658e 174-209,213-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "96d12c1b0ba3f09a7fa1432fc3f9ee93b0514922",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

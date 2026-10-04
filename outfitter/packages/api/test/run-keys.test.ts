@@ -9,7 +9,7 @@ import { FakeLitellm } from "./fake-litellm.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretsBroker } from "../src/secrets.ts";
 import { createLitellmKeys, runKeyAlias, RUN_KEY_MAX_BUDGET_USD, type LitellmKeys } from "../src/central/litellm-keys.ts";
-import { RunKeys, RunKeyUnavailableError, RUN_KEY_DURATION_SECONDS, SYSTEM_TEAM_ALIAS } from "../src/central/run-keys.ts";
+import { RunKeys, RunKeyUnavailableError, MAX_RUN_KEYS, RUN_KEY_DURATION_SECONDS, SYSTEM_TEAM_ALIAS } from "../src/central/run-keys.ts";
 import { userIdFor } from "../src/central/user-id.ts";
 import { loadConfig } from "../src/config.ts";
 import type { Run } from "../src/store/types.ts";
@@ -87,10 +87,26 @@ describe("RunKeys.keyForRun", () => {
     const second = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
     assert.equal(second.source, "run");
     assert.notEqual(second.key, first.key);
+    assert.equal(second.alias, "outfitter-run-r1-2", "a new record, never the earlier one overwritten");
     assert.equal(fake.callsTo("/key/delete").length, 1);
     assert.equal(fake.keys.size, 1, "only the new key is live in LiteLLM");
-    const record = await store.routerKeys.findByAlias("outfitter-run-r1");
-    assert.equal(record?.deletedAt, undefined);
+    assert.ok((await store.routerKeys.findByAlias("outfitter-run-r1"))?.deletedAt);
+    assert.equal((await store.routerKeys.findByAlias("outfitter-run-r1-2"))?.deletedAt, undefined);
+  });
+
+  test("a spec never sent whose earlier key can't be deleted: that key stays owed to the sweep", async () => {
+    const { fake, store, runKeys } = setup();
+    await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
+    const before = await store.routerKeys.findByAlias("outfitter-run-r1");
+    assert.ok(before?.litellmTokenId);
+    fake.failNext("/key/delete", 500);
+    const second = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
+    assert.equal(second.alias, "outfitter-run-r1-2");
+    const owed = await store.routerKeys.findByAlias("outfitter-run-r1");
+    assert.equal(owed?.litellmTokenId, before.litellmTokenId, "the record of the undeleted key is intact");
+    assert.ok(owed?.deleteFailedAt);
+    assert.equal(owed?.deletedAt, undefined);
+    assert.deepEqual((await store.routerKeys.listPendingDelete(10)).map((k) => k.alias), ["outfitter-run-r1"]);
   });
 
   test("a spec that may have gone out keeps its key; a fresh agentd gets the shared key while the fallback lasts", async () => {
@@ -104,12 +120,31 @@ describe("RunKeys.keyForRun", () => {
     assert.ok([...fake.keys.values()].some((k) => k.key === first.key), "the first key stays live");
   });
 
-  test("without the fallback, a re-sent spec replaces the key", async () => {
-    const { fake, runKeys } = setup({ fallback: false });
-    await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
+  test("without the fallback, a spec that may have gone out keeps its key and a re-sent one gets an additional key", async () => {
+    const { fake, store, runKeys } = setup({ fallback: false });
+    const first = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
     const again = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "yes", sharedKey: SHARED, a2a: false });
-    assert.equal(again.source, "run");
-    assert.equal(fake.callsTo("/key/delete").length, 1);
+    const third = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "unknown", sharedKey: SHARED, a2a: false });
+    assert.deepEqual([again.source, again.alias, third.alias], ["run", "outfitter-run-r1-2", "outfitter-run-r1-3"]);
+    assert.equal(fake.callsTo("/key/delete").length, 0);
+    assert.ok([...fake.keys.values()].some((k) => k.key === first.key), "the first key survives the re-sent spec");
+    assert.equal(fake.keys.size, 3);
+    assert.equal((await store.routerKeys.findByAlias("outfitter-run-r1"))?.deletedAt, undefined);
+
+    // At bye every one of them goes.
+    await runKeys.revoke("r1");
+    assert.equal(fake.keys.size, 0);
+    for (const alias of ["outfitter-run-r1", "outfitter-run-r1-2", "outfitter-run-r1-3"]) {
+      assert.ok((await store.routerKeys.findByAlias(alias))?.deletedAt, alias);
+    }
+  });
+
+  test("a run past MAX_RUN_KEYS counts as a failed mint", async () => {
+    const { fake, runKeys } = setup({ fallback: false });
+    const req = { run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "yes" as const, sharedKey: SHARED, a2a: false };
+    for (let i = 0; i < MAX_RUN_KEYS; i++) await runKeys.keyForRun(req);
+    await assert.rejects(runKeys.keyForRun(req), RunKeyUnavailableError);
+    assert.equal(fake.callsTo("/key/generate").length, MAX_RUN_KEYS);
   });
 
   test("a failed mint falls back to the shared key, or refuses (retryable) with the fallback off", async () => {

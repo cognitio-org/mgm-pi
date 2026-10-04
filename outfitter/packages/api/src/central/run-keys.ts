@@ -16,10 +16,12 @@
 // Until CA-10 the shared key stays as the fallback (config.runKeyFallback, OUTFITTER_RUN_KEY_FALLBACK):
 // a mint that fails, or a re-sent spec whose first key may still be in use, gets the shared key
 // instead of failing the run. With the fallback off a failed mint is a transient run.spec failure
-// (agentd retries the connection).
+// (agentd retries the connection), and a re-sent spec whose first key may be in use gets an
+// additional run key (`outfitter-run-<runId>-2`, ...) while the first stays live until the run ends.
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import type { RouterKey } from "../store/keys.ts";
 import type { Run, Session, Store } from "../store/types.ts";
 import { runKeyAlias, type LitellmKeys } from "./litellm-keys.ts";
 import { resolveConfig } from "./settings-resolver.ts";
@@ -35,6 +37,11 @@ export const SYSTEM_TEAM_ALIAS = "outfitter-system";
  * never re-mints (agentd keeps its first spec), so the key covers the whole 24 h ceiling §9 allows.
  * The explicit delete at the run's end is what normally revokes it. */
 export const RUN_KEY_DURATION_SECONDS = 24 * 60 * 60;
+
+/** The most keys one run is minted (`outfitter-run-<runId>`, then `-2` up to `-<n>`): with the
+ * fallback off, each re-sent spec of a still-provisioning run adds one. Past this the spec build
+ * counts as a failed mint. */
+export const MAX_RUN_KEYS = 8;
 
 /** Where run.spec.secrets.litellmKey came from. "run": minted for this run (or, on a reconnect,
  * deliberately empty: agentd keeps the key of its first spec). "shared": the tape's or the
@@ -110,24 +117,28 @@ export class RunKeys {
     // and this spec is ignored, so nothing is minted and no key is sent again.
     if (specApplied(req.run.state)) return { key: "", source: "run", alias };
 
-    const existing = await this.store.routerKeys.findByAlias(alias).catch(() => null);
-    if (existing && !existing.deletedAt) {
-      // A spec was built for this run before. If it never went out (the socket was lost while it
-      // was being built), its key reached nobody: replace it. If it may have gone out, an agentd
-      // still provisioning could be using it, and it applies only its first spec: deleting that key
-      // would break the run, so keep it and hand the shared key to a fresh agentd while the
-      // fallback lasts. Without the fallback it is replaced all the same.
-      if (req.specSent !== "no" && this.fallback) return shared;
-      try {
-        await this.keys.deleteKey({ alias });
-      } catch (err) {
-        // Recorded as owed (deleteFailedAt); the sweep retries. The mint below replaces the record.
-        this.log(`run keys: could not delete the earlier key of run ${req.run.id}`, err);
-      }
-    }
-
     const email = req.session.ownerEmail;
     try {
+      const records = await this.runKeyRecords(req.run.id);
+      if (records.some((r) => !r.deletedAt)) {
+        // A spec was built for this run before. If it may have gone out, an agentd still
+        // provisioning could be using its key, and agentd applies only its first spec: that key
+        // stays live until the run ends. A fresh agentd gets the shared key while the fallback
+        // lasts, or else an additional key below. If no spec went out (the socket was lost while
+        // one was being built), the earlier keys reached nobody and are deleted. A failed delete
+        // stays owed (deleteFailedAt) for the sweep: the new key is a new record, never this one.
+        if (req.specSent !== "no" && this.fallback) return shared;
+        if (req.specSent === "no") {
+          for (const record of records) {
+            if (record.deletedAt) continue;
+            await this.keys.deleteKey({ alias: record.alias }).catch((err: unknown) => {
+              this.log(`run keys: could not delete ${record.alias} of run ${req.run.id}; the sweep retries`, err instanceof Error ? err.message : String(err));
+            });
+          }
+        }
+      }
+      const mint = records.length + 1;
+      if (mint > MAX_RUN_KEYS) throw new Error(`run ${req.run.id} already has ${MAX_RUN_KEYS} keys`);
       const userId = userIdFor(email);
       await this.keys.ensureLitellmUser({ userId, email });
       const minted = await this.keys.mintRunKey({
@@ -136,6 +147,7 @@ export class RunKeys {
         runId: req.run.id,
         sessionId: req.session.id,
         durationSeconds: RUN_KEY_DURATION_SECONDS,
+        mint,
       });
       return { key: minted.key, source: "run", alias: minted.alias };
     } catch (err) {
@@ -148,17 +160,37 @@ export class RunKeys {
     }
   }
 
-  /** Deletes the run's key, if it has one. Called when the run ends; never throws (a failed delete
-   * is recorded and retried by the tick's sweep). */
+  /** Every key record of a run, in mint order (`runKeyAlias(runId, 1)`, `2`, ...). Records are
+   * never removed (a deleted key keeps its record with deletedAt), so the first missing alias ends
+   * the list. */
+  private async runKeyRecords(runId: string): Promise<RouterKey[]> {
+    const records: RouterKey[] = [];
+    for (let mint = 1; mint <= MAX_RUN_KEYS; mint++) {
+      const record = await this.store.routerKeys.findByAlias(runKeyAlias(runId, mint));
+      if (!record) break;
+      records.push(record);
+    }
+    return records;
+  }
+
+  /** Deletes every key the run has. Called when the run ends; never throws (a failed delete is
+   * recorded and retried by the tick's sweep). */
   async revoke(runId: string): Promise<void> {
     if (!this.keys) return;
-    const alias = runKeyAlias(runId);
+    let records: RouterKey[];
     try {
-      const record = await this.store.routerKeys.findByAlias(alias);
-      if (!record || record.deletedAt) return;
-      await this.keys.deleteKey({ alias });
+      records = await this.runKeyRecords(runId);
     } catch (err) {
-      this.log(`run keys: could not delete the key of run ${runId}; the sweep retries`, err instanceof Error ? err.message : String(err));
+      this.log(`run keys: could not look up the keys of run ${runId}; the sweep deletes them at expiry`, err instanceof Error ? err.message : String(err));
+      return;
+    }
+    for (const record of records) {
+      if (record.deletedAt) continue;
+      try {
+        await this.keys.deleteKey({ alias: record.alias });
+      } catch (err) {
+        this.log(`run keys: could not delete ${record.alias} of run ${runId}; the sweep retries`, err instanceof Error ? err.message : String(err));
+      }
     }
   }
 

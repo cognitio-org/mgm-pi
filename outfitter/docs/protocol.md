@@ -407,7 +407,9 @@ is applied, so the real `secrets.litellmKey` can never be sent to a guru-control
 `secrets.litellmKey`: alias `outfitter-run-<runId>`, the owner's `user_id`, LiteLLM `duration` 24 h
 (the agent job's task timeout), budget 20 USD (`central/run-keys.ts`). It is minted once, on the
 run's first spec; a reconnect of a running run gets `litellmKey: ""` (agentd keeps its first spec).
-The api deletes the key when the run's `bye` is stored; a run that ends any other way leaves its key
+A spec re-sent while the run still provisions never deletes a key that may have gone out: it gets the
+shared key while the fallback is on, otherwise an additional key `outfitter-run-<runId>-<n>`.
+The api deletes all of the run's keys when its `bye` is stored; a run that ends any other way leaves its key
 to LiteLLM's expiry and the tick's sweep. Without minting, without an owner, and for an A2A session
 the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the default until
 CA-10) a failed mint also falls back to it, and with it off the spec build fails retryably (1011).

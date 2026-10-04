@@ -9,7 +9,7 @@
 # - The key belongs to the LiteLLM user `outfitter-svc` with user_role proxy_admin, so it may mint
 #   keys for other users (device keys, run keys). LiteLLM takes the role from the user row, not
 #   the key (auth/auth_checks.py `_is_user_proxy_admin`).
-# - `allowed_routes` limits it to key, user, team, spend and model routes. It is enforced for every
+# - `allowed_routes` limits it to the routes the api calls (see ALLOWED_ROUTES). It is enforced for every
 #   role, admins included (auth/route_checks.py), and needs no enterprise license. Only a
 #   proxy_admin caller (the master key here) can set it.
 # - /key/regenerate is premium-only, so rotation mints a new key under a new alias and deletes the
@@ -32,12 +32,16 @@ ALIAS_PREFIX="outfitter-admin"
 DRY_RUN="${DRY_RUN:-0}"
 ROTATE="${ROTATE:-0}"
 
+# Exactly the routes the api calls with this key (litellm-keys.ts, providers-status.ts, models.ts);
+# test/litellm-admin.test.sh fails if the two drift apart in either direction. The key is mounted on
+# both roles, the public link service included, so nothing beyond these: no /key/update, /key/list,
+# /key/block or /model/new|update|delete. #384's model reconciliation adds its routes with its code.
 ALLOWED_ROUTES='[
-  "/key/generate", "/key/update", "/key/delete", "/key/block", "/key/unblock", "/key/info", "/key/list",
-  "/user/new", "/user/info", "/user/update", "/user/list",
-  "/team/new", "/team/info", "/team/list",
-  "/spend/logs", "/user/daily/activity",
-  "/model/new", "/model/update", "/model/delete", "/model/info",
+  "/key/generate", "/key/delete", "/key/info",
+  "/user/new", "/user/info", "/user/list",
+  "/team/new", "/team/list",
+  "/spend/logs",
+  "/model/info",
   "/health/liveliness"
 ]'
 
@@ -95,7 +99,7 @@ fi
 alias="${ALIAS_PREFIX}-$(date -u +%Y%m%d%H%M%S)"
 echo "+ mint key ${alias}"
 new_key="$(api POST /key/generate "$(jq -nc --arg u "${SVC_USER}" --arg a "${alias}" --argjson r "${ALLOWED_ROUTES}" \
-  '{user_id: $u, key_alias: $a, allowed_routes: $r, metadata: {owner: "outfitter", purpose: "device/run key minting, model reconciliation", epic: "389"}}')" \
+  '{user_id: $u, key_alias: $a, allowed_routes: $r, metadata: {owner: "outfitter", purpose: "device/run key minting, router probe", epic: "389"}}')" \
   | jq -r '.key // empty')"
 [[ "${new_key}" == sk-* ]] || deploy_fail "router returned no key"
 

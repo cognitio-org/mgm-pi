@@ -5,11 +5,12 @@
  *   /connect                      interactive picker (backend, then model)
  *   /connect litellm              pick a model on that backend
  *   /connect lmstudio <model-id>  switch directly
+ *   /connect openrouter           ends with "Browse all OpenRouter models…" to add one to the list
  *   /budget [off]                 themed panel above the editor
  *
  * Backends are registered as pi providers at startup. LM Studio and LiteLLM models are discovered
  * live (LiteLLM via /model/info for prices and limits, falling back to /v1/models); OpenRouter uses
- * a curated list (OPENROUTER_MODELS overrides). The chosen backend/model is saved to the agent
+ * a curated list (OPENROUTER_MODELS overrides; central settings add and remove models, curation.ts). The chosen backend/model is saved to the agent
  * dir's settings.json. Secrets come from ~/localllm/.env, ../.env or ./.env (see README).
  * All pure logic lives in ./lib.ts and is unit-tested.
  */
@@ -21,8 +22,9 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { env, inSandbox } from "../_shared/env.ts";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
-  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed,
+  sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed, curateOpenRouter,
 } from "./lib.ts";
+import { canSaveToAccount, changeCuration, curationLists, type CurationTarget } from "./curation.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
 import { layerCentralEnv, webOrigin } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
@@ -82,6 +84,7 @@ export async function getJson(url: string, apiKey: string, timeoutMs = 4000): Pr
 const reachable = new Set<string>();   // backends whose server answered discovery
 const keyRejected = new Map<string, string>();   // backend id → why the provider refused its key (401/403)
 const notListed = new Map<string, string[]>();   // backend id → curated model ids the provider no longer lists
+let openrouterCatalogue: string[] = [];   // every id OpenRouter lists, for "Browse all" (#440)
 
 /** Verify a key against the backend's cheapest authenticated endpoint; only a definite 401/403 counts. */
 async function checkKey(b: Backend, timeoutMs = 5000): Promise<boolean> {
@@ -134,7 +137,7 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
   if (env("NO_DISCOVERY")) return b.fallback;   // KERNAL_NO_DISCOVERY: offline / tests
   if (b.id === "openrouter") {
     const list = await getJson(`${b.baseUrl}/models`, b.apiKey);
-    if (list) reachable.add(b.id);
+    if (list) { reachable.add(b.id); openrouterCatalogue = ((list.data ?? []) as any[]).map((m) => String(m?.id)).sort(); }
     const { kept, dropped } = keepListed(b.fallback, list);
     if (dropped.length) notListed.set(b.id, dropped);
     return kept;
@@ -172,15 +175,19 @@ export default async function (pi: ExtensionAPI) {
   // What the account delivered when the last registration began (central-config, held in memory),
   // so a delivery that lands while it runs is noticed. Only the account's part: connect itself edits
   // process.env (OPENROUTER_API_KEY, below), which must not look like a change.
+  // The curated OpenRouter list's settings count too (#440): a change re-registers OpenRouter.
   let registeredFrom = "";
+  const centralInputs = () => backendInputs(layerCentralEnv({})) + JSON.stringify(curationLists());
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
-    registeredFrom = backendInputs(layerCentralEnv({}));
+    registeredFrom = centralInputs();
     litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); notListed.clear(); registered.clear();
     // A cloud sandbox has no local model server: there the lmstudio backend is kept only when
     // LMSTUDIO_BASE_URL was set on purpose (a guru opting in to a tunnelled laptop model), and is
     // never probed on localhost by default.
     defs = backends(env, litellmMeta, lmstudioMeta).filter((b) => !(b.id === "lmstudio" && inSandbox() && !env.LMSTUDIO_BASE_URL));
+    const or = defs.find((d) => d.id === "openrouter");
+    if (or) or.fallback = curateOpenRouter(or.fallback, curationLists(), !!env.OPENROUTER_MODELS);
     await Promise.all(defs.map(async (b) => {
       // A cloud backend without a key is not registered at all: otherwise its models show up in
       // pi's own /model picker and every request fails with a bare 401 from the provider.
@@ -274,12 +281,54 @@ export default async function (pi: ExtensionAPI) {
     if (keyRejected.has(b.id)) { ctx.ui.notify(`${b.id} rejected the key (${keyRejected.get(b.id)}). Run /setup and paste it again. ${keyHint(b.id)}`, "error"); return; }
     const ids = models.get(b.id) ?? [];
     if (!modelId) {
-      modelId = ids.length === 1 ? ids[0] : await ctx.ui.select(`Model on ${b.id}`, ids);
+      const options = b.id === "openrouter" ? [...ids, BROWSE] : ids;
+      modelId = options.length === 1 ? options[0] : await ctx.ui.select(`Model on ${b.id}`, options);
       if (!modelId) return;
+      if (modelId === BROWSE) { modelId = await browseOpenRouter(ctx); if (!modelId) return; }
     }
+    // Not on the list but OpenRouter has it: offer to add it first, so pi can switch to it.
+    if (b.id === "openrouter" && !ids.includes(modelId) && (await loadCatalogue()).includes(modelId) && !(await offerToAdd(ctx, modelId))) return;
     const problem = await selectModel(ctx, b.id, modelId);
     if (problem) ctx.ui.notify(problem, "error");
     else ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
+  }
+
+  const BROWSE = "Browse all OpenRouter models…";
+
+  /** OpenRouter's catalogue, fetched now when start-up didn't get it (offline, KERNAL_NO_DISCOVERY). */
+  async function loadCatalogue(): Promise<string[]> {
+    if (!openrouterCatalogue.length && !env("NO_DISCOVERY")) {   // offline: no catalogue, so no id check either
+      const b = byId("openrouter");
+      const list = b?.apiKey ? await getJson(`${b.baseUrl}/models`, b.apiKey, 8000) : undefined;
+      openrouterCatalogue = ((list?.data ?? []) as any[]).map((m) => String(m?.id)).sort();
+    }
+    return openrouterCatalogue;
+  }
+
+  /** Search OpenRouter's whole catalogue, then pick one of the matches. */
+  async function browseOpenRouter(ctx: ExtensionCommandContext): Promise<string | undefined> {
+    if (!(await loadCatalogue()).length) { ctx.ui.notify("OpenRouter's model list could not be read; try again later", "error"); return undefined; }
+    const query = await ctx.ui.input(`Search ${openrouterCatalogue.length} OpenRouter models (part of an id, e.g. deepseek)`, "");
+    if (query === undefined) return undefined;
+    const q = query.trim().toLowerCase();
+    const matches = openrouterCatalogue.filter((id) => id.toLowerCase().includes(q));
+    if (!matches.length) { ctx.ui.notify(`No OpenRouter model matches "${query.trim()}"`, "warning"); return undefined; }
+    return ctx.ui.select(`OpenRouter models matching "${query.trim()}" (${matches.length})`, matches);
+  }
+
+  /** Ask where to add a model to the curated list, add it and re-register. False when not added. */
+  async function offerToAdd(ctx: ExtensionCommandContext, id: string): Promise<boolean> {
+    if (loadEnv(process.cwd()).OPENROUTER_MODELS) { ctx.ui.notify(`OPENROUTER_MODELS in .env sets the whole OpenRouter list: add ${id} there, or remove it to curate the list here`, "error"); return false; }
+    const ACCOUNT = "Add to my account's list (every Kernal I sign in to)", MACHINE = "Add to this machine's list only";
+    const pick = await ctx.ui.select(`${id} is not on your OpenRouter list`, canSaveToAccount() ? [ACCOUNT, MACHINE] : [MACHINE]);
+    if (!pick) return false;
+    try {
+      ctx.ui.notify(await changeCuration("add", id, pick === ACCOUNT ? "account" : "machine", { catalogue: await loadCatalogue() }), "info");
+    } catch (e: any) { ctx.ui.notify(`Not added: ${e?.message ?? e}`, "error"); return false; }
+    await registerAll();
+    // Saved, but this process still resolves the old list (Outfitter didn't answer the reload).
+    if (!(models.get("openrouter") ?? []).includes(id)) { ctx.ui.notify(`${id} is saved, but this session couldn't pick up the change; it is offered from the next start`, "warning"); return false; }
+    return true;
   }
 
   /** Switch to a model and save it as the default. Returns why not, or undefined on success. */
@@ -299,9 +348,25 @@ export default async function (pi: ExtensionAPI) {
     rejected: keyRejected.get(d.id), models: models.get(d.id) ?? [],
   }));
 
+  /** The curated OpenRouter list's parts, for /admin's Model page (#440). */
+  const curationState = () => ({
+    lists: curationLists(), catalogue: openrouterCatalogue, canAccount: canSaveToAccount(),
+    replacedByEnv: !!loadEnv(process.cwd()).OPENROUTER_MODELS,
+    unavailable: notListed.get("openrouter") ?? [],   // on a list, but OpenRouter doesn't list them
+  });
+
   // /admin (and anything else) asks through the shared event bus rather than duplicating this state.
-  busServe((pi as any).events, "kernal:connect", async (req: { op: string; ctx?: any; provider?: string; model?: string }) => {
+  busServe((pi as any).events, "kernal:connect", async (req: { op: string; ctx?: any; provider?: string; model?: string; action?: string; target?: string }) => {
     if (req?.op === "state") return connectionState();
+    if (req?.op === "curation") return curationState();
+    if (req?.op === "curate") {
+      if (req.action !== "add" && req.action !== "remove") throw new Error("action is add or remove");
+      if (req.target !== "account" && req.target !== "machine") throw new Error("target is account or machine");
+      if (curationState().replacedByEnv) throw new Error("OPENROUTER_MODELS in .env sets the whole OpenRouter list: edit it there, or remove it to curate the list here");
+      const message = await changeCuration(req.action, String(req.model ?? ""), req.target as CurationTarget, { catalogue: req.action === "add" ? await loadCatalogue() : undefined });
+      await registerAll();
+      return { message, ...curationState(), models: models.get("openrouter") ?? [] };
+    }
     if (req?.op === "reload") { await registerAll(); return connectionState(); }
     if (req?.op === "select") {
       if (!req.ctx) throw new Error("no session to switch the model in yet");
@@ -317,7 +382,7 @@ export default async function (pi: ExtensionAPI) {
   // bus, but nobody served it yet and busRequest drops the request silently (2026-10-04: OpenRouter
   // stayed "No API key" for the whole session). So check once now that we serve the bus: anything
   // that lands later reaches the handler above.
-  if (backendInputs(layerCentralEnv({})) !== registeredFrom) void registerAll().catch(() => {});
+  if (centralInputs() !== registeredFrom) void registerAll().catch(() => {});
 
   pi.registerCommand("connect", {
     description: "Connect to lmstudio | litellm | openrouter [model]",

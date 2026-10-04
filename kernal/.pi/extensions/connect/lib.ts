@@ -135,6 +135,42 @@ export function keepListed(curated: string[], catalogue: any): { kept: string[];
   return { kept: curated.filter(listed), dropped: curated.filter((id) => !listed(id)) };
 }
 
+/** #440: the curated OpenRouter list's central settings, one add and one remove key per level. */
+export const CURATION_KEYS = {
+  fleetAdd: "openrouter.models.fleetAdd", fleetRemove: "openrouter.models.fleetRemove",
+  add: "openrouter.models.add", remove: "openrouter.models.remove",
+  profileAdd: "openrouter.models.profileAdd", profileRemove: "openrouter.models.profileRemove",
+  localAdd: "openrouter.models.localAdd", localRemove: "openrouter.models.localRemove",
+} as const;
+export type CurationLists = Record<keyof typeof CURATION_KEYS, string[]>;
+export const NO_CURATION: CurationLists = { fleetAdd: [], fleetRemove: [], add: [], remove: [], profileAdd: [], profileRemove: [], localAdd: [], localRemove: [] };
+/** Each level's own pair, farthest first: a nearer level's add or remove wins over a farther one's. */
+export const CURATION_LEVELS = [["fleetAdd", undefined], ["add", "remove"], ["profileAdd", "profileRemove"], ["localAdd", "localRemove"]] as const;
+
+/** "a/b, c/d,,a/b" → ["a/b", "c/d"]: trimmed, empties and repeats dropped. */
+export function parseIdList(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  return [...new Set(text.split(",").map((s) => s.trim()).filter(Boolean))];
+}
+
+/**
+ * The OpenRouter models to offer: the base list (Kernal's defaults), then each level's removes and
+ * adds from the fleet's down to this machine's, so a nearer level wins (this machine can add back
+ * what the account removed). The fleet's removals come last and always win, so "hidden from
+ * everyone" holds. When OPENROUTER_MODELS replaced the base (`replaced`), only those still apply.
+ */
+export function curateOpenRouter(base: string[], lists: CurationLists, replaced = false): string[] {
+  const out = new Set(base);
+  if (!replaced) {
+    for (const [add, remove] of CURATION_LEVELS) {
+      if (remove) for (const id of lists[remove]) out.delete(id);
+      for (const id of lists[add]) out.add(id);
+    }
+  }
+  for (const id of lists.fleetRemove) out.delete(id);
+  return [...out];
+}
+
 export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
   const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;

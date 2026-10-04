@@ -64,8 +64,9 @@ these that sets it wins:
 2. **your account**: the device, then the profile (`--profile`), then the account itself;
 3. **what this machine set before**, shown as "(legacy)" in `/config`: `settings.json`'s
    `defaultProvider`/`defaultModel`/`defaultThinkingLevel` (only when they differ from what the
-   release shipped), `kernal.compaction`, `kernal.memory`, pi-listen's `voice` settings and
-   `KERNAL_SUMMARY_MODEL`;
+   release shipped, or in a source checkout from the committed `settings.json`),
+   `kernal.compaction`, `kernal.memory`, pi-listen's `voice` settings (not the values Kernal wrote
+   there itself: its voice seed, or a copy of the account's value) and `KERNAL_SUMMARY_MODEL`;
 4. the fleet's value, then the default.
 
 So a change on your account reaches a laptop that once ran `/connect`, while an explicit "only this

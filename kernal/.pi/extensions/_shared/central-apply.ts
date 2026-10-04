@@ -23,10 +23,10 @@
  * anything here.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import {
-  KNOWN_SETTINGS, appliesOverLocal, describeSource, displayValue, resolve, voiceSettingsFile,
-  type ConfigValue, type ResolvedConfig,
+  KNOWN_SETTINGS, appliesOverLocal, describeSource, displayValue, readVoiceRecord, resolve, voiceSettingsFile, writeVoiceRecord,
+  type ConfigValue, type ResolvedConfig, type VoiceField, type VoiceRecord,
 } from "./central-config.ts";
 import { inSandbox } from "./env.ts";
 import { readSettings } from "../connect/settings.ts";
@@ -83,6 +83,14 @@ export function wantedModel(r: ResolvedConfig, current: ModelRef | undefined, fi
     if (slash > 0) {
       const named = find(id.slice(0, slash), id.slice(slash + 1));
       if (named) return { model: named, wanted: id };
+    }
+    // The model is set without a backend: the backend pi started on (maybe a legacy settings.json
+    // pair) need not have it. Any backend with a key here that does: model.provider's value first
+    // (its default is litellm), then the first one.
+    if (!providerApplies) {
+      const have = available().filter((x) => x.id === id);
+      const pick = have.find((x) => x.provider === String(p?.value ?? "litellm")) ?? have[0];
+      if (pick) return { model: pick, wanted: `${pick.provider}/${pick.id}` };
     }
     return { wanted: `${provider}/${id}` };
   }
@@ -159,30 +167,62 @@ function readJson(path: string): Record<string, any> | undefined {
  * or the account (appliesOverLocal). pi-listen reads its settings at each session_start, so a
  * change reaches the next session. Returns the keys it changed; never throws. Leaves pi-listen
  * alone with KERNAL_VOICE=off, like kernal-voice.
+ *
+ * Each write is recorded (central-config's VoiceRecord), so the copy is never mistaken for the
+ * person's own legacy choice. Once the account's or this machine's value is gone, a copy still in
+ * place (unchanged since) goes back to kernal-voice's seed value, else to the default: the person's
+ * hand edit since is kept.
  */
-export function applyVoiceSettings(r: ResolvedConfig = resolve(), path: string = voiceSettingsFile()): string[] {
+export function applyVoiceSettings(r: ResolvedConfig = resolve(), path: string = voiceSettingsFile(),
+  recordPath: string = join(dirname(path), "kernal-voice-applied.json")): string[] {
   try {
     // A Drive has no microphone; KERNAL_VOICE=off leaves pi-listen alone, as kernal-voice does.
     if (inSandbox() || (process.env.KERNAL_VOICE ?? process.env.MGM_VOICE) === "off") return [];
-    const enabled = r.values["voice.enabled"], language = r.values["voice.language"];
-    const patch: Record<string, unknown> = {};
-    if (appliesOverLocal(enabled)) patch.enabled = enabled!.value;
-    if (appliesOverLocal(language)) patch.language = language!.value;
-    if (!Object.keys(patch).length) return [];
+    const record = readVoiceRecord(recordPath);
+    const applied = { ...(record.applied ?? {}) };
+    const wants: VoiceField[] = [];
+    for (const k of ["enabled", "language"] as const) {
+      if (appliesOverLocal(r.values[`voice.${k}`]) || k in applied) wants.push(k);
+    }
+    if (!wants.length) return [];
     const settings = readJson(path) ?? (existsSync(path) ? undefined : {});
     if (!settings) return [];   // unparseable: a hand edit in progress is left alone
     const voice = settings.voice && typeof settings.voice === "object" ? settings.voice : {};
-    const changed = Object.keys(patch).filter((k) => voice[k] !== patch[k]);
-    if (!changed.length) return [];
-    const next = { ...settings, voice: { ...voice, ...Object.fromEntries(changed.map((k) => [k, patch[k]])) } };
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    try {
-      writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
-      renameSync(tmp, path);
-    } finally {
-      rmSync(tmp, { force: true });
+    const patch: Record<string, unknown> = {};
+    const seed = { ...(record.seed ?? {}) };
+    for (const k of wants) {
+      const v = r.values[`voice.${k}`];
+      if (appliesOverLocal(v)) {
+        patch[k] = v!.value;
+        applied[k] = v!.value;
+        continue;
+      }
+      // Kernal's copy of a value that no longer applies: back to the seed's value, else the default,
+      // unless the person changed it since (then it is theirs, and a legacy value now).
+      // A default put back is Kernal's baseline from then on, like the seed (never a legacy choice).
+      if (voice[k] === applied[k]) {
+        const back = seed[k] ?? (v && v.source !== "legacy" ? v.value : undefined);
+        if (back !== undefined) { patch[k] = back; seed[k] = back; }
+      }
+      delete applied[k];
     }
+    const nextRecord: VoiceRecord = { ...record, seed, applied };
+    if (!Object.keys(seed).length) delete nextRecord.seed;
+    if (!Object.keys(applied).length) delete nextRecord.applied;
+    const changed = Object.keys(patch).filter((k) => voice[k] !== patch[k]);
+    if (changed.length) {
+      const next = { ...settings, voice: { ...voice, ...Object.fromEntries(changed.map((k) => [k, patch[k]])) } };
+      mkdirSync(dirname(path), { recursive: true });
+      const tmp = `${path}.${process.pid}.tmp`;
+      try {
+        writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+        renameSync(tmp, path);
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+    }
+    // After the settings: a failed write above leaves the record as it was.
+    if (JSON.stringify(nextRecord) !== JSON.stringify(record)) writeVoiceRecord(nextRecord, recordPath);
     return changed.map((k) => `voice.${k}`);
   } catch {
     return [];

@@ -64,15 +64,20 @@ function withoutSeed(settings: Record<string, any>): Record<string, any> {
  */
 export function reconcileVoice(
   settings: Record<string, any>,
-  opts: { marker?: SeedMarker; deepgramKey: boolean; modelDownloaded: boolean; model?: string; language?: string; now?: string },
+  opts: { marker?: SeedMarker; deepgramKey: boolean; modelDownloaded: boolean; model?: string; language?: string; now?: string;
+    /** The voice.enabled Kernal itself last wrote (#437: the account's or this machine's value,
+     * applyVoiceSettings): an `enabled: false` it wrote is no sign the person took voice over. */
+    kernalEnabled?: unknown },
 ): Reconcile {
   const voice = settings.voice && typeof settings.voice === "object" ? settings.voice : {};
   const at = opts.now ?? new Date().toISOString();
   const same = { settings, changed: false };
   const m = opts.marker;
+  const offByKernal = voice.enabled === false && opts.kernalEnabled === false;
+  const offByPerson = voice.enabled === false && !offByKernal;
 
   if (m?.state === "seeded") {
-    if (voice.backend !== "local" || voice.localModel !== m.localModel || voice.enabled === false) {
+    if (voice.backend !== "local" || voice.localModel !== m.localModel || offByPerson) {
       return { ...same, reason: "the person changed voice since kernal seeded it" };
     }
     if (!opts.deepgramKey) return { ...same, marker: m, reason: "seed still standing in for a key" };
@@ -84,7 +89,9 @@ export function reconcileVoice(
     // setup also shows in how onboarding was completed: kernal's own seed and unseed leave
     // "migration"; the person's setup leaves "first-run" or "setup-command".
     const chosen = voice.onboarding?.source === "first-run" || voice.onboarding?.source === "setup-command";
-    if (voice.backend || voice.enabled === false || chosen) return { ...same, reason: "the person chose voice settings since" };
+    if (voice.backend || offByPerson || chosen) return { ...same, reason: "the person chose voice settings since" };
+    // Turned off centrally: no seed while it is off, but kernal still manages it afterwards.
+    if (offByKernal) return { ...same, marker: m, reason: "voice turned off by the account or this machine" };
     if (opts.deepgramKey) return { ...same, marker: m, reason: "on Deepgram with a key" };
     const localModel = opts.model || DEFAULT_VOICE_MODEL;
     const reseeded = { ...settings, voice: { ...voice, enabled: true, backend: "local", localModel } };

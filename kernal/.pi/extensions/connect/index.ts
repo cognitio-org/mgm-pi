@@ -26,7 +26,7 @@ import {
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
-import { describeSource, layerCentralEnv, reresolve, webOrigin } from "../_shared/central-config.ts";
+import { clearLocalOverrides, describeSource, layerCentralEnv, reresolve, webOrigin, type ConfigValue } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
@@ -287,17 +287,29 @@ export default async function (pi: ExtensionAPI) {
     const admin = ctx.hasUI ? await import("../kernal-admin/central.ts").catch(() => undefined) : undefined;
     const targets = admin?.modelSaveTargets();
     if (!admin || !targets) {
-      // Non-interactive, signed in: settings.json only, as before; say when the account still wins.
-      const r = (() => { try { return reresolve(); } catch { return undefined; } })();
-      const v = r?.values["model.default"];
-      if (r?.account && v && v.source !== "legacy" && v.source !== "default" && v.value !== model) {
-        return { ok: true, message: `saved in settings.json; ${describeSource(v)} sets ${String(v.value)}, which the next session starts on: /connect in the TUI saves to your account or this machine` };
-      }
-      return legacy;
+      // Signed out or non-interactive: settings.json only, as before; say when something else
+      // still wins at the next session.
+      const wins = otherDefault(provider, model);
+      return wins ? { ok: true, message: `saved in settings.json; ${wins}: /connect in the TUI, signed in, saves to your account or this machine` } : legacy;
     }
     const pick = await ctx.ui.select(`Save ${provider}/${model} as the default`, [targets.account, targets.machine]);
-    if (pick === undefined) return { ok: true, message: "saved in this machine's settings.json only" };
+    if (pick === undefined) {
+      const wins = otherDefault(provider, model);
+      return { ok: true, message: `saved in this machine's settings.json only${wins ? `; ${wins}` : ""}` };
+    }
     return admin.saveModelDefault(pick === targets.account ? "account" : "machine", provider, model);
+  }
+
+  /** What the next session starts on instead of `provider`/`model`, when a central value (or this
+   * machine's own) still names another backend or model; undefined when settings.json decides. */
+  function otherDefault(provider: string, model: string): string | undefined {
+    const r = (() => { try { return reresolve(); } catch { return undefined; } })();
+    if (!r) return undefined;
+    const decides = (v: ConfigValue | undefined) => !!v && v.source !== "legacy" && v.source !== "default";
+    const m = r.values["model.default"], p = r.values["model.provider"];
+    if (decides(m) && m!.value !== model && m!.value !== `${provider}/${model}`) return `${describeSource(m!)} sets ${String(m!.value)}, which the next session starts on`;
+    if (decides(p) && p!.value !== provider) return `${describeSource(p!)} sets the backend ${String(p!.value)}, which the next session starts on`;
+    return undefined;
   }
 
   /** Switch to a model and save it as the default. Returns why not, or undefined on success. */
@@ -306,6 +318,9 @@ export default async function (pi: ExtensionAPI) {
     if (!model) return `Model "${modelId}" not found on ${backendId}. Known: ${(models.get(backendId) ?? []).join(", ")}`;
     if (!(await pi.setModel(model))) return `Could not switch to ${backendId}/${modelId}`;
     saveDefault(backendId, modelId);
+    // #437: an explicit choice replaces this machine's earlier one (config.local.json), which would
+    // otherwise win over settings.json at the next session; "Only this machine" writes it again.
+    try { clearLocalOverrides(["model.provider", "model.default"]); } catch {}
     ctx.ui.setStatus("connect", `⇄ ${backendId}/${modelId}`);
     return undefined;
   }

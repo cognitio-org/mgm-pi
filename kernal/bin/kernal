@@ -171,15 +171,47 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 # each value's source, to effective[.<profile>].json in the config cache (non-secret), and the
 # account's or this machine's value (sources user, profile, device, local) wins over kernal.memory,
 # which wins over the fleet's, exactly as outfitter-agentengine/laptop.ts chosenMode decides.
+# effective_file: prints the effective[.<profile>].json central-config wrote (#437), or nothing. Only
+# while signed in (accounts.json exists), and only when the file is for the account signed in now on
+# this OUTFITTER_API (its `api` and `account`): after a sign-out and a sign-in to another account the
+# previous account's file is still there until pi resolves again, which is after this script decided.
+# The directory is central-config's configCacheDir, with the same KERNAL_*/MGM_* fallback (kenv).
+effective_file() {
+  local auth="${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}" home cache f api eapi eacct
+  [[ -f "$auth/accounts.json" ]] || return 0
+  home="$(kenv HOME_DIR || printf '%s' "$HOME/.kernal")"
+  cache="$(kenv CONFIG_CACHE_DIR || printf '%s/config-cache' "$home")"
+  f="$cache/effective${KERNAL_PROFILE:+.$KERNAL_PROFILE}.json"
+  [[ -f "$f" ]] || return 0
+  api="${OUTFITTER_API:-https://link.kernal.one}"
+  while [[ "$api" == */ ]]; do api="${api%/}"; done
+  if command -v node >/dev/null 2>&1; then
+    # outfitter-session.ts's pickEntry without an email: the API's default account, or its only one.
+    node -e '
+      const fs = require("fs"); const [index, effective, api] = process.argv.slice(1);
+      const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return undefined; } };
+      const i = read(index) || {}, e = read(effective) || {};
+      const here = (Array.isArray(i.accounts) ? i.accounts : []).filter((a) => a && a.api === api && typeof a.email === "string");
+      const def = i.defaults && i.defaults[api];
+      const cur = here.find((a) => a.email === def) || (here.length === 1 ? here[0] : undefined);
+      process.exit(cur && e.api === api && e.account === cur.email ? 0 : 1);' "$auth/accounts.json" "$f" "$api" 2>/dev/null || return 0
+  else
+    # Without node: the file's top-level `api` and `account` lines, and that account and API in the
+    # index (one field per line, as JSON.stringify(…, null, 2) writes both files).
+    eapi="$(sed -nE 's/^  "api": "([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+    eacct="$(sed -nE 's/^  "account": "([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+    [[ -n "$eacct" && "$eapi" == "$api" ]] || return 0
+    grep -qF "\"email\": \"$eacct\"" "$auth/accounts.json" 2>/dev/null || return 0
+    grep -qF "\"api\": \"$api\"" "$auth/accounts.json" 2>/dev/null || return 0
+  fi
+  printf '%s' "$f"
+}
+
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
   # A Dongle, or a stored login (`kernal login`, central-auth.md §2.7: its index exists only while one does).
-  local effective="" cache
-  if [[ -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]]; then
-    cache="${KERNAL_CONFIG_CACHE_DIR:-${KERNAL_HOME_DIR:-$HOME/.kernal}/config-cache}"
-    effective="$cache/effective${KERNAL_PROFILE:+.$KERNAL_PROFILE}.json"
-    [[ -f "$effective" ]] || effective=""
-  fi
+  local effective
+  effective="$(effective_file)"
   [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || [[ -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]] || return 0
   local mode empty parent emode esrc legacy settings="$PI_CODING_AGENT_DIR/settings.json"
   # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
@@ -483,8 +515,8 @@ LMS="${LMS:-$HOME/.lmstudio/bin/lms}"; MODEL="${LMSTUDIO_MODEL:-qwen/qwen3.6-35b
 default_provider="$(sed -n 's/^ *"defaultProvider": *"\([^"]*\)".*/\1/p' "$ROOT/.pi/settings.json" 2>/dev/null | head -1)"
 # Signed in, the account's (or this machine's) model.provider decides the start-up backend (#437;
 # kernal-config switches the new session to it), so it decides the preload too.
-_eff="${KERNAL_CONFIG_CACHE_DIR:-${KERNAL_HOME_DIR:-$HOME/.kernal}/config-cache}/effective${KERNAL_PROFILE:+.$KERNAL_PROFILE}.json"
-if [[ -f "$_eff" && -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]]; then
+_eff="$(effective_file)"
+if [[ -n "$_eff" ]]; then
   _p="$(sed -nE '/"values"/,/^  }/ s/^[[:space:]]*"model\.provider":[[:space:]]*"(litellm|lmstudio|openrouter)".*/\1/p' "$_eff" 2>/dev/null | head -1)"
   _s="$(sed -nE '/"sources"/,/^  }/ s/^[[:space:]]*"model\.provider":[[:space:]]*"([a-z]+)".*/\1/p' "$_eff" 2>/dev/null | head -1)"
   case "$_s" in local|user|profile|device) [[ -z "$_p" ]] || default_provider="$_p" ;; esac

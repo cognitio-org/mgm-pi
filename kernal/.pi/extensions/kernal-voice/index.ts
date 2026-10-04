@@ -17,11 +17,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { reconcileVoice, languageFromLocale, audioToolHint, AUDIO_TOOLS, DEFAULT_VOICE_MODEL, type Reconcile } from "./lib.ts";
 import { env } from "../_shared/env.ts";
 import { applyVoiceSettings } from "../_shared/central-apply.ts";
+import { kernalVoiceWrite, readVoiceRecord, writeVoiceRecord } from "../_shared/central-config.ts";
 
 /** pi-listen's global settings file (it ignores PI_CODING_AGENT_DIR); overridable for tests. */
 export const voiceSettingsPath = () => env("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
 /** kernal's note that it wrote the seed, beside pi-listen's settings. */
 export const voiceSeedMarkerPath = () => join(dirname(voiceSettingsPath()), "kernal-voice-seed.json");
+/** kernal's record of the voice.enabled/voice.language values it wrote (central-config VoiceRecord). */
+export const voiceRecordPath = () => join(dirname(voiceSettingsPath()), "kernal-voice-applied.json");
 /** Where pi-listen keeps downloaded models: ~/.pi/models/<id>. */
 const modelDir = (model: string) => join(dirname(dirname(voiceSettingsPath())), "models", model);
 
@@ -47,16 +50,26 @@ export function seedFile(): SeedOutcome {
   const path = voiceSettingsPath();
   const markerPath = voiceSeedMarkerPath();
   const settings: Record<string, any> = readJson(path) ?? {};
+  const recordPath = voiceRecordPath();
+  const record = readVoiceRecord(recordPath);
   const r = reconcileVoice(settings, {
     marker: readJson(markerPath),
     deepgramKey: !!process.env.DEEPGRAM_API_KEY || !!settings.voice?.deepgramApiKey,
     modelDownloaded: existsSync(modelDir(settings.voice?.localModel ?? DEFAULT_VOICE_MODEL)),
     model: env("VOICE_MODEL"),
     language: languageFromLocale(process.env.LANG),
+    kernalEnabled: kernalVoiceWrite(record, "enabled"),
   });
   if (r.changed) writeJsonAtomic(path, r.settings);
   if (r.marker) writeJsonAtomic(markerPath, r.marker);
   else rmSync(markerPath, { force: true });
+  // #437: what the seed itself set is Kernal's, never the person's legacy voice choice.
+  if (r.changed && (r.notice === "seeded" || r.notice === "reseeded")) {
+    const before = settings.voice && typeof settings.voice === "object" ? settings.voice : {};
+    const seed = { ...(record.seed ?? {}), enabled: r.settings.voice.enabled };
+    if (before.language === undefined && typeof r.settings.voice.language === "string") seed.language = r.settings.voice.language;
+    writeVoiceRecord({ ...record, seed }, recordPath);
+  }
   return { notice: r.notice, reason: r.reason, path };
 }
 
@@ -80,7 +93,7 @@ export default function (pi: ExtensionAPI) {
   // #437: voice.enabled and voice.language from the account (or this machine's config.local.json)
   // go over the seed, so pi-listen's session_start reads them. A legacy pi-listen value is left as
   // it is. Never throws.
-  const central = applyVoiceSettings();
+  const central = applyVoiceSettings(undefined, voiceSettingsPath(), voiceRecordPath());
   if (env("VOICE_DEBUG") && central.length) console.error(`[kernal-voice] central settings applied: ${central.join(", ")}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { makeCtx, makePi, tmpAgentDir, fakeTransport } from "./harness.ts";
 import {
   KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, combineAccountFirst, configCachePath, describeSource, effectivePath,
-  localOverridesPath, resolve, setLocalOverride, startBackgroundRefresh, type ConfigResponse,
+  localOverridesPath, readShippedSettings, resolve, setLocalOverride, startBackgroundRefresh, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
 import { applyModelAtSessionStart, applyVoiceSettings, cliChoices, describeChanges, snapshot } from "../.pi/extensions/_shared/central-apply.ts";
 import { _setAdminCentralDeps, whenSaved } from "../.pi/extensions/kernal-admin/central.ts";
@@ -164,6 +164,28 @@ describe("precedence (#437): this machine → account → legacy → fleet → d
     assert.equal(resolve().values["model.provider"].source, "legacy", "provider and model count as a pair");
   });
 
+  test("a source checkout has no settings.shipped.json: the committed settings.json is what shipped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kernal-shipped-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { stdio: "ignore" });
+    git("init", "-q");
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" }));
+    git("add", "settings.json");
+    git("commit", "-q", "-m", "shipped");
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultProvider: "lmstudio", defaultModel: "qwen" }));
+    assert.deepEqual(readShippedSettings(dir), { defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" });
+    // A bundle's pristine copy wins (another directory: read once per directory).
+    const bundle = mkdtempSync(join(tmpdir(), "kernal-bundle-"));
+    writeFileSync(join(bundle, "settings.shipped.json"), JSON.stringify({ defaultModel: "m" }));
+    assert.deepEqual(readShippedSettings(bundle), { defaultModel: "m" });
+    assert.deepEqual(readShippedSettings(mkdtempSync(join(tmpdir(), "kernal-none-"))), {});
+    // The tracked defaults are then the release's, not legacy: the fleet's model applies.
+    settings = { defaultProvider: "litellm", defaultModel: "gpt-5.4-nano" };
+    shipped = readShippedSettings(dir);
+    writeCache(response({ "model.default": { value: "fleet-model", source: "fleet" } }));
+    setup();
+    assert.equal(resolve().values["model.default"].source, "fleet");
+  });
+
   test("combineAccountFirst: the default when nothing sets it", () => {
     const d = KNOWN_SETTINGS.find((x) => x.key === "voice.language")!;
     assert.deepEqual(combineAccountFirst(d, undefined, undefined, []), { value: "en", source: "default", override: "any", locked: false });
@@ -244,19 +266,25 @@ describe("the effective file bin/kernal reads", () => {
   /** bin/kernal's pi_memory_env, run with `path` as PATH; prints whether pi-memory was turned off. */
   function memoryEnv(agentDir: string, path: string, extra: Record<string, string> = {}): string {
     const bin = readFileSync(join(import.meta.dirname, "..", "bin", "kernal"), "utf8");
-    const start = bin.indexOf("pi_memory_env() {");
-    const fn = bin.slice(start, bin.indexOf("\n}\n", start) + 3);
-    return execFileSync("/bin/bash", ["-c", `${fn}\npi_memory_env\necho "off=\${KERNAL_PI_MEMORY_OFF:-}"`], {
+    const fn = (name: string) => { const start = bin.indexOf(`${name}() {`); return bin.slice(start, bin.indexOf("\n}\n", start) + 3); };
+    return execFileSync("/bin/bash", ["-c", `_kenv_warned=""\n${fn("kenv")}${fn("effective_file")}${fn("pi_memory_env")}\npi_memory_env\necho "off=\${KERNAL_PI_MEMORY_OFF:-}"`], {
       encoding: "utf8",
-      env: { PATH: path, HOME: "/h", TMPDIR: agentDir, PI_CODING_AGENT_DIR: agentDir, KERNAL_HOME_DIR: home, KERNAL_AUTH_DIR: join(home, "auth"), ...extra },
+      env: { PATH: path, HOME: "/h", TMPDIR: agentDir, PI_CODING_AGENT_DIR: agentDir, KERNAL_HOME_DIR: home, KERNAL_AUTH_DIR: join(home, "auth"), OUTFITTER_API: API, ...extra },
     }).trim();
+  }
+
+  /** The login index as outfitter-session.ts writes it, with `emails` signed in to API. */
+  function writeIndex(...emails: string[]) {
+    mkdirSync(join(home, "auth"), { recursive: true });
+    const accounts = emails.map((email) => ({ ...ACCOUNT, email, accessExpiresAt: "2026-10-05T00:00:00.000Z" }));
+    writeFileSync(join(home, "auth", "accounts.json"), JSON.stringify({ version: 1, accounts, defaults: { [API]: emails[0] } }, null, 2) + "\n");
   }
 
   /** A PATH with the tools pi_memory_env needs, but no node. */
   function pathWithoutNode(): string {
     const dir = join(home, "bin-no-node");
     mkdirSync(dir, { recursive: true });
-    for (const tool of ["sed", "head", "mkdir", "mktemp", "find", "rm"]) {
+    for (const tool of ["sed", "head", "mkdir", "mktemp", "find", "rm", "grep"]) {
       const found = execFileSync("/bin/bash", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
       if (!existsSync(join(dir, tool))) symlinkSync(found, join(dir, tool));
     }
@@ -266,8 +294,7 @@ describe("the effective file bin/kernal reads", () => {
   for (const withNode of [true, false]) {
     test(`bin/kernal's memory mode follows central-config (${withNode ? "node" : "no node: sed"})`, () => {
       const agent = tmpAgentDir({ kernal: { memory: "auto" } });
-      mkdirSync(join(home, "auth"), { recursive: true });
-      writeFileSync(join(home, "auth", "accounts.json"), "{}");
+      writeIndex(EMAIL);
       const path = withNode ? (process.env.PATH ?? "") : pathWithoutNode();
       settings = agent.read();
       // No effective file yet: settings.json's kernal.memory, as before.
@@ -292,9 +319,31 @@ describe("the effective file bin/kernal reads", () => {
       assert.equal(memoryEnv(agent.dir, path), "off=1");
       // Another profile's file is not this one's.
       assert.equal(memoryEnv(agent.dir, path, { KERNAL_PROFILE: "work" }), "off=1", "no effective.work.json: kernal.memory (unset) → auto");
+      // The legacy MGM_* names find the same directory central-config writes to (kenv).
+      setLocalOverride("memory.mode", undefined);
+      assert.equal(memoryEnv(agent.dir, path), "off=", "the account's off again");
+      assert.equal(memoryEnv(agent.dir, path, { KERNAL_HOME_DIR: "", MGM_HOME_DIR: home }), "off=", "MGM_HOME_DIR");
+      const moved = join(home, "moved-cache");
+      process.env.KERNAL_CONFIG_CACHE_DIR = moved;
+      writeCache(response({ "memory.mode": { value: "off", source: "user" } }));
+      setup();
+      resolve();
+      delete process.env.KERNAL_CONFIG_CACHE_DIR;
+      rmSync(effectivePath(undefined)!);
+      assert.equal(memoryEnv(agent.dir, path), "off=1", "no file in the default directory");
+      assert.equal(memoryEnv(agent.dir, path, { MGM_CONFIG_CACHE_DIR: moved }), "off=", "MGM_CONFIG_CACHE_DIR: the account's off");
+      // Signed in to another account (or another API) now: the previous account's file is not used.
+      const cache = { KERNAL_CONFIG_CACHE_DIR: moved };
+      writeIndex("b@example.com");
+      assert.equal(memoryEnv(agent.dir, path, cache), "off=1", "another account: kernal.memory (unset) → auto");
+      writeIndex("b@example.com", EMAIL);
+      assert.equal(memoryEnv(agent.dir, path, cache), withNode ? "off=1" : "off=", "the API's default account is b (sed only sees that a is signed in)");
+      writeIndex(EMAIL);
+      assert.equal(memoryEnv(agent.dir, path, cache), "off=", "a again");
+      assert.equal(memoryEnv(agent.dir, path, { ...cache, OUTFITTER_API: "https://other.test" }), "off=1", "another API");
       // Signed out (no accounts.json) the effective file is not read.
       rmSync(join(home, "auth", "accounts.json"));
-      assert.equal(memoryEnv(agent.dir, path, { OUTFITTER_API: "x", OUTFITTER_TOKEN: "y" }), "off=1");
+      assert.equal(memoryEnv(agent.dir, path, { ...cache, OUTFITTER_API: "x", OUTFITTER_TOKEN: "y" }), "off=1");
     });
   }
 
@@ -400,6 +449,18 @@ describe("model and thinking at session start", () => {
     assert.equal(pi2.thinking, "off", "modelThinkingLevels for this model wins");
   });
 
+  test("the account's model alone: found on a backend that has it, not only the one pi started on", async () => {
+    settings = { defaultProvider: "lmstudio", defaultModel: "qwen" };
+    writeCache(response({ "model.default": { value: "model-b", source: "user" } }));
+    setup();
+    const pi = piWithThinking();
+    const r = await applyModelAtSessionStart(pi, { reason: "startup" }, makeCtx({ model: lmstudio, models: [litellmA, litellmB, lmstudio] }), { argv: [] });
+    assert.equal(r.model, "litellm/model-b");
+    assert.equal(r.problem, undefined);
+    const r2 = await applyModelAtSessionStart(piWithThinking(), { reason: "startup" }, makeCtx({ model: lmstudio, models: [litellmA, lmstudio] }), { argv: [] });
+    assert.match(r2.problem!, /lmstudio\/model-b is not available here/);
+  });
+
   test("model.default may name its backend: provider/id", async () => {
     writeCache(response({ "model.default": { value: "lmstudio/qwen", source: "user" } }));
     setup();
@@ -423,6 +484,89 @@ describe("voice into pi-listen's settings", () => {
     assert.deepEqual(applyVoiceSettings(resolve()).sort(), ["voice.enabled", "voice.language"]);
     assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { theme: "dark", voice: { enabled: false, language: "sl", backend: "local" } });
     assert.deepEqual(applyVoiceSettings(resolve()), [], "a second run changes nothing");
+  });
+
+  test("Kernal's own writes are no legacy choice: the seed, and a copy of a value that is gone", () => {
+    const file = process.env.KERNAL_VOICE_SETTINGS!;
+    const record = join(file, "..", "kernal-voice-applied.json");
+    mkdirSync(join(file, ".."), { recursive: true });
+    const write = (v: Record<string, unknown>) => { writeFileSync(file, JSON.stringify({ voice: { backend: "local", ...v } })); voice = JSON.parse(readFileSync(file, "utf8")); };
+    const fileVoice = () => JSON.parse(readFileSync(file, "utf8")).voice;
+    // kernal-voice's seed set enabled and $LANG's language: the fleet still applies over it.
+    write({ enabled: true, language: "sl" });
+    writeFileSync(record, JSON.stringify({ version: 1, seed: { enabled: true, language: "sl" } }));
+    writeCache(response({ "voice.enabled": { value: false, source: "fleet" }, "voice.language": { value: "de", source: "fleet" } }));
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "fleet");
+    assert.equal(resolve().values["voice.enabled"].source, "fleet");
+    assert.deepEqual(applyVoiceSettings(resolve()).sort(), ["voice.enabled", "voice.language"]);
+    // The account's language, then the account's and the fleet's values gone: the seed's value back.
+    voice = { voice: fileVoice() };
+    writeCache(response({ "voice.language": { value: "fr", source: "user" } }));
+    setup();
+    assert.equal(resolve().values["voice.enabled"].source, "default", "Kernal's copy of the fleet's false is not legacy");
+    assert.deepEqual(applyVoiceSettings(resolve()).sort(), ["voice.enabled", "voice.language"], "the fleet's enabled gone: the seed's true back");
+    assert.deepEqual(fileVoice(), { backend: "local", enabled: true, language: "fr" });
+    voice = { voice: fileVoice() };
+    writeCache(response({}));
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "default", "Kernal's copy of fr is not legacy");
+    assert.deepEqual(applyVoiceSettings(resolve()), ["voice.language"]);
+    assert.deepEqual(fileVoice(), { backend: "local", enabled: true, language: "sl" }, "the seed's values back");
+    voice = { voice: fileVoice() };
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "default", "the seed's sl again: still not legacy");
+    // A hand edit is the person's: legacy, over the fleet, and never reverted.
+    write({ enabled: true, language: "it" });
+    writeCache(response({ "voice.language": { value: "de", source: "fleet" } }));
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "legacy");
+    assert.deepEqual(applyVoiceSettings(resolve()), []);
+    assert.equal(fileVoice().language, "it");
+  });
+
+  test("without a seed, a copy of a value that is gone goes back to the default, Kernal's from then on", () => {
+    const file = process.env.KERNAL_VOICE_SETTINGS!;
+    writeCache(response({ "voice.language": { value: "sl", source: "user" } }));
+    setup();
+    assert.deepEqual(applyVoiceSettings(resolve()), ["voice.language"]);
+    voice = JSON.parse(readFileSync(file, "utf8"));
+    writeCache(response({}));
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "default");
+    assert.deepEqual(applyVoiceSettings(resolve()), ["voice.language"]);
+    voice = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal((voice.voice as any).language, "en");
+    writeCache(response({ "voice.language": { value: "de", source: "fleet" } }));
+    setup();
+    assert.equal(resolve().values["voice.language"].source, "fleet", "the default Kernal put back is no legacy choice");
+  });
+
+  test("kernal-voice records its seed, and an account's enabled:false doesn't take the seed from it", async () => {
+    const { seedFile } = await import("../.pi/extensions/kernal-voice/index.ts");
+    const { reconcileVoice } = await import("../.pi/extensions/kernal-voice/lib.ts");
+    const lang = process.env.LANG, key = process.env.DEEPGRAM_API_KEY;
+    process.env.LANG = "sl_SI.UTF-8"; delete process.env.DEEPGRAM_API_KEY;
+    try {
+      assert.equal(seedFile().notice, "seeded");
+      const file = process.env.KERNAL_VOICE_SETTINGS!;
+      assert.deepEqual(JSON.parse(readFileSync(join(file, "..", "kernal-voice-applied.json"), "utf8")).seed, { enabled: true, language: "sl" });
+      voice = JSON.parse(readFileSync(file, "utf8"));
+      setup();
+      assert.equal(resolve().values["voice.language"].source, "default", "the seed is not the person's");
+      assert.equal(resolve().values["voice.enabled"].source, "default");
+    } finally {
+      if (lang === undefined) delete process.env.LANG; else process.env.LANG = lang;
+      if (key !== undefined) process.env.DEEPGRAM_API_KEY = key;
+    }
+    const marker = { state: "seeded" as const, localModel: "parakeet-v3", at: "t" };
+    const off = { voice: { enabled: false, backend: "local", localModel: "parakeet-v3" } };
+    assert.equal(reconcileVoice(off, { marker, deepgramKey: false, modelDownloaded: false }).marker, undefined, "the person turned it off");
+    assert.deepEqual(reconcileVoice(off, { marker, deepgramKey: false, modelDownloaded: false, kernalEnabled: false }).marker, marker, "Kernal wrote the false");
+    const unseeded = { state: "unseeded" as const, at: "t" };
+    const r = reconcileVoice({ voice: { enabled: false } }, { marker: unseeded, deepgramKey: false, modelDownloaded: false, kernalEnabled: false });
+    assert.equal(r.changed, false, "no reseed while it is off centrally");
+    assert.deepEqual(r.marker, unseeded, "still Kernal's to manage");
   });
 
   test("KERNAL_VOICE=off leaves pi-listen alone", () => {
@@ -544,6 +688,27 @@ describe("/connect: save to my account (profile X) or only this machine", () => 
     await pi.commands.get("connect")!.handler("litellm claude-sonnet-5", ctx);
     assert.match(ctx.notices.at(-1)!.msg, /your account sets acct-model, which the next session starts on/);
     assert.equal(calls.length, 0);
+  });
+
+  test("an explicit /connect replaces this machine's earlier model choice; Escape says what still wins", async () => {
+    // Signed out: no question, and config.local.json's older choice no longer wins next session.
+    signedIn = false;
+    writeLocal({ "model.provider": "lmstudio", "model.default": "old-local", "memory.mode": "off" });
+    setup();
+    routes();
+    let { pi, ctx } = await start();
+    await pi.commands.get("connect")!.handler("litellm claude-sonnet-5", ctx);
+    assert.deepEqual(JSON.parse(readFileSync(localOverridesPath(), "utf8")).values, { "memory.mode": "off" });
+    assert.match(ctx.notices.at(-1)!.msg, /saved as default\)/);
+    // Signed in, Escape: settings.json only, and the account's default still wins at the next session.
+    signedIn = true;
+    writeCache(response({ "model.default": { value: "acct-model", source: "user" } }, { profile: "work", profiles: ["work"] }));
+    setup();
+    routes();
+    ({ pi, ctx } = await start());
+    ctx.answers.push(undefined);
+    await pi.commands.get("connect")!.handler("litellm claude-sonnet-5", ctx);
+    assert.match(ctx.notices.at(-1)!.msg, /settings\.json only; your account sets acct-model, which the next session starts on/);
   });
 
   test("connect and the shared modules import nothing the Drive image removes (kernal-admin, kernal-voice, ...)", () => {

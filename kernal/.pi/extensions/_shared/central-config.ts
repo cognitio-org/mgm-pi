@@ -20,7 +20,7 @@
  * values (settings.json's defaultProvider/defaultModel/defaultThinkingLevel, kernal.compaction,
  * kernal.memory, pi-listen's voice settings, KERNAL_SUMMARY_MODEL in .env or the shell; source
  * "legacy") → fleet and group → defaults. A settings.json value equal to what the release shipped
- * (settings.shipped.json) is the release's default, not the person's choice, so it is no legacy
+ * (settings.shipped.json; the committed settings.json in a checkout) is the release's default, not the person's choice, so it is no legacy
  * layer. In a Drive the owner's settings arrive in KERNAL_RUN_SETTINGS (agentd, spec §9) and rank
  * with the fleet: the tape stays in charge there.
  *
@@ -32,14 +32,15 @@
  * GET /api/config, `router.key` comes from the keychain, and personal provider keys (§4) are kept
  * in memory only (`providerKey`).
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env as kenv } from "./env.ts";
 import * as session from "./outfitter-session.ts";
 import { parseEnvText } from "../connect/lib.ts";
-import { kernalSection, readSettings, settingsPath, updateKernal } from "../connect/settings.ts";
+import { SHIPPED_FILE, kernalSection, readSettings, settingsPath, updateKernal } from "../connect/settings.ts";
 
 export type SettingValue = string | number | boolean;
 export type OverrideRule = "none" | "opt-out" | "any";
@@ -276,11 +277,14 @@ export interface CentralConfigDeps {
   /** The agent settings.json (the legacy Sentry opt-out flags, SENTRY_LOCAL_FLAGS, and the legacy
    * values of the personal keys, LEGACY_SETTINGS). */
   settings: () => Record<string, unknown>;
-  /** What the release shipped as settings.json (settings.shipped.json beside it; {} in a source
-   * checkout): a value equal to it is the release's default, not a legacy choice. */
+  /** What the release shipped as settings.json (readShippedSettings: settings.shipped.json beside
+   * it, or in a source checkout the committed settings.json): a value equal to it is the release's
+   * default, not a legacy choice. */
   shippedSettings: () => Record<string, unknown>;
   /** pi-listen's settings (kernal-voice's voiceSettingsPath): voice.enabled and voice.language. */
   voiceSettings: () => Record<string, unknown>;
+  /** What Kernal itself wrote into pi-listen's settings (readVoiceRecord). */
+  voiceRecord: () => VoiceRecord;
   /** Changes the agent settings.json's `kernal` section (default: updateKernal); only to clear a
    * legacy Sentry flag (SENTRY_LOCAL_FLAGS). */
   saveKernal: (patch: Record<string, unknown>) => void;
@@ -322,6 +326,29 @@ function readDotenv(): Record<string, string> {
   return out;
 }
 
+const shippedCache = new Map<string, Record<string, unknown>>();
+
+/** What the release shipped as settings.json: the bundle's settings.shipped.json. A source checkout
+ * has none; there settings.json is the tracked file itself, so its committed version (HEAD) is what
+ * "shipped" means, and a value equal to it is no one's choice. {} when neither can be read. Read
+ * once per directory. */
+export function readShippedSettings(agentDir: string = dirname(settingsPath())): Record<string, unknown> {
+  const kept = shippedCache.get(agentDir);
+  if (kept) return kept;
+  let out: Record<string, unknown> = {};
+  const file = join(agentDir, SHIPPED_FILE);
+  if (existsSync(file)) out = readSettings(file);
+  else {
+    try {
+      const text = execFileSync("git", ["-C", agentDir, "show", "HEAD:./settings.json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3_000 });
+      const v = JSON.parse(text);
+      if (isObject(v)) out = v;
+    } catch {}
+  }
+  shippedCache.set(agentDir, out);
+  return out;
+}
+
 function deps(): CentralConfigDeps {
   const d = state().deps;
   return {
@@ -329,8 +356,9 @@ function deps(): CentralConfigDeps {
     env: d.env ?? (() => process.env),
     dotenv: d.dotenv ?? readDotenv,
     settings: d.settings ?? (() => readSettings()),
-    shippedSettings: d.shippedSettings ?? (() => readSettings(join(dirname(settingsPath()), "settings.shipped.json"))),
+    shippedSettings: d.shippedSettings ?? (() => readShippedSettings()),
     voiceSettings: d.voiceSettings ?? (() => readSettings(voiceSettingsFile())),
+    voiceRecord: d.voiceRecord ?? (() => readVoiceRecord()),
     saveKernal: d.saveKernal ?? ((patch) => updateKernal(patch)),
     fetch: d.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a)),
     now: d.now ?? Date.now,
@@ -374,6 +402,41 @@ export function localOverridesPath(): string {
  * PI_CODING_AGENT_DIR). A copy: kernal-voice imports nothing from here and this nothing from it. */
 export function voiceSettingsFile(): string {
   return kenv("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
+}
+
+/**
+ * Kernal's own record of what it wrote into pi-listen's voice.enabled and voice.language, beside
+ * pi-listen's settings (pi-listen rewrites its own file with known fields only, so the record can't
+ * live there): `seed`, Kernal's baseline, what kernal-voice's seed set (enabled, and the language
+ * from $LANG when the person had none) or a default applyVoiceSettings put back; `applied`, what applyVoiceSettings last copied from the account or this
+ * machine. A pi-listen value equal to Kernal's last write is Kernal's, not the person's, so it is
+ * no legacy layer (legacyLayers) and doesn't outrank the fleet or outlive the account's value.
+ */
+export type VoiceField = "enabled" | "language";
+export type VoiceRecord = { version: 1; seed?: Partial<Record<VoiceField, SettingValue>>; applied?: Partial<Record<VoiceField, SettingValue>> };
+
+export function voiceRecordFile(): string {
+  return join(dirname(voiceSettingsFile()), "kernal-voice-applied.json");
+}
+
+export function readVoiceRecord(file: string = voiceRecordFile()): VoiceRecord {
+  try {
+    const j = JSON.parse(readFileSync(file, "utf8"));
+    if (!isObject(j) || j.version !== 1) return { version: 1 };
+    return { version: 1, ...(isObject(j.seed) ? { seed: j.seed as VoiceRecord["seed"] } : {}), ...(isObject(j.applied) ? { applied: j.applied as VoiceRecord["applied"] } : {}) };
+  } catch {
+    return { version: 1 };
+  }
+}
+
+export function writeVoiceRecord(record: VoiceRecord, file: string = voiceRecordFile()): void {
+  try { writeWhole(file, JSON.stringify(record, null, 2) + "\n"); } catch {}
+}
+
+/** The value Kernal last wrote for one field: applyVoiceSettings' copy, else the seed's. */
+export function kernalVoiceWrite(record: VoiceRecord, field: VoiceField): SettingValue | undefined {
+  if (record.applied && field in record.applied) return record.applied[field];
+  return record.seed?.[field];
 }
 
 /** The server's profile names (api settings-schema.ts PROFILE_NAME_RE): safe in a file name. */
@@ -448,9 +511,12 @@ function compactionPrefs(settings: Record<string, unknown>): Record<string, unkn
  * The legacy values one personal key had on this machine before there was an account, lowest
  * priority first: the files (agent settings.json, pi-listen's), then .env, then the shell. A
  * settings.json default model equal to what the release shipped is no one's choice and is left out;
- * defaultProvider and defaultModel count as a pair, so a changed model keeps its backend.
+ * defaultProvider and defaultModel count as a pair, so a changed model keeps its backend. A pi-listen
+ * value equal to what Kernal itself last wrote there (its seed, or a copy of the account's value:
+ * voiceRecord) is Kernal's, not the person's, and is left out too.
  */
-export function legacyLayers(decl: KnownSetting, files: { settings: Record<string, unknown>; shipped: Record<string, unknown>; voice: Record<string, unknown> },
+export function legacyLayers(decl: KnownSetting,
+  files: { settings: Record<string, unknown>; shipped: Record<string, unknown>; voice: Record<string, unknown>; voiceRecord?: VoiceRecord },
   dotenv: Record<string, string>, shell: NodeJS.ProcessEnv): Layer[] {
   const out: Layer[] = [];
   const { settings, shipped, voice } = files;
@@ -461,6 +527,8 @@ export function legacyLayers(decl: KnownSetting, files: { settings: Record<strin
   const changed = (k: string) => settings[k] !== undefined && settings[k] !== shipped[k];
   const pairChanged = changed("defaultProvider") || changed("defaultModel");
   const voiceBlock = isObject(voice.voice) ? voice.voice : {};
+  const voiceRecord = files.voiceRecord ?? { version: 1 };
+  const byPerson = (field: VoiceField) => voiceBlock[field] !== undefined && voiceBlock[field] !== kernalVoiceWrite(voiceRecord, field);
   switch (decl.key) {
     case "model.provider": if (pairChanged) add(settings.defaultProvider, "settings.json defaultProvider"); break;
     case "model.default": if (pairChanged) add(settings.defaultModel, "settings.json defaultModel"); break;
@@ -468,8 +536,8 @@ export function legacyLayers(decl: KnownSetting, files: { settings: Record<strin
     case "compaction.summaryModel": add(compactionPrefs(settings).summaryModel, "settings.json kernal.compaction"); break;
     case "compaction.masking": add(compactionPrefs(settings).masking, "settings.json kernal.compaction"); break;
     case "memory.mode": add(kernalSection(settings).memory, "settings.json kernal.memory"); break;
-    case "voice.enabled": add(voiceBlock.enabled, "pi-listen settings"); break;
-    case "voice.language": add(voiceBlock.language, "pi-listen settings"); break;
+    case "voice.enabled": if (byPerson("enabled")) add(voiceBlock.enabled, "pi-listen settings"); break;
+    case "voice.language": if (byPerson("language")) add(voiceBlock.language, "pi-listen settings"); break;
   }
   for (const name of decl.env ?? []) {
     const v = coerce(decl, dotenv[name], true);
@@ -620,7 +688,7 @@ function resolveFrom(cache: CacheFile | undefined, account: session.SessionAccou
   const overrides = readLocalOverrides();
   const read = (f: () => Record<string, unknown>) => { try { const v = f(); return isObject(v) ? v : {}; } catch { return {}; } };
   const settings = read(d.settings);
-  const files = { settings, shipped: read(d.shippedSettings), voice: read(d.voiceSettings) };
+  const files = { settings, shipped: read(d.shippedSettings), voice: read(d.voiceSettings), voiceRecord: safe(d.voiceRecord) ?? { version: 1 as const } };
   const dotenv = (() => { try { return d.dotenv(); } catch { return {}; } })();
   const shell = d.env();
   // In a Drive (no login there) the owner's settings come with the run instead of the cache.
@@ -842,6 +910,19 @@ export async function reloadConfig(opts: { profile?: string; fetch?: typeof fetc
 /** This machine's own overrides (the "local" level), `~/.kernal/config.local.json`. Undefined
  * removes the key. Throws for a key this Kernal doesn't know, a secret, a key with no local level,
  * or a value of the wrong type. Takes effect in this process at once. */
+/** Removes those of `keys` this machine's config.local.json sets, in one write; the removed keys
+ * (none: nothing is written). */
+export function clearLocalOverrides(keys: readonly string[]): string[] {
+  const values = { ...readLocalOverrides() };
+  const removed = keys.filter((k) => values[k] !== undefined);
+  if (!removed.length) return [];
+  for (const k of removed) delete values[k];
+  writeWhole(localOverridesPath(), JSON.stringify({ version: 1, values }, null, 2) + "\n");
+  state().resolved.clear();
+  safe(() => resolve());
+  return removed;
+}
+
 export function setLocalOverride(key: string, value: SettingValue | undefined): void {
   const decl = BY_KEY.get(key);
   if (!decl) throw new Error(`unknown setting ${key}`);

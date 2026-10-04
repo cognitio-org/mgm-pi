@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_OUTFITTER_API,
+  browsableUrl,
   currentAccessToken,
   getAccessToken,
   getRouterKey,
@@ -22,7 +23,9 @@ import {
   type SessionStorage,
 } from "../.pi/extensions/_shared/outfitter-session.ts";
 import { chooseBackend, fileBackend, itemHash, keychainBackend, secretServiceBackend, type Runner } from "../.pi/extensions/_shared/keychain.ts";
-import { outfitterBearer, outfitterCredentials } from "../.pi/extensions/_shared/outfitter-env.ts";
+import { outfitterBearer, outfitterCredentials, sendWithBearer } from "../.pi/extensions/_shared/outfitter-env.ts";
+import { refreshFleetSettings } from "../.pi/extensions/_shared/fleet-settings.ts";
+import { httpTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
 
 const API = "https://link.outfitter.test";
 const HOUR = 3600;
@@ -465,6 +468,177 @@ describe("outfitter-env: session first, the Dongle as a deprecated fallback", ()
   test("credentials without a source (older callers, tests) bear their token", async () => {
     assert.equal(await outfitterBearer({ api: API, token: "outf_plain" }), "outf_plain");
     assert.equal(await outfitterBearer({ api: API }), undefined);
+  });
+});
+
+describe("review fixes: a backend switch on rewrite, the 401 retry, the browser URL", () => {
+  /** A Secret Service that can be locked: while locked, every read and write fails. */
+  function lockableSecretService() {
+    const items = new Map<string, string>();
+    const svc = { locked: false, items };
+    const runner: Runner = (_cmd, args, input) => {
+      if (svc.locked) return { status: 1, stdout: "" };
+      const account = args[args.indexOf("account") + 1];
+      if (args[0] === "store") {
+        items.set(account, input ?? "");
+        return { status: 0, stdout: "" };
+      }
+      if (args[0] === "lookup") return items.has(account) ? { status: 0, stdout: items.get(account)! } : { status: 1, stdout: "" };
+      if (args[0] === "clear") {
+        items.delete(account);
+        return { status: 0, stdout: "" };
+      }
+      return { status: 1, stdout: "" };
+    };
+    return { svc, runner };
+  }
+
+  test("a refresh whose keychain write fails moves the login to the file; later reads find the new pair", async () => {
+    const { svc, runner } = lockableSecretService();
+    const st = storage({ env: { KERNAL_AUTH_BACKEND: "secret-service" }, runner });
+    let t = Date.parse("2026-10-04T10:00:00Z");
+    await signedIn({ st, now: () => t });
+    const indexBackend = () => JSON.parse(readFileSync(join(st.dir, "accounts.json"), "utf8")).accounts[0].backend;
+    assert.equal(indexBackend(), "secret-service");
+
+    // The keychain locks between the read of the pair and the write of the rotated one.
+    const old = svc.items.get(`${API}|a@example.com`)!;
+    t += HOUR * 1000 - 60_000;
+    const f = fakeFetch({ "/api/device/refresh": [{ status: 200, body: tokens(2) }] });
+    const locking: Runner = (cmd, args, input) => {
+      if (args[0] === "store") svc.locked = true;
+      return runner(cmd, args, input);
+    };
+    assert.equal(await getAccessToken({ ...st, runner: locking, api: API, fetch: f.fn, now: () => t }), "kda_2");
+    assert.equal(indexBackend(), "file", "the index follows the write");
+
+    // Unlocked again with the old pair still in it: reads go to the file, never the stale item.
+    svc.locked = false;
+    svc.items.set(`${API}|a@example.com`, old);
+    assert.equal(await getAccessToken({ ...st, api: API, fetch: fakeFetch({}).fn, now: () => t }), "kda_2");
+    const again = fakeFetch({ "/api/device/refresh": [{ status: 200, body: tokens(3) }] });
+    t += HOUR * 1000 - 60_000;
+    assert.equal(await getAccessToken({ ...st, api: API, fetch: again.fn, now: () => t }), "kda_3");
+    assert.deepEqual(again.calls[0].body, { grant_type: "refresh_token", refresh_token: "kdr_2" }, "never the rotated-out kdr_1");
+    assert.deepEqual(getRouterKey({ ...st, api: API }), ROUTER_KEY);
+  });
+
+  test("setRouterKey: a fallback write is recorded and the stale keychain copy removed", async () => {
+    const { svc, runner } = lockableSecretService();
+    const st = storage({ env: { KERNAL_AUTH_BACKEND: "secret-service" }, runner });
+    await signedIn({ st });
+    const refusing: Runner = (cmd, args, input) => (args[0] === "store" ? { status: 1, stdout: "" } : runner(cmd, args, input));
+    const next = { ...ROUTER_KEY, key: "sk-new" };
+    setRouterKey(next, { ...st, runner: refusing, api: API });
+    assert.equal(JSON.parse(readFileSync(join(st.dir, "accounts.json"), "utf8")).accounts[0].backend, "file");
+    assert.equal(svc.items.has(`${API}|a@example.com`), false, "the old item is cleared");
+    assert.deepEqual(getRouterKey({ ...st, api: API }), next);
+  });
+
+  /** A session in a temporary HOME, and what another Kernal does when it rotates the pair. */
+  async function sessionCreds() {
+    const h = mkdtempSync(join(tmpdir(), "kernal-home-"));
+    const dir = join(h, ".kernal", "auth");
+    mkdirSync(dir, { recursive: true });
+    await signedIn({ st: { ...storage(), authDir: dir, dir } as any });
+    const creds = outfitterCredentials({ HOME: h, KERNAL_AUTH_BACKEND: "file", OUTFITTER_API: API });
+    assert.equal(creds.source, "session");
+    const rotate = () =>
+      fileBackend(dir).set(
+        `${API}|a@example.com`,
+        JSON.stringify({ accessToken: "kda_9", accessExpiresAt: new Date(Date.now() + HOUR * 1000).toISOString(), refreshToken: "kdr_9" }),
+      );
+    return { creds, rotate };
+  }
+
+  test("sendWithBearer: a 401 re-reads once and retries with the newer token; the same token is not retried", async () => {
+    const { creds, rotate } = await sessionCreds();
+    const sent: (string | undefined)[] = [];
+    const res = await sendWithBearer(
+      (r) => outfitterBearer(creds, r),
+      async (tok) => {
+        sent.push(tok);
+        if (sent.length > 1) return new Response("{}", { status: 200 });
+        rotate();
+        return new Response("", { status: 401 });
+      },
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(sent, ["kda_1", "kda_9"]);
+
+    const once: (string | undefined)[] = [];
+    const still = await sendWithBearer(
+      (r) => outfitterBearer(creds, r),
+      async (tok) => {
+        once.push(tok);
+        return new Response("", { status: 401 });
+      },
+    );
+    assert.equal(still.status, 401);
+    assert.deepEqual(once, ["kda_9"], "no newer token: one request, no retry");
+
+    const dongle: (string | undefined)[] = [];
+    await sendWithBearer(
+      (r) => outfitterBearer({ api: API, token: "outf_x", source: "dongle" }, r),
+      async (tok) => {
+        dongle.push(tok);
+        return new Response("", { status: 401 });
+      },
+    );
+    assert.deepEqual(dongle, ["outf_x"], "a Dongle is never retried");
+  });
+
+  test("the consumers retry once after a 401: admin transport, fleet settings",async () => {
+    {
+      const { creds, rotate } = await sessionCreds();
+      const auth: string[] = [];
+      const fetchFn = (async (_url: string, init: any) => {
+        auth.push(init.headers.Authorization);
+        if (auth.length === 1) {
+          rotate();
+          return new Response("", { status: 401 });
+        }
+        return new Response(JSON.stringify({ ok: true, text: "ok" }), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+      const t = httpTransport(API, (r) => outfitterBearer(creds, r), fetchFn);
+      assert.deepEqual(await t.call("tapes.list", {}), { ok: true, text: "ok" });
+      assert.deepEqual(auth, ["Bearer kda_1", "Bearer kda_9"]);
+    }
+    {
+      const { creds, rotate } = await sessionCreds();
+      const auth: string[] = [];
+      const fetchFn = (async (_url: string, init: any) => {
+        auth.push(init.headers.authorization);
+        if (auth.length === 1) {
+          rotate();
+          return new Response("", { status: 401 });
+        }
+        return new Response(JSON.stringify({ telemetry: { sentry: { enabled: true, dsn: "https://k@o1.ingest.sentry.io/1" } } }), { status: 200 });
+      }) as typeof fetch;
+      const file = join(mkdtempSync(join(tmpdir(), "kernal-fleet-")), "fleet.json");
+      const s = await refreshFleetSettings(creds, { fetch: fetchFn, file });
+      assert.equal(s?.telemetry.sentry.enabled, true, "not switched off by a 401 another process already fixed");
+      assert.deepEqual(auth, ["Bearer kda_1", "Bearer kda_9"]);
+    }
+  });
+
+  test("browser: only a web page is opened; anything else is only printed", async () => {
+    assert.equal(browsableUrl("https://app.outfitter.test/device?code=X", API), true);
+    assert.equal(browsableUrl("http://app.outfitter.test/device", API), false);
+    assert.equal(browsableUrl("http://localhost:5173/device", "http://localhost:8080"), true);
+    assert.equal(browsableUrl("file:///Applications/Calculator.app", API), false);
+    assert.equal(browsableUrl("javascript:alert(1)", API), false);
+    assert.equal(browsableUrl("not a url", API), false);
+
+    const f = fakeFetch({
+      "/api/device/code": [{ status: 200, body: { ...CODE, verification_uri_complete: "file:///Applications/Calculator.app" } }],
+      "/api/device/token": [{ status: 200, body: tokens(1) }],
+    });
+    const opened: string[] = [];
+    const lines: string[] = [];
+    await login({ ...storage(), api: API, print: (l) => lines.push(l), fetch: f.fn, openUrl: (u) => opened.push(u), sleep: async () => {} });
+    assert.deepEqual(opened, []);
+    assert.ok(lines.some((l) => l.includes(CODE.verification_uri)));
   });
 });
 

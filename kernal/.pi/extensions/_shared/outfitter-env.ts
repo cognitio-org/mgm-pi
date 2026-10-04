@@ -82,8 +82,30 @@ export function outfitterCredentials(env?: NodeJS.ProcessEnv): OutfitterCredenti
 }
 
 /** The bearer for one request: the session's access token, refreshed when it is nearly out, or the
- * Dongle. Undefined when there is neither (or the server refused the refresh). Never throws. */
-export async function outfitterBearer(creds: OutfitterCredentials = outfitterCredentials()): Promise<string | undefined> {
+ * Dongle. Undefined when there is neither (or the server refused the refresh). Never throws.
+ *
+ * `rejected`: the bearer a request just got a 401 for. A session re-reads the keychain once and
+ * hands back a newer token (another process rotated it) or undefined; a Dongle gives the same one
+ * back, which tells the caller not to retry (§2.4). */
+export async function outfitterBearer(creds: OutfitterCredentials = outfitterCredentials(), rejected?: string): Promise<string | undefined> {
   if (creds.source !== "session") return creds.token;
-  return getAccessToken({ ...storageMap().get(creds), api: creds.api });
+  return getAccessToken({ ...storageMap().get(creds), api: creds.api, ...(rejected ? { rejected } : {}) });
+}
+
+/**
+ * Sends one request with a bearer from `bearer` and, after a 401, asks it again with the rejected
+ * token and retries once when it hands back a different one (§2.4: "after a 401 on any request with
+ * an access token: re-read the keychain once and retry once"). `bearer` is outfitterBearer bound to
+ * the credentials, or a fixed token (which never retries).
+ */
+export async function sendWithBearer(
+  bearer: string | ((rejected?: string) => Promise<string | undefined>),
+  send: (token: string | undefined) => Promise<Response>,
+): Promise<Response> {
+  const first = typeof bearer === "string" ? bearer : await bearer();
+  const res = await send(first);
+  if (res.status !== 401 || typeof bearer === "string" || !first) return res;
+  const next = await bearer(first);
+  if (!next || next === first) return res;
+  return send(next);
 }

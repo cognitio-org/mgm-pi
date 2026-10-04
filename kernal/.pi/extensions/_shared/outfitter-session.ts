@@ -205,6 +205,35 @@ function writeSecrets(entry: IndexEntry, secrets: SessionSecrets, o: SessionStor
   }
 }
 
+/**
+ * Rewrites an existing login's secrets and records where they went. A keychain that refuses the
+ * write (locked, or `security` refused over SSH) gives way to the file; the index must then say
+ * `file`, or every later read would go to the keychain, find the old pair once it unlocks and send
+ * a rotated refresh token, which the server takes as reuse and revokes the device for. The copy
+ * left in the old backend is removed (best-effort) so nothing reads it by mistake. `patch` updates
+ * the index entry in the same write.
+ */
+function storeSecrets(entry: IndexEntry, secrets: SessionSecrets, o: SessionStorage, patch: Partial<IndexEntry> = {}): void {
+  const used = writeSecrets(entry, secrets, o);
+  const dir = dirOf(o);
+  const index = readIndex(dir);
+  const e = index.accounts.find((a) => a.api === entry.api && a.email === entry.email);
+  if (!e) return;
+  const moved = !o.backend && used !== (e.backend ?? entry.backend);
+  if (!moved && !Object.keys(patch).length) return;
+  const was = e.backend ?? entry.backend;
+  if (moved && was) {
+    try {
+      backendNamed(was, dir, o.runner).delete(itemName(entry));
+    } catch {
+      // Still locked: the index no longer points there, so the stale copy is never read.
+    }
+  }
+  Object.assign(e, patch);
+  if (moved) e.backend = entry.backend = used;
+  writeIndex(dir, index);
+}
+
 /** Removes one login from this machine: its secrets, its index entry, its lock. */
 function forget(entry: IndexEntry, o: SessionStorage): void {
   const dir = dirOf(o);
@@ -256,7 +285,7 @@ export function setRouterKey(key: NonNullable<SessionSecrets["routerKey"]>, opts
   const { api, entry } = lookup(opts);
   const secrets = entry && readSecrets(entry, opts);
   if (!entry || !secrets) throw new Error(`not signed in to ${api}`);
-  writeSecrets(entry, { ...secrets, routerKey: key }, opts);
+  storeSecrets(entry, { ...secrets, routerKey: key }, opts);
 }
 
 // ---- refresh (§2.4) ----
@@ -346,15 +375,10 @@ async function refresh(entry: IndexEntry, secrets: SessionSecrets, o: Which & { 
       refreshToken: res.body.refresh_token,
       ...(secrets.routerKey ? { routerKey: secrets.routerKey } : {}),
     };
-    writeSecrets(entry, next, o);
-    const dir = dirOf(o);
-    const index = readIndex(dir);
-    const e = index.accounts.find((a) => a.api === entry.api && a.email === entry.email);
-    if (e) {
-      e.accessExpiresAt = next.accessExpiresAt;
-      if (typeof res.body.device?.name === "string") e.deviceName = res.body.device.name;
-      writeIndex(dir, index);
-    }
+    storeSecrets(entry, next, o, {
+      accessExpiresAt: next.accessExpiresAt,
+      ...(typeof res.body.device?.name === "string" ? { deviceName: res.body.device.name } : {}),
+    });
     return next.accessToken;
   }
   // The server said no for good (revoked, reused, removed from the allow-list): forget the login.
@@ -387,11 +411,14 @@ export async function getAccessToken(
     ensureDir(dir);
     return await withLock(join(dir, `${itemHash(itemName(entry))}.lock`), async () => {
       // Inside the lock: the stored pair, never the one read before it; another process may have
-      // rotated it already.
-      const current = readSecrets(entry, opts);
+      // rotated it already, or moved it to the file when its keychain write failed (so the index
+      // is read again too).
+      const latest = lookup(opts).entry;
+      if (!latest || latest.deviceId !== entry.deviceId) return undefined;
+      const current = readSecrets(latest, opts);
       if (!current) return undefined;
       if (fresh(current)) return current.accessToken;
-      return refresh(entry, current, opts);
+      return refresh(latest, current, opts);
     });
   } catch {
     return undefined;
@@ -433,9 +460,26 @@ function installedVersion(): string | undefined {
   }
 }
 
+/** Whether the server's verification URL may be handed to the OS opener: a web page only (https,
+ * or http when the API itself is plain http, for dev), never `file:` or another scheme `open`
+ * would launch something for. Anything else is only printed. */
+export function browsableUrl(url: string, api: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || (u.protocol === "http:" && new URL(api).protocol === "http:");
+  } catch {
+    return false;
+  }
+}
+
 export function openInBrowser(url: string): void {
+  // Windows: url.dll takes the URL as one argument; `cmd /c start` would parse & | ^ in it.
   const [cmd, args] =
-    process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+        : ["xdg-open", [url]];
   const child = spawn(cmd, args as string[], { stdio: "ignore", detached: true });
   child.on("error", () => {});
   child.unref();
@@ -488,9 +532,10 @@ export async function login(opts: LoginOptions & SessionStorage): Promise<Sessio
   }
 
   opts.print(`To sign in, open ${c.verification_uri} and enter the code ${c.user_code}`);
-  if (opts.openBrowser !== false) {
+  const target = typeof c.verification_uri_complete === "string" ? c.verification_uri_complete : c.verification_uri;
+  if (opts.openBrowser !== false && browsableUrl(target, api)) {
     try {
-      (opts.openUrl ?? openInBrowser)(typeof c.verification_uri_complete === "string" ? c.verification_uri_complete : c.verification_uri);
+      (opts.openUrl ?? openInBrowser)(target);
     } catch {
       // The URL is printed above.
     }

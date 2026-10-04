@@ -33,6 +33,8 @@ export interface SettingDecl {
   /** For type "number". */
   min?: number;
   max?: number;
+  /** For type "number": whole numbers only. */
+  integer?: boolean;
   /** Never cached on disk by Kernal, never shown back to the web, never in GET /api/config: a secret
    * reaches a device by its own delivery path (`delivery`). */
   secret: boolean;
@@ -57,6 +59,10 @@ export const SETTINGS_SCHEMA_VERSION = 1;
 
 const PERSONAL = ["fleet", "user", "profile", "device", "local"] as const;
 
+/** Router key limits (#389 follow-up, §5.2): what api/central/litellm-keys.ts mints device and run
+ * keys with, read from the fleet level at mint time. Operators only: the fleet level, locked. */
+const ROUTER_LIMIT = { secret: false, levels: ["fleet"], override: "none", since: 1 } as const;
+
 /** The v1 keys (spec §3.2). */
 export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
   {
@@ -80,6 +86,60 @@ export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
     env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"],
     since: 1,
     description: "This device's own router key, minted at sign-in (CA-5); never stored by Outfitter.",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.deviceKey.durationDays",
+    type: "number",
+    min: 1,
+    max: 365,
+    integer: true,
+    default: 90,
+    description: "Days a device's router key lives before Kernal re-mints it (LiteLLM duration).",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.deviceKey.maxBudgetUsd",
+    type: "number",
+    min: 0,
+    max: 100_000,
+    default: 50,
+    description: "USD a device's router key may spend per budget period.",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.deviceKey.budgetPeriodDays",
+    type: "number",
+    min: 1,
+    max: 365,
+    integer: true,
+    default: 30,
+    description: "Days after which a device key's spent budget resets (LiteLLM budget_duration).",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.deviceKey.rpmLimit",
+    type: "number",
+    min: 1,
+    max: 100_000,
+    integer: true,
+    default: 120,
+    description: "Requests per minute a device's router key may make.",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.keys.models",
+    type: "string",
+    description: "Models device and run keys may use, comma-separated; unset allows every model the router serves.",
+  },
+  {
+    ...ROUTER_LIMIT,
+    key: "router.runKey.maxBudgetUsd",
+    type: "number",
+    min: 0,
+    max: 100_000,
+    default: 20,
+    description: "USD one Drive run's own router key may spend.",
   },
   {
     key: "model.provider",
@@ -239,6 +299,7 @@ export function coerceSettingValue(decl: SettingDecl, value: unknown, opts: Coer
       if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
       if (decl.min !== undefined && value < decl.min) return undefined;
       if (decl.max !== undefined && value > decl.max) return undefined;
+      if (decl.integer && !Number.isInteger(value)) return undefined;
       return value;
     case "enum":
       return typeof value === "string" && decl.values?.includes(value) ? value : undefined;

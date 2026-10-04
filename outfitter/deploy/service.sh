@@ -71,12 +71,10 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-api:${TAG}"
 # ENV_VARS below -- same var name/default as kernal's .env.example), and PROVIDER_POLL_MS (plain, ENV_VARS,
 # default 5 minutes). LITELLM_ADMIN_KEY was already mounted here (it predates E2.10) and is now also
 # read by the provider status service's LiteLLM probe, falling back to the default guru LiteLLM key
-# (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset.
+# (outfitter-litellm-key-default, secrets.ts's SecretsBroker.defaultLitellmKey) when unset. #389
+# (central-auth.md §5.1) mints per-user device and run keys with the same LITELLM_ADMIN_KEY, on both
+# roles (link mints at device login, runs start on both); litellm-admin.sh lists its routes.
 SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=outfitter-github-pat:latest LITELLM_ADMIN_KEY=outfitter-litellm-admin:latest LOCAL_TUNNEL_TOKEN=outfitter-local-tunnel-token:latest NGROK_API_KEY=outfitter-ngrok-api-key:latest NGROK_GOOGLE_OAUTH=outfitter-ngrok-google-oauth:latest)"
-# #394 (central-auth.md §5.1): the router admin key that mints per-user device and run keys. Both
-# roles (link mints at device login, runs start on both); skipped until the owner creates it.
-ROUTER_ADMIN_SECRET="$(existing_secrets OUTFITTER_LITELLM_ADMIN_KEY=outfitter-litellm-admin-key:latest)"
-[[ -n "${ROUTER_ADMIN_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${ROUTER_ADMIN_SECRET}"
 # #252 web voice: the Deepgram Member key POST /api/voice/token mints browser tokens with. Web role
 # only (the exception to "identical for both roles"): link serves no voice route, and this key can
 # mint tokens and read usage, unlike the usage-only key kernal bundles ship.

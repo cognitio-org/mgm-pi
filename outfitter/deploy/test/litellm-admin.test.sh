@@ -2,7 +2,7 @@
 # litellm-admin.sh against a fake router (node http) and a fake gcloud that keeps secrets in files.
 # Checks: first run creates the user, mints one scoped key and stores it; a rerun does nothing;
 # ROTATE=1 stores a new key, disables the old version and deletes the old key; no key value ever
-# reaches stdout/stderr. No network, no GCP.
+# reaches stdout/stderr; every route the api calls with the key is allowed. No network, no GCP.
 #   bash outfitter/deploy/test/litellm-admin.test.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,6 +82,14 @@ run
 grep -q '"user_role":"proxy_admin"' "${ROUTER_LOG}" || fail "service user not proxy_admin"
 grep -q '"allowed_routes":\["/key/generate"' "${ROUTER_LOG}" || fail "key not scoped"
 grep -q '/key/regenerate' "${ROUTER_LOG}" && fail "regenerate must not be allowed"
+# Every LiteLLM route the api calls with this key is in the minted key's allowed_routes.
+API_SRC="${HERE}/../../packages/api/src"
+routes="$(grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' \
+  "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts" | grep -oE '/[a-z/_]+' | sort -u)"
+[[ "$(wc -l <<<"${routes}")" -ge 10 ]] || fail "found too few api routes: ${routes}"
+for r in ${routes}; do
+  grep -qE "\"allowed_routes\":\[[^]]*\"${r}\"" "${ROUTER_LOG}" || fail "api calls ${r}, not in ALLOWED_ROUTES"
+done
 
 # Rerun is a no-op.
 run

@@ -72,12 +72,18 @@ export function AccountPage() {
   // The share toggle has its own panel, so the account-wide editor leaves it out.
   const userDecls = useMemo(() => (schema ? editableDecls(schema, "user").filter((d) => d.key !== SHARE_MODELS_KEY) : []), [schema]);
   const profileDecls = useMemo(() => (schema ? editableDecls(schema, "profile") : []), [schema]);
+  // Keys only the fleet may set (the router key limits, for one) are listed at their default too:
+  // nobody below the fleet can change them, so the default is the fleet's value.
+  const fleetOnly = (key: string) => {
+    const decl = schema?.find((d) => d.key === key);
+    return !!decl && decl.levels.length > 0 && decl.levels.every((l) => l === "fleet" || l === "group");
+  };
   const fleetValues = useMemo(
     () =>
       effective
-        ? Object.entries(effective.values).filter(([, v]) => v.source === "fleet" || v.source === "group")
+        ? Object.entries(effective.values).filter(([key, v]) => v.source === "fleet" || v.source === "group" || (v.source === "default" && fleetOnly(key)))
         : [],
-    [effective],
+    [effective, schema],
   );
   const describe = (key: string) => schema?.find((d) => d.key === key)?.description;
 
@@ -147,7 +153,7 @@ export function AccountPage() {
                           </span>
                         </td>
                         <td data-label="" className="session-meta">
-                          {v.locked ? LOCKED_TEXT : "a default: you can set your own"}
+                          {v.locked || fleetOnly(key) ? LOCKED_TEXT : "a default: you can set your own"}
                         </td>
                       </tr>
                     ))}

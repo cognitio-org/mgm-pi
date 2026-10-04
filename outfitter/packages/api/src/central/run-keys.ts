@@ -23,7 +23,7 @@ import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
 import type { RouterKey } from "../store/keys.ts";
 import type { Run, Session, Store } from "../store/types.ts";
-import { runKeyAlias, type LitellmKeys } from "./litellm-keys.ts";
+import { runKeyAlias, type LitellmKeys, type RouterKeyLimitsSource } from "./litellm-keys.ts";
 import { resolveConfig } from "./settings-resolver.ts";
 import type { SettingValue, ValueSource } from "./settings-schema.ts";
 import { userIdFor } from "./user-id.ts";
@@ -80,6 +80,8 @@ export interface RunKeysOptions {
   keys: LitellmKeys | undefined;
   store: Pick<Store, "routerKeys">;
   config: Pick<Config, "runKeyFallback">;
+  /** The fleet's key limits at mint time (`router.runKey.maxBudgetUsd`, `router.keys.models`). */
+  limits: RouterKeyLimitsSource;
   log?: (msg: string, err?: unknown) => void;
 }
 
@@ -92,16 +94,18 @@ export class RunKeys {
   private readonly keys: LitellmKeys | undefined;
   private readonly store: Pick<Store, "routerKeys">;
   private readonly fallback: boolean;
+  private readonly limits: RouterKeyLimitsSource;
   private readonly log: (msg: string, err?: unknown) => void;
 
   constructor(opts: RunKeysOptions) {
     this.keys = opts.keys;
     this.store = opts.store;
     this.fallback = opts.config.runKeyFallback;
+    this.limits = opts.limits;
     this.log = opts.log ?? (() => {});
   }
 
-  /** True when run keys are minted at all (OUTFITTER_LITELLM_ADMIN_KEY set). */
+  /** True when run keys are minted at all (LITELLM_ADMIN_KEY set). */
   get enabled(): boolean {
     return this.keys !== undefined;
   }
@@ -141,7 +145,9 @@ export class RunKeys {
       if (mint > MAX_RUN_KEYS) throw new Error(`run ${req.run.id} already has ${MAX_RUN_KEYS} keys`);
       const userId = userIdFor(email);
       await this.keys.ensureLitellmUser({ userId, email });
+      const limits = (await this.limits()).run;
       const minted = await this.keys.mintRunKey({
+        ...limits,
         userId,
         email,
         runId: req.run.id,

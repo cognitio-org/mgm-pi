@@ -8,13 +8,14 @@ import { openAgentSocket, makeRunningSession, sendHello } from "./agent-socket.t
 import { FakeLitellm } from "./fake-litellm.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretsBroker } from "../src/secrets.ts";
-import { createLitellmKeys, runKeyAlias, RUN_KEY_MAX_BUDGET_USD, type LitellmKeys } from "../src/central/litellm-keys.ts";
+import { createLitellmKeys, routerKeyLimits, runKeyAlias, RUN_KEY_MAX_BUDGET_USD, type LitellmKeys } from "../src/central/litellm-keys.ts";
+import { defaultFleetSettings, type FleetSettings } from "../src/fleet-settings.ts";
 import { RunKeys, RunKeyUnavailableError, MAX_RUN_KEYS, RUN_KEY_DURATION_SECONDS, SYSTEM_TEAM_ALIAS } from "../src/central/run-keys.ts";
 import { userIdFor } from "../src/central/user-id.ts";
 import { loadConfig } from "../src/config.ts";
 import type { Run } from "../src/store/types.ts";
 
-const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmKeyAdminKey: "sk-admin-test" };
+const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmAdminKey: "sk-admin-test" };
 const OWNER = "owner@example.com";
 const SHARED = "sk-shared-default";
 
@@ -26,12 +27,13 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
   }
 }
 
-function setup(opts: { fallback?: boolean; minting?: boolean } = {}) {
+function setup(opts: { fallback?: boolean; minting?: boolean; fleet?: FleetSettings } = {}) {
   const fake = new FakeLitellm();
   const store = new MemoryStore();
   const keys = opts.minting === false ? undefined : createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
   const logs: string[] = [];
-  const runKeys = new RunKeys({ keys, store, config: { runKeyFallback: opts.fallback ?? true }, log: (msg) => logs.push(msg) });
+  const fleet = opts.fleet ?? defaultFleetSettings();
+  const runKeys = new RunKeys({ keys, store, config: { runKeyFallback: opts.fallback ?? true }, limits: async () => routerKeyLimits(fleet), log: (msg) => logs.push(msg) });
   return { fake, store, keys, runKeys, logs };
 }
 
@@ -40,6 +42,18 @@ function run(state: Run["state"] = "provisioning", id = "r1"): Pick<Run, "id" | 
 }
 
 describe("RunKeys.keyForRun", () => {
+  test("mints with the fleet's run budget and models (router.runKey.maxBudgetUsd, router.keys.models)", async () => {
+    const fleet = { ...defaultFleetSettings(), values: { "router.runKey.maxBudgetUsd": 4, "router.keys.models": "claude-auto-llm" } };
+    const { fake, store, runKeys } = setup({ fleet });
+    await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
+    const [gen] = fake.callsTo("/key/generate");
+    assert.equal(gen!.body.max_budget, 4);
+    assert.deepEqual(gen!.body.models, ["claude-auto-llm"]);
+    assert.ok(!("rpm_limit" in gen!.body), "device-only limits stay off run keys");
+    const record = await store.routerKeys.findByAlias("outfitter-run-r1");
+    assert.equal(record?.maxBudget, 4);
+  });
+
   test("mints a key for the owner: alias, user_id, 24 h duration, run budget, metadata", async () => {
     const { fake, store, runKeys } = setup();
     const choice = await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });

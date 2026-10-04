@@ -1,6 +1,6 @@
 // Central sign-in, CA-5 (#394, docs/specs/central-auth.md §5): per-user, per-device and per-run
 // LiteLLM keys, so router spend is tracked per user. The only module that holds the router admin
-// key (config.litellmKeyAdminKey, Secret Manager outfitter-litellm-admin-key). Owned by task D; the
+// key (config.litellmAdminKey: LITELLM_ADMIN_KEY, Secret Manager outfitter-litellm-admin). Owned by task D; the
 // interface below is the contract CA-1 (through device-lifecycle.ts only), CA-6 (run keys) and
 // CA-7 (spend) build against.
 //
@@ -13,16 +13,19 @@
 //   POST /key/delete                { keys: [token] } or { key_aliases: [alias] }
 //   GET  /team/list, POST /team/new { team_alias } -> { team_id }
 //   GET  /spend/logs?start_date=&end_date=[&user_id=&summarize=false]
-// Every test runs against a fake fetch; nothing here is called without OUTFITTER_LITELLM_ADMIN_KEY.
+// Every test runs against a fake fetch; nothing here is called without LITELLM_ADMIN_KEY.
 //
 // A minted key's value is returned to the caller and never stored or logged. Error messages are
 // what a login's `problems` line shows the device, so they never carry an upstream body that could
 // echo a key (§5.3).
 
 import type { Config } from "../config.ts";
+import type { FleetSettings } from "../fleet-settings.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
 import type { Store } from "../store/types.ts";
 import type { DeviceDelivery, DeviceLifecycle, LifecycleDevice } from "./device-lifecycle.ts";
+import { fleetLevelValues, resolveKey } from "./settings-resolver.ts";
+import { settingDecl, type SettingValue } from "./settings-schema.ts";
 
 /** A key LiteLLM just minted. `key` is the only copy Outfitter ever holds, in memory, on its way to
  * the device or run.spec. */
@@ -35,8 +38,10 @@ export interface MintedKey {
 }
 
 export interface KeyLimits {
-  /** LiteLLM model names; absent means the defaults of §5.2. */
+  /** LiteLLM model names; absent means every model the proxy allows. */
   models?: string[];
+  /** A device key's LiteLLM `duration` ("90d"); a run key takes durationSeconds instead. */
+  duration?: string;
   maxBudget?: number;
   budgetDuration?: string;
   rpmLimit?: number;
@@ -81,10 +86,14 @@ export interface LitellmKeys {
 }
 
 // §5.2 / decision 5: a device key lives 90 days (Kernal re-mints before then), 50 USD per 30 days,
-// 120 requests a minute. A run key gets 20 USD and LiteLLM's `duration` as the backstop.
-export const DEVICE_KEY_DURATION = "90d";
+// 120 requests a minute. A run key gets 20 USD and LiteLLM's `duration` as the backstop. These are
+// the defaults of the fleet settings `router.deviceKey.*` / `router.runKey.*` (settings-schema.ts),
+// which routerKeyLimits reads at mint time; a mint without explicit limits falls back to them.
+export const DEVICE_KEY_DURATION_DAYS = 90;
+export const DEVICE_KEY_DURATION = `${DEVICE_KEY_DURATION_DAYS}d`;
 export const DEVICE_KEY_MAX_BUDGET_USD = 50;
-export const DEVICE_KEY_BUDGET_DURATION = "30d";
+export const DEVICE_KEY_BUDGET_PERIOD_DAYS = 30;
+export const DEVICE_KEY_BUDGET_DURATION = `${DEVICE_KEY_BUDGET_PERIOD_DAYS}d`;
 export const DEVICE_KEY_RPM_LIMIT = 120;
 export const RUN_KEY_MAX_BUDGET_USD = 20;
 /** §8: spend answers are cached per user and month on each instance. */
@@ -93,6 +102,64 @@ export const SPEND_CACHE_MS = 5 * 60_000;
 export const LITELLM_TIMEOUT_MS = 10_000;
 /** §5.5: how many owed deletes one tick retries. */
 export const SWEEP_BATCH = 50;
+
+/** The limits keys are minted with, from the fleet settings (§5.2). */
+export interface DeviceKeyLimits {
+  duration: string;
+  maxBudget: number;
+  budgetDuration: string;
+  rpmLimit: number;
+  models?: string[];
+}
+export interface RunKeyLimits {
+  maxBudget: number;
+  models?: string[];
+}
+export interface RouterKeyLimits {
+  device: DeviceKeyLimits;
+  run: RunKeyLimits;
+}
+/** Where a mint reads its limits: server.ts reads the FleetSettingsCache each time. */
+export type RouterKeyLimitsSource = () => Promise<RouterKeyLimits>;
+
+/** A fleet-only setting's value through the resolver (the fleet level, else the schema default). */
+function fleetSetting(values: Record<string, SettingValue>, key: string): SettingValue | undefined {
+  const decl = settingDecl(key);
+  return decl ? resolveKey(decl, [{ source: "fleet", values }])?.value : undefined;
+}
+
+function numberSetting(values: Record<string, SettingValue>, key: string, fallback: number): number {
+  const v = fleetSetting(values, key);
+  return typeof v === "number" ? v : fallback;
+}
+
+/** `router.keys.models`: a comma- or space-separated list, deduplicated; empty or unset is every
+ * model (undefined, so /key/generate gets no `models`). */
+export function parseModelList(value: unknown): string[] | undefined {
+  if (typeof value !== "string") return undefined;
+  const models = [...new Set(value.split(/[\s,]+/).map((m) => m.trim()).filter(Boolean))];
+  return models.length ? models : undefined;
+}
+
+/** The limits for a mint now, from the fleet settings `router.deviceKey.*`, `router.keys.models`
+ * and `router.runKey.maxBudgetUsd` (fleet level only, locked; defaults in settings-schema.ts). */
+export function routerKeyLimits(fleet: FleetSettings): RouterKeyLimits {
+  const values = fleetLevelValues(fleet);
+  const models = parseModelList(fleetSetting(values, "router.keys.models"));
+  return {
+    device: {
+      duration: `${numberSetting(values, "router.deviceKey.durationDays", DEVICE_KEY_DURATION_DAYS)}d`,
+      maxBudget: numberSetting(values, "router.deviceKey.maxBudgetUsd", DEVICE_KEY_MAX_BUDGET_USD),
+      budgetDuration: `${numberSetting(values, "router.deviceKey.budgetPeriodDays", DEVICE_KEY_BUDGET_PERIOD_DAYS)}d`,
+      rpmLimit: numberSetting(values, "router.deviceKey.rpmLimit", DEVICE_KEY_RPM_LIMIT),
+      ...(models ? { models } : {}),
+    },
+    run: {
+      maxBudget: numberSetting(values, "router.runKey.maxBudgetUsd", RUN_KEY_MAX_BUDGET_USD),
+      ...(models ? { models } : {}),
+    },
+  };
+}
 
 export const DEVICE_KEY_PREFIX = "kernal-device-";
 export const RUN_KEY_PREFIX = "outfitter-run-";
@@ -330,7 +397,7 @@ class HttpLitellmKeys implements LitellmKeys {
       {
         key_alias: alias,
         user_id: args.userId,
-        duration: DEVICE_KEY_DURATION,
+        duration: args.duration ?? DEVICE_KEY_DURATION,
         max_budget: maxBudget,
         budget_duration: budgetDuration,
         rpm_limit: args.rpmLimit ?? DEVICE_KEY_RPM_LIMIT,
@@ -509,15 +576,15 @@ function describeAlias(alias: string, key: LitellmKeyInfo | undefined): UserSpen
   };
 }
 
-/** The production LiteLLM client, or undefined when OUTFITTER_LITELLM_ADMIN_KEY is unset (no
+/** The production LiteLLM client, or undefined when LITELLM_ADMIN_KEY is unset (no
  * minting: logins carry no router key, runs keep today's shared keys). Tests pass `fetch`. */
 export function createLitellmKeys(
-  config: Pick<Config, "litellmBaseUrl" | "litellmKeyAdminKey">,
+  config: Pick<Config, "litellmBaseUrl" | "litellmAdminKey">,
   store: Pick<Store, "routerKeys">,
   opts: LitellmKeysOptions = {},
 ): LitellmKeys | undefined {
-  if (!config.litellmKeyAdminKey || !config.litellmBaseUrl) return undefined;
-  return new HttpLitellmKeys(config.litellmBaseUrl, config.litellmKeyAdminKey, store.routerKeys, opts);
+  if (!config.litellmAdminKey || !config.litellmBaseUrl) return undefined;
+  return new HttpLitellmKeys(config.litellmBaseUrl, config.litellmAdminKey, store.routerKeys, opts);
 }
 
 /** A device's router key, freshly minted (the user first, then the key, which replaces the old one),
@@ -526,19 +593,25 @@ export async function mintDeviceRouterKey(
   keys: LitellmKeys,
   device: Pick<LifecycleDevice, "id" | "userId" | "ownerEmail" | "name">,
   config: Pick<Config, "litellmBaseUrl">,
+  limits: DeviceKeyLimits,
 ): Promise<NonNullable<DeviceDelivery["routerKey"]>> {
   await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
-  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name });
+  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits });
   return { key: minted.key, baseUrl: config.litellmBaseUrl, alias: minted.alias, ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}) };
 }
 
-/** Registers CA-5's device hooks: mint at login (DeviceDelivery.routerKey), delete at revoke.
- * Called once from server.ts. A no-op without `keys`. */
-export function registerLitellmDeviceHooks(lifecycle: DeviceLifecycle, keys: LitellmKeys | undefined, config: Pick<Config, "litellmBaseUrl">): void {
+/** Registers CA-5's device hooks: mint at login (DeviceDelivery.routerKey) with the fleet's limits
+ * of that moment, delete at revoke. Called once from server.ts. A no-op without `keys`. */
+export function registerLitellmDeviceHooks(
+  lifecycle: DeviceLifecycle,
+  keys: LitellmKeys | undefined,
+  config: Pick<Config, "litellmBaseUrl">,
+  limits: RouterKeyLimitsSource,
+): void {
   if (!keys) return;
   lifecycle.register({
     name: "router key",
-    onLogin: async ({ device }) => ({ routerKey: await mintDeviceRouterKey(keys, device, config) }),
+    onLogin: async ({ device }) => ({ routerKey: await mintDeviceRouterKey(keys, device, config, (await limits()).device) }),
     // A failed delete is recorded (deleteFailedAt) and retried by the tick's sweep.
     onRevoked: async ({ device }) => keys.deleteKey({ alias: deviceKeyAlias(device.id) }),
   });

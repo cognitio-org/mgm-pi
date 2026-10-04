@@ -8,10 +8,19 @@ import {
   createLitellmKeys,
   deviceKeyAlias,
   monthRange,
+  parseModelList,
   registerLitellmDeviceHooks,
+  routerKeyLimits,
   sweepRouterKeys,
+  DEVICE_KEY_BUDGET_PERIOD_DAYS,
+  DEVICE_KEY_DURATION_DAYS,
+  DEVICE_KEY_MAX_BUDGET_USD,
+  DEVICE_KEY_RPM_LIMIT,
+  RUN_KEY_MAX_BUDGET_USD,
   type LitellmKeys,
 } from "../src/central/litellm-keys.ts";
+import { defaultFleetSettings, type FleetSettings } from "../src/fleet-settings.ts";
+import { settingDecl, type SettingValue } from "../src/central/settings-schema.ts";
 import { DeviceLifecycle, type LifecycleDevice } from "../src/central/device-lifecycle.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { RouterKey, RouterKeysCollection } from "../src/store/keys.ts";
@@ -19,7 +28,12 @@ import { buildTestApp } from "./helpers.ts";
 import { FakeLitellm } from "./fake-litellm.ts";
 
 const ADMIN = "sk-admin-test-key";
-const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmKeyAdminKey: ADMIN };
+const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmAdminKey: ADMIN };
+/** The fleet settings with `values` at the fleet level. */
+function fleetWith(values: Record<string, SettingValue>): FleetSettings {
+  return { ...defaultFleetSettings(), values };
+}
+const DEFAULT_LIMITS = async () => routerKeyLimits(defaultFleetSettings());
 const device: LifecycleDevice = { id: "dev_aaaabbbbccccdddd", userId: "u_0123456789abcdef01234567", ownerEmail: "a@example.com", name: "mbp-a" };
 
 function setup(opts: { now?: () => Date; store?: MemoryStore } = {}): { fake: FakeLitellm; store: MemoryStore; keys: LitellmKeys } {
@@ -30,8 +44,8 @@ function setup(opts: { now?: () => Date; store?: MemoryStore } = {}): { fake: Fa
 }
 
 describe("createLitellmKeys", () => {
-  test("is undefined without OUTFITTER_LITELLM_ADMIN_KEY", () => {
-    assert.equal(createLitellmKeys({ litellmBaseUrl: "https://router.test/v1", litellmKeyAdminKey: "" }, new MemoryStore()), undefined);
+  test("is undefined without LITELLM_ADMIN_KEY", () => {
+    assert.equal(createLitellmKeys({ litellmBaseUrl: "https://router.test/v1", litellmAdminKey: "" }, new MemoryStore()), undefined);
   });
 
   test("calls the management root (no /v1) with the admin key as bearer", async () => {
@@ -279,7 +293,7 @@ describe("registerLitellmDeviceHooks", () => {
   test("login delivers this device's router key with the router base URL; revoke deletes it", async () => {
     const { fake, store, keys } = setup();
     const lifecycle = new DeviceLifecycle();
-    registerLitellmDeviceHooks(lifecycle, keys, CONFIG);
+    registerLitellmDeviceHooks(lifecycle, keys, CONFIG, DEFAULT_LIMITS);
     const result = await lifecycle.login({ device });
     assert.deepEqual(result.problems, []);
     const routerKey = result.delivery.routerKey!;
@@ -298,15 +312,40 @@ describe("registerLitellmDeviceHooks", () => {
     const { fake, keys } = setup();
     fake.down = true;
     const lifecycle = new DeviceLifecycle();
-    registerLitellmDeviceHooks(lifecycle, keys, CONFIG);
+    registerLitellmDeviceHooks(lifecycle, keys, CONFIG, DEFAULT_LIMITS);
     const result = await lifecycle.login({ device });
     assert.deepEqual(result.delivery, {});
     assert.deepEqual(result.problems, ["router key: LiteLLM did not answer"]);
   });
 
+  test("login mints with the fleet's limits of that moment, read at each login", async () => {
+    const { fake, keys } = setup();
+    let fleet = defaultFleetSettings();
+    const lifecycle = new DeviceLifecycle();
+    registerLitellmDeviceHooks(lifecycle, keys, CONFIG, async () => routerKeyLimits(fleet));
+    await lifecycle.login({ device });
+    fleet = fleetWith({
+      "router.deviceKey.durationDays": 7,
+      "router.deviceKey.maxBudgetUsd": 12.5,
+      "router.deviceKey.budgetPeriodDays": 1,
+      "router.deviceKey.rpmLimit": 30,
+      "router.keys.models": "claude-auto-llm, gpt-auto-llm",
+    });
+    await lifecycle.login({ device });
+    const [first, second] = fake.callsTo("/key/generate");
+    assert.equal(first!.body.duration, "90d");
+    assert.equal(first!.body.max_budget, 50);
+    assert.ok(!("models" in first!.body));
+    assert.equal(second!.body.duration, "7d");
+    assert.equal(second!.body.max_budget, 12.5);
+    assert.equal(second!.body.budget_duration, "1d");
+    assert.equal(second!.body.rpm_limit, 30);
+    assert.deepEqual(second!.body.models, ["claude-auto-llm", "gpt-auto-llm"]);
+  });
+
   test("without minting nothing is registered", async () => {
     const lifecycle = new DeviceLifecycle();
-    registerLitellmDeviceHooks(lifecycle, undefined, CONFIG);
+    registerLitellmDeviceHooks(lifecycle, undefined, CONFIG, DEFAULT_LIMITS);
     assert.deepEqual(await lifecycle.login({ device }), { delivery: {}, problems: [] });
   });
 });
@@ -315,5 +354,61 @@ describe("monthRange", () => {
   test("first of the month to the first of the next, across a year end", () => {
     assert.deepEqual(monthRange("2026-10"), { start: "2026-10-01", end: "2026-11-01" });
     assert.deepEqual(monthRange("2026-12"), { start: "2026-12-01", end: "2027-01-01" });
+  });
+});
+
+describe("routerKeyLimits (fleet settings router.*)", () => {
+  test("defaults: 90d, 50 USD per 30d, 120 rpm, every model; run keys 20 USD", () => {
+    assert.deepEqual(routerKeyLimits(defaultFleetSettings()), {
+      device: { duration: "90d", maxBudget: 50, budgetDuration: "30d", rpmLimit: 120 },
+      run: { maxBudget: 20 },
+    });
+  });
+
+  test("the schema defaults are the module's constants", () => {
+    assert.equal(settingDecl("router.deviceKey.durationDays")?.default, DEVICE_KEY_DURATION_DAYS);
+    assert.equal(settingDecl("router.deviceKey.maxBudgetUsd")?.default, DEVICE_KEY_MAX_BUDGET_USD);
+    assert.equal(settingDecl("router.deviceKey.budgetPeriodDays")?.default, DEVICE_KEY_BUDGET_PERIOD_DAYS);
+    assert.equal(settingDecl("router.deviceKey.rpmLimit")?.default, DEVICE_KEY_RPM_LIMIT);
+    assert.equal(settingDecl("router.runKey.maxBudgetUsd")?.default, RUN_KEY_MAX_BUDGET_USD);
+    assert.equal(settingDecl("router.keys.models")?.default, undefined);
+    for (const key of ["router.deviceKey.durationDays", "router.deviceKey.maxBudgetUsd", "router.deviceKey.budgetPeriodDays", "router.deviceKey.rpmLimit", "router.keys.models", "router.runKey.maxBudgetUsd"]) {
+      const decl = settingDecl(key)!;
+      assert.deepEqual(decl.levels, ["fleet"], key);
+      assert.equal(decl.override, "none", key);
+      assert.equal(decl.secret, false, key);
+    }
+  });
+
+  test("fleet overrides apply to device and run keys", () => {
+    const limits = routerKeyLimits(fleetWith({
+      "router.deviceKey.durationDays": 14,
+      "router.deviceKey.maxBudgetUsd": 0,
+      "router.deviceKey.budgetPeriodDays": 7,
+      "router.deviceKey.rpmLimit": 60,
+      "router.keys.models": "a b,,a",
+      "router.runKey.maxBudgetUsd": 3,
+    }));
+    assert.deepEqual(limits, {
+      device: { duration: "14d", maxBudget: 0, budgetDuration: "7d", rpmLimit: 60, models: ["a", "b"] },
+      run: { maxBudget: 3, models: ["a", "b"] },
+    });
+  });
+
+  test("a stored value that doesn't fit (fractional days, out of range, wrong type) falls back to the default", () => {
+    const limits = routerKeyLimits(fleetWith({
+      "router.deviceKey.durationDays": 1.5,
+      "router.deviceKey.maxBudgetUsd": -1,
+      "router.deviceKey.budgetPeriodDays": 400,
+      "router.deviceKey.rpmLimit": "120" as unknown as number,
+      "router.keys.models": "   ",
+    }));
+    assert.deepEqual(limits.device, { duration: "90d", maxBudget: 50, budgetDuration: "30d", rpmLimit: 120 });
+  });
+
+  test("parseModelList", () => {
+    assert.equal(parseModelList(undefined), undefined);
+    assert.equal(parseModelList(""), undefined);
+    assert.deepEqual(parseModelList(" x,y  z ,x"), ["x", "y", "z"]);
   });
 });

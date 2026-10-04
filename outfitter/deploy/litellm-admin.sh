@@ -34,8 +34,8 @@ ROTATE="${ROTATE:-0}"
 
 ALLOWED_ROUTES='[
   "/key/generate", "/key/update", "/key/delete", "/key/block", "/key/unblock", "/key/info", "/key/list",
-  "/user/new", "/user/info", "/user/update",
-  "/team/new", "/team/info",
+  "/user/new", "/user/info", "/user/update", "/user/list",
+  "/team/new", "/team/info", "/team/list",
   "/spend/logs", "/user/daily/activity",
   "/model/new", "/model/update", "/model/delete", "/model/info",
   "/health/liveliness"

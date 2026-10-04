@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
-import { outfitterCredentials } from "../_shared/outfitter-env.ts";
+import { outfitterBearer, outfitterCredentials } from "../_shared/outfitter-env.ts";
 
 /** `approvalId` (E9.9): a laptop op waiting for the owner's yes in the Outfitter web app; `state`:
  * what `approvals.get` says about it (laptop-approval.ts). */
@@ -186,7 +186,7 @@ async function errorBody(res: Response): Promise<string | undefined> {
   }
 }
 
-export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn = fetch, timeouts: TransportTimeouts = {}): AdminTransport {
+export function httpTransport(apiBase: string, token: string | (() => Promise<string | undefined>), fetchFn: FetchFn = fetch, timeouts: TransportTimeouts = {}): AdminTransport {
   const base = apiBase.replace(/\/+$/, "");
   return {
     kind: "laptop",
@@ -198,7 +198,7 @@ export function httpTransport(apiBase: string, token: string, fetchFn: FetchFn =
       try {
         res = await fetchFn(`${base}/api/admin/ops`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${typeof token === "string" ? token : await token()}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             op,
             args,
@@ -256,7 +256,7 @@ export function adminTransport(env?: NodeJS.ProcessEnv, fetchFn?: FetchFn): Admi
   if (socket) return socketTransport(socket);
   // In a Drive the socket is the only way in; never fall back to a Dongle there.
   if (e.OUTFITTER_SESSION_ID) return undefined;
-  const { api, token } = outfitterCredentials(env);
-  if (api && token) return httpTransport(api, token, fetchFn);
+  const creds = outfitterCredentials(env);
+  if (creds.api && creds.token) return httpTransport(creds.api, () => outfitterBearer(creds), fetchFn);
   return undefined;
 }

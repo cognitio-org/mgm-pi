@@ -28,7 +28,7 @@
  * polls GET /api/sessions/:id until the run is no longer active, so the exported transcript is
  * complete. --force (opts.force) skips this and pulls whatever has been persisted so far.
  */
-import { outfitterCredentials } from "../_shared/outfitter-env.ts";
+import { outfitterBearer, outfitterCredentials } from "../_shared/outfitter-env.ts";
 import type { Manifest, SessionRef, Store, Warn } from "./lib.ts";
 
 // Run states the API considers "active" -- mirrors ACTIVE_RUN_STATES / memory.ts's findActiveForSession.
@@ -70,6 +70,7 @@ export type OutfitterStoreOptions = {
 export class OutfitterStore implements Store {
   private apiBase: string;
   private token: string;
+  private ownCreds: boolean;
   private fetchFn: FetchFn;
   private warn: Warn;
   private stopTimeoutMs: number;
@@ -88,6 +89,7 @@ export class OutfitterStore implements Store {
       );
     }
     this.token = token;
+    this.ownCreds = opts.token === undefined;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.warn = opts.warn ?? (() => {});
     this.stopTimeoutMs = opts.stopTimeoutMs ?? 90_000;
@@ -104,12 +106,14 @@ export class OutfitterStore implements Store {
     }
   }
 
-  private authHeader(): string {
-    return `Bearer ${this.token}`;
+  private async authHeader(): Promise<string> {
+    // A token of our own (opts.token) as given; this process's credentials through outfitterBearer,
+    // which refreshes a session's access token when it is nearly out.
+    return `Bearer ${this.ownCreds ? ((await outfitterBearer(outfitterCredentials())) ?? this.token) : this.token}`;
   }
 
   private async request(method: string, path: string, body?: string, extraHeaders?: Record<string, string>): Promise<Response> {
-    const headers: Record<string, string> = { ...extraHeaders, Authorization: this.authHeader() };
+    const headers: Record<string, string> = { ...extraHeaders, Authorization: await this.authHeader() };
     if (body !== undefined) headers["Content-Type"] = "application/x-ndjson";
     const res = await this.fetchFn(`${this.apiBase}${path}`, { method, headers, body });
     if (res.status === 401) {
@@ -162,7 +166,7 @@ export class OutfitterStore implements Store {
     if (session.runState !== "stopping") {
       const stopRes = await this.fetchFn(`${this.apiBase}/api/sessions/${id}/stop`, {
         method: "POST",
-        headers: { Authorization: this.authHeader() },
+        headers: { Authorization: await this.authHeader() },
       });
       if (stopRes.status === 404) return; // "no active run" -- already stopped between our check and this call
       if (!stopRes.ok) {

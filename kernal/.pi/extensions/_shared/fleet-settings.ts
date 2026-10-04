@@ -17,7 +17,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { env } from "./env.ts";
-import type { OutfitterCredentials } from "./outfitter-env.ts";
+import { outfitterBearer, type OutfitterCredentials } from "./outfitter-env.ts";
 
 export type SentrySettings = { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number };
 
@@ -86,7 +86,7 @@ export async function refreshFleetSettings(
   let settings: FleetSettings;
   try {
     const res = await doFetch(`${creds.api.replace(/\/+$/, "")}/api/fleet-settings`, {
-      headers: { authorization: `Bearer ${creds.token}`, accept: "application/json" },
+      headers: { authorization: `Bearer ${await outfitterBearer(creds)}`, accept: "application/json" },
       signal: AbortSignal.timeout(opts.timeoutMs ?? FETCH_TIMEOUT_MS),
     });
     // A refused Dongle (revoked, expired) is an answer, not an outage: the cached "on" must not

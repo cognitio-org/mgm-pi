@@ -1,0 +1,90 @@
+outfitter/packages/api/src/routes/tokens.ts
+  s_38ec74cfb7fa1d::t_81011650a6bffe 43-46
+  s_38ec74cfb7fa1d::t_f19a8acecd1d0a 54
+outfitter/packages/api/src/central/device-login.ts
+  s_38ec74cfb7fa1d::t_4682b3b5ad68bb 1-14,16-204,206-476
+  s_38ec74cfb7fa1d::t_553b6a19302418 15,205
+outfitter/packages/api/test/device-routes.test.ts
+  s_38ec74cfb7fa1d::t_1b768ba4734a1d 1-401
+outfitter/deploy/service.sh
+  s_38ec74cfb7fa1d::t_cb716d9b3eb326 210-228
+outfitter/packages/api/src/routes/device.ts
+  s_38ec74cfb7fa1d::t_a967fc7a408123 8-9,11,13-15,17-30,32-33,35-107,109-177
+  s_38ec74cfb7fa1d::t_d3c36a91b9c6fe 16,31,108
+outfitter/packages/api/test/device-login.test.ts
+  s_38ec74cfb7fa1d::t_ee8f0ad71dbfc4 9,53-54
+  s_38ec74cfb7fa1d::t_5b97637aea72b5 1-8,10-52,55-396
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_d2459d2ad4754a 278
+outfitter/packages/api/test/archive.test.ts
+  s_38ec74cfb7fa1d::t_5696936a9af79b 256
+  s_38ec74cfb7fa1d::t_9020b9d29ffb92 13
+  s_38ec74cfb7fa1d::t_1937d84ff50dcb 287-288,295-297
+outfitter/packages/api/test/device-store-mongo.test.ts
+  s_38ec74cfb7fa1d::t_c51b37e17e762f 1-154
+outfitter/deploy/config.env
+  s_38ec74cfb7fa1d::t_04490114617179 88-93
+outfitter/packages/api/src/routes/me.ts
+  s_38ec74cfb7fa1d::t_b615ad01a02a5f 35-37
+  s_38ec74cfb7fa1d::t_62a625f7722b4f 5
+outfitter/docs/protocol.md
+  s_38ec74cfb7fa1d::t_8db3c59c0baeae 681-725
+outfitter/packages/api/test/browser-ide-open.test.ts
+  s_38ec74cfb7fa1d::t_88750df2370720 40,44-45
+  s_38ec74cfb7fa1d::t_9d328191c01211 68-69
+  s_38ec74cfb7fa1d::t_5707435aa98aae 51-52
+  s_38ec74cfb7fa1d::t_d601f4d6d0acab 16
+outfitter/packages/api/test/format.test.ts
+  s_38ec74cfb7fa1d::t_a3f6ae4117846d 111-112,114
+  s_38ec74cfb7fa1d::t_1f8f5e2d12a8b3 11
+  s_38ec74cfb7fa1d::t_666e156323cd00 121-123
+outfitter/packages/api/test/operator.test.ts
+  s_38ec74cfb7fa1d::t_00d2791328f888 14
+  s_38ec74cfb7fa1d::t_077ac32e5d4cf2 66-67,70-74
+outfitter/packages/api/src/central/device-tokens.ts
+  s_38ec74cfb7fa1d::t_f97298ad47de34 8-9
+  s_38ec74cfb7fa1d::t_20a382d27c9ff5 38-86
+outfitter/packages/api/test/auth.test.ts
+  s_38ec74cfb7fa1d::t_8ea77022f46485 57-59,63-64
+outfitter/packages/api/test/preview-routes.test.ts
+  s_38ec74cfb7fa1d::t_8b6fb452e0de52 38-39
+  s_38ec74cfb7fa1d::t_6f0ff398ddbdae 26
+  s_38ec74cfb7fa1d::t_9c890ec5bf9dfc 48-49
+  s_38ec74cfb7fa1d::t_0638c71666b598 12
+outfitter/packages/api/test/device-iap.ts
+  s_38ec74cfb7fa1d::t_965753df3a5522 1-28
+outfitter/packages/api/src/store/devices.ts
+  s_38ec74cfb7fa1d::t_b30733901421fb 84-86,88,103-104,106,114-118,121-133,138-146,148-150,152-157,159-162,164-169,174-178,180-182,184-185,188-189,192-208,210-213,215-216,218-226,236-272,278-285,287-288,290-291,293-296,298-299,308-309,311-312,314-315,317-325,327-334,336-343,345-346,348-357
+outfitter/packages/api/src/auth.ts
+  s_38ec74cfb7fa1d::t_d90f249b6b1938 109,128
+  s_38ec74cfb7fa1d::t_3349641d4491ab 46-47
+  s_38ec74cfb7fa1d::t_6a43beb1b05b76 130,132-134,138-160
+  s_38ec74cfb7fa1d::t_237bb1a325d907 57-59
+  s_38ec74cfb7fa1d::t_67b3186767ab92 174-180
+  s_38ec74cfb7fa1d::t_89749c4b629763 73-78
+  s_38ec74cfb7fa1d::t_807d43af3cd89c 168,171
+  s_38ec74cfb7fa1d::t_29e83efdca98d8 182-186,189-190
+  s_38ec74cfb7fa1d::t_abcdd64ba91574 53-55
+  s_38ec74cfb7fa1d::t_cf3caeaf49c21b 32-39
+  s_38ec74cfb7fa1d::t_2c8dc4c73f5d34 86-87
+  s_38ec74cfb7fa1d::t_aa0cf22820e2a3 161
+outfitter/packages/api/test/ae-agents.test.ts
+  s_38ec74cfb7fa1d::t_1d2694881852cb 515,518
+  s_38ec74cfb7fa1d::t_0011bf0700829b 499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6852386804c284f5bcd1093ddbec73979d245164",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

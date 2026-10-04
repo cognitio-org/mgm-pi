@@ -1,0 +1,34 @@
+kernal/tests/admin-central.test.ts
+  s_38ec74cfb7fa1d::t_9b84af1d34bbe1 10,15,111-118,145-180,227-229,320-348,414-437,440-443
+  s_38ec74cfb7fa1d::t_07da0c32306ef9 438-439
+  s_38ec74cfb7fa1d::t_d0652aba5324dc 444
+kernal/.pi/extensions/kernal-admin/central.ts
+  s_38ec74cfb7fa1d::t_cf969b1a4f373f 12-14,24-25,113-131,184-185,207,210-219,263-264,268-272,281-289,291,298-300
+kernal/.pi/extensions/kernal-admin/index.ts
+  s_38ec74cfb7fa1d::t_1168797ca022e4 23
+  s_38ec74cfb7fa1d::t_27a33dd4a0e9d7 190,197
+  s_38ec74cfb7fa1d::t_e2a020f049ccc3 191-196
+  s_38ec74cfb7fa1d::t_bd242af3a9cc13 27
+  s_38ec74cfb7fa1d::t_eab071cc3428fb 171-172
+  s_38ec74cfb7fa1d::t_be91161b7e7d2f 65-73,77
+  s_38ec74cfb7fa1d::t_a69171521d5f91 173
+  s_38ec74cfb7fa1d::t_4027a975f40c58 64,74-76
+kernal/.pi/extensions/kernal-admin/app.ts
+  s_38ec74cfb7fa1d::t_2e7a0279b8175e 930
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "466c4ffd990c1d4727664621f869024023906bc9",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

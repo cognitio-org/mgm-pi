@@ -119,7 +119,7 @@ else
   echo "ok: --set-env-vars has no GKE_ variable while GKE is off"
 fi
 
-EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
+EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,OUTFITTER_LOGIN_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
 if [[ "${ENV_VARS_ARG}" == "--set-env-vars=${EXPECTED}" ]]; then
   echo "ok: --set-env-vars is exactly config.env's pre-GKE list, unchanged"
 else
@@ -135,7 +135,7 @@ fi
 status=0
 OUT="$(cd "${REPO}/outfitter/deploy" && PREVIEW_DOMAIN=kernal.run ./service.sh web 2>&1)" || status=$?
 PREVIEW_ENV="$(grep '^run deploy outfitter-api' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
-WANT_PREVIEW="PREVIEW_DOMAIN=kernal.run,PREVIEW_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;mgm@mgms.eu;matej@mgms.eu"
+WANT_PREVIEW="PREVIEW_DOMAIN=kernal.run,PREVIEW_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu"
 if [[ ${status} -eq 0 && "${PREVIEW_ENV}" == *",${WANT_PREVIEW},"* ]]; then
   echo "ok: previews on: PREVIEW_DOMAIN and PREVIEW_ALLOW (IAP members + operators, ';'-separated) are set"
 else

@@ -518,6 +518,7 @@ describe("sentry extension wired to pi", () => {
     sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: {}, cacheFile: file, fetch: slowFetch, onRefresh: (p) => { oldRefresh = p; } });
     // /reload: a new instance, opted out.
     sentryExtension(makePi() as any, { sentry, credentials: CREDS, settings: { kernal: { sentry: false } }, cacheFile: file, fetch: fakeFetch(ON).fn, onRefresh: () => {} });
+    await new Promise((r) => setImmediate(r)); // the old refresh awaits its bearer (outfitterBearer) before it fetches
     releaseOld(new Response(JSON.stringify(ON), { status: 200, headers: { "content-type": "application/json" } }));
     await oldRefresh;
     await new Promise((r) => setImmediate(r));

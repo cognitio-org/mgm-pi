@@ -108,7 +108,7 @@ describe("registration", () => {
   });
 
   test("outfitterCredentials: read once, and the token leaves process.env", () => {
-    assert.deepEqual(outfitterCredentials({ OUTFITTER_API: " https://x ", OUTFITTER_TOKEN: "t" }), { api: "https://x", token: "t" });
+    assert.deepEqual(outfitterCredentials({ OUTFITTER_API: " https://x ", OUTFITTER_TOKEN: "t" }), { api: "https://x", token: "t", source: "dongle" });
   });
 });
 

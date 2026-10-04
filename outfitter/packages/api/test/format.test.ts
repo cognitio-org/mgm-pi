@@ -8,6 +8,7 @@ import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import { sessionGithubTokenSecretName } from "../src/operator.ts";
 import { SessionFormattedError } from "../src/runs.ts";
 import type { Mail, Run, Session, Store } from "../src/store/types.ts";
+import { TEST_IAP_AUDIENCE, iapHeaders, useFakeIap } from "./device-iap.ts";
 
 const TASKS_AUTH = { authorization: "Bearer test-agent-token" };
 const ARCHIVED = "2026-09-27T00:00:00.000Z";
@@ -107,16 +108,19 @@ describe("DELETE /api/sessions/:id (format)", () => {
     await app.fastify.close();
   });
 
-  test("only the owner or a sysop may format", async () => {
+  test("only the owner or a sysop may format", async (t) => {
+    useFakeIap(t);
     const store = new MemoryStore();
-    const app = await buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com" }, { store });
+    const app = await buildTestApp({ OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "sysop@example.com", IAP_AUDIENCE: TEST_IAP_AUDIENCE }, { store });
     await insertSession(store, "mine", { ownerEmail: "owner@example.com", archivedAt: ARCHIVED });
     await insertSession(store, "ownerless", { archivedAt: ARCHIVED });
 
     assert.equal((await format(app, "mine", await bearerFor(store, "someone@example.com"))).statusCode, 403);
     assert.equal((await format(app, "ownerless", await bearerFor(store, "owner@example.com"))).statusCode, 403);
     assert.equal((await format(app, "mine", await bearerFor(store, "owner@example.com"))).statusCode, 204);
-    assert.equal((await format(app, "ownerless", await bearerFor(store, "sysop@example.com"))).statusCode, 204);
+    // #390: a sysop's Dongle is not a sysop; the person signed in through IAP is.
+    assert.equal((await format(app, "ownerless", await bearerFor(store, "sysop@example.com"))).statusCode, 403);
+    assert.equal((await format(app, "ownerless", iapHeaders("sysop@example.com"))).statusCode, 204);
     await app.fastify.close();
   });
 

@@ -169,7 +169,8 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 # there). The real directory goes on in KERNAL_PI_MEMORY_SOURCE for `/memory import`.
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
-  [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || return 0
+  # A Dongle, or a stored login (`kernal login`, central-auth.md §2.7: its index exists only while one does).
+  [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || [[ -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]] || return 0
   local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
   # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
   # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.

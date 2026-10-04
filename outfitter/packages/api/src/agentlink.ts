@@ -45,6 +45,7 @@ import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
 import { sentryOn, type FleetSettingsCache } from "./fleet-settings.ts";
+import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 /** #285: how often the open thought is written onto the run. The poller already lags by its
@@ -281,6 +282,10 @@ export interface RunSpecMessage {
   /** Fleet settings (fleet-settings.ts): present only while an operator has Sentry on for the
    * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. */
   telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } };
+  /** CA-6 (central-auth.md §9): the session owner's resolved settings (their default profile, no
+   * device level; central/run-keys.ts runSpecSettings). Absent without an owner, for an A2A
+   * session, or when they can't be resolved. agentd applies the keys it knows (settings.ts). */
+  settings?: RunSpecSettings;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -385,6 +390,8 @@ export class AgentLink {
   private previews: PreviewService | undefined;
   /** Fleet settings (fleet-settings.ts): run.spec's `telemetry`; unset in apps built without them. */
   private fleetSettings: FleetSettingsCache | undefined;
+  /** CA-6: per-run LiteLLM keys (central/run-keys.ts); unset in apps built without them. */
+  private runKeys: RunKeys | undefined;
   /** E9 §1: settles and mail acceptance feed the turn waiters; unset in apps built without them. */
   private turns: TurnWaiters | undefined;
   /** Sysop tools (#287): the Drive side of the admin op registry; unset until setDriveAdmin. */
@@ -430,6 +437,11 @@ export class AgentLink {
 
   setIndexer(indexer: SessionIndexer): void {
     this.indexer = indexer;
+  }
+
+  /** CA-6 (#395): server.ts wires this once the LiteLLM key client exists. */
+  setRunKeys(runKeys: RunKeys): void {
+    this.runKeys = runKeys;
   }
 
   setMemoryRecorder(recorder: MemoryRecorder): void {
@@ -1306,7 +1318,28 @@ export class AgentLink {
     // there would only lengthen the reconnect agentd waits out (#185).
     const stored = isReadyState(run.state) ? [] : await this.store.entries.listForSession(session.id);
     const jsonl = stored.length > 0 ? sessionJsonl(session, stored.map((e) => e.entry)) : undefined;
-    const sentry = (await this.fleetSettings?.get())?.telemetry.sentry;
+    const fleet = await this.fleetSettings?.get();
+    const sentry = fleet?.telemetry.sentry;
+    // CA-6 (central-auth.md §9): the owner's settings, and the run's own LiteLLM key in place of
+    // the shared one. Last, after every refusal above, so a refused spec mints nothing.
+    const settings =
+      fleet && session.ownerEmail && !a2aSession
+        ? await runSpecSettings(this.store, fleet, session.ownerEmail, {
+            allowHttp: this.config.devMode,
+            log: (msg, err) => console.warn(`[agentlink] ${msg}: ${String(err)}`),
+          })
+        : undefined;
+    const litellmKey = this.runKeys
+      ? (
+          await this.runKeys.keyForRun({
+            run,
+            session,
+            specSent: specSent ? "yes" : run.startup ? "no" : "unknown",
+            sharedKey: secrets.litellmKey,
+            a2a: a2aSession,
+          })
+        ).key
+      : secrets.litellmKey;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
       keepCurrentGithubToken,
@@ -1346,7 +1379,7 @@ export class AgentLink {
       snapshot: { url: session.checkpoint?.snapshotUrl, ...(jsonl ? { jsonl } : {}) },
       secrets: {
         githubToken: secrets.githubToken,
-        litellmKey: secrets.litellmKey,
+        litellmKey,
         litellmBaseUrl: this.config.litellmBaseUrl,
         ...(previewConfig?.token ? { ngrokAuthtoken: previewConfig.token } : {}),
       },
@@ -1365,6 +1398,7 @@ export class AgentLink {
             },
           }
         : {}),
+      ...(settings ? { settings } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.
@@ -1920,6 +1954,8 @@ export class AgentLink {
         // #217: the run's previews and preview credential go with it (the tick's sweep catches a run
         // that ends without a bye).
         if (stored && this.previews) void this.previews.closeRun(runId).catch(() => {});
+        // CA-6: the run's own LiteLLM key goes with it (revoke never throws; the sweep retries).
+        if (stored && this.runKeys) void this.runKeys.revoke(runId);
         // E9 §1 layer 2: a turn this run accepted and never settled ends with the run.
         if (stored && this.turns) await this.turns.noteRunEnded(runId).catch((err) => console.warn(`[agentlink] turn waiters: ${err}`));
         // Then start the next run for it, and for mail held back while this run was stopping --

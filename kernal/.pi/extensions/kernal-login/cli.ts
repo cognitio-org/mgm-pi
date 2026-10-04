@@ -7,6 +7,7 @@
  * No index.ts here on purpose: pi loads only extension directories that have one.
  */
 import { main } from "./commands.ts";
+import { offerEnvImport, terminalAsk } from "./env-import.ts";
 
 // Ctrl-C stops a login that is waiting for approval; nothing is stored then.
 const abort = new AbortController();
@@ -17,4 +18,6 @@ const code = await main(process.argv.slice(2), {
   err: (line) => process.stderr.write(`${line}\n`),
   signal: abort.signal,
 });
+// CA-10 (§12.1): after a login, offer to move the keys in .env to the account. Asks only on a terminal.
+if (code === 0 && process.argv[2] === "login") await offerEnvImport({ err: (line) => process.stderr.write(`${line}\n`), ask: terminalAsk() });
 process.exit(code);

@@ -81,7 +81,11 @@ export interface Device {
   prevRefreshValidUntil?: string;
 }
 
+/** Lowercased email, or an `@domain` suffix: tokens.ts normalizeOwnerMatch's output. */
+export type DeviceOwnerMatch = { email: string } | { domain: string };
+
 export interface DeviceCodesCollection {
+  /** Throws DuplicateDeviceCodeError when the userCode (or deviceCodeHash) is taken. */
   insert(code: DeviceCode): Promise<void>;
   findByDeviceCodeHash(hash: string): Promise<DeviceCode | null>;
   /** Only a code still `pending` and not past expiresAt. */
@@ -96,9 +100,10 @@ export interface DevicesCollection {
   findById(id: string): Promise<Device | null>;
   /** Matches accessHash or prevAccessHash; the caller checks the matching expiry and revokedAt. */
   findByAccessHash(hash: string): Promise<Device | null>;
-  /** Matches refreshHash or (within its grace) prevRefreshHash; the caller tells them apart. */
+  /** Matches refreshHash or prevRefreshHash, whatever the grace; the caller tells them apart (a
+   * replaced token used after its grace is a reuse, which revokes the device, §1.3). */
   findByRefreshHash(hash: string): Promise<Device | null>;
-  /** Not revoked, newest first. */
+  /** Not revoked, newest first. `ownerEmail` is stored lowercased (user-id.ts normalizeEmail). */
   listActiveForOwner(ownerEmail: string): Promise<Device[]>;
   update(id: string, patch: Partial<Device>): Promise<Device | null>;
   /** Rotation: swaps the pair only if the device's refreshHash is still `expectedRefreshHash`
@@ -106,57 +111,119 @@ export interface DevicesCollection {
   rotate(id: string, expectedRefreshHash: string, patch: Partial<Device>): Promise<Device | null>;
   /** Revokes every active device of `ownerEmail`; returns the ones it revoked. */
   revokeAllForOwner(ownerEmail: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]>;
+  /** Marks one device revoked only if it isn't yet (atomic). Null when it already was, or doesn't
+   * exist, so a revoke's lifecycle hook fires once. */
+  revoke(id: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device | null>;
+  /** revokeAllForOwner for an operator's email-or-domain match (POST /api/operator/devices/revoke). */
+  revokeAllForOwners(match: DeviceOwnerMatch, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]>;
 }
 
-const notImplemented = (what: string): never => {
-  throw new Error(`${what}: not implemented yet (CA-1, docs/specs/central-auth.md)`);
-};
+/** An insert's one expected failure: the userCode (or deviceCodeHash) is taken. POST
+ * /api/device/code retries with a new code. Mongo raises it as E11000 on the unique index; the
+ * memory store checks the same two fields. */
+export class DuplicateDeviceCodeError extends Error {}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function ownerMatchesDevice(ownerEmail: string, match: DeviceOwnerMatch): boolean {
+  const owner = ownerEmail.trim().toLowerCase();
+  return "email" in match ? owner === match.email : owner.endsWith(match.domain);
+}
 
 // ---------- memory (dev/tests) ----------
 
 export class MemoryDeviceCodes implements DeviceCodesCollection {
-  async insert(_code: DeviceCode): Promise<void> {
-    notImplemented("deviceCodes.insert");
+  private readonly rows = new Map<string, DeviceCode>();
+
+  async insert(code: DeviceCode): Promise<void> {
+    for (const row of this.rows.values()) {
+      if (row.userCode === code.userCode || row.deviceCodeHash === code.deviceCodeHash) {
+        throw new DuplicateDeviceCodeError("device code already exists");
+      }
+    }
+    this.rows.set(code.id, clone(code));
   }
-  async findByDeviceCodeHash(_hash: string): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.findByDeviceCodeHash");
+  async findByDeviceCodeHash(hash: string): Promise<DeviceCode | null> {
+    for (const row of this.rows.values()) if (row.deviceCodeHash === hash) return clone(row);
+    return null;
   }
-  async findPendingByUserCode(_userCode: string): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.findPendingByUserCode");
+  async findPendingByUserCode(userCode: string): Promise<DeviceCode | null> {
+    const now = new Date().toISOString();
+    for (const row of this.rows.values()) {
+      if (row.userCode === userCode && row.status === "pending" && row.expiresAt > now) return clone(row);
+    }
+    return null;
   }
-  async transition(_id: string, _from: readonly DeviceCodeStatus[], _patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.transition");
+  async transition(id: string, from: readonly DeviceCodeStatus[], patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
+    const row = this.rows.get(id);
+    if (!row || !from.includes(row.status)) return null;
+    return this.update(id, patch);
   }
-  async update(_id: string, _patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.update");
+  async update(id: string, patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const next = { ...row, ...clone(patch) };
+    this.rows.set(id, next);
+    return clone(next);
   }
 }
 
 export class MemoryDevices implements DevicesCollection {
-  async insert(_device: Device): Promise<void> {
-    notImplemented("devices.insert");
+  private readonly rows = new Map<string, Device>();
+
+  async insert(device: Device): Promise<void> {
+    if (this.rows.has(device.id)) throw new Error(`device ${device.id} already exists`);
+    this.rows.set(device.id, clone(device));
   }
-  async findById(_id: string): Promise<Device | null> {
-    return notImplemented("devices.findById");
+  async findById(id: string): Promise<Device | null> {
+    const row = this.rows.get(id);
+    return row ? clone(row) : null;
   }
-  /** Empty until CA-1 lands, so a stray `kda_` bearer is simply unknown. */
-  async findByAccessHash(_hash: string): Promise<Device | null> {
+  async findByAccessHash(hash: string): Promise<Device | null> {
+    for (const row of this.rows.values()) if (row.accessHash === hash || row.prevAccessHash === hash) return clone(row);
     return null;
   }
-  async findByRefreshHash(_hash: string): Promise<Device | null> {
+  async findByRefreshHash(hash: string): Promise<Device | null> {
+    for (const row of this.rows.values()) if (row.refreshHash === hash || row.prevRefreshHash === hash) return clone(row);
     return null;
   }
-  async listActiveForOwner(_ownerEmail: string): Promise<Device[]> {
-    return [];
+  async listActiveForOwner(ownerEmail: string): Promise<Device[]> {
+    return [...this.rows.values()]
+      .filter((d) => d.ownerEmail === ownerEmail && !d.revokedAt)
+      .map(clone)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
-  async update(_id: string, _patch: Partial<Device>): Promise<Device | null> {
-    return notImplemented("devices.update");
+  async update(id: string, patch: Partial<Device>): Promise<Device | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const next = { ...row, ...clone(patch) };
+    this.rows.set(id, next);
+    return clone(next);
   }
-  async rotate(_id: string, _expectedRefreshHash: string, _patch: Partial<Device>): Promise<Device | null> {
-    return notImplemented("devices.rotate");
+  async rotate(id: string, expectedRefreshHash: string, patch: Partial<Device>): Promise<Device | null> {
+    const row = this.rows.get(id);
+    if (!row || row.revokedAt || row.refreshHash !== expectedRefreshHash) return null;
+    return this.update(id, patch);
   }
-  async revokeAllForOwner(_ownerEmail: string, _reason: DeviceRevokeReason, _revokedAt: string): Promise<Device[]> {
-    return [];
+  async revoke(id: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device | null> {
+    const row = this.rows.get(id);
+    if (!row || row.revokedAt) return null;
+    return this.update(id, { revokedAt, revokedReason: reason });
+  }
+  async revokeAllForOwner(ownerEmail: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]> {
+    return this.revokeAllForOwners({ email: ownerEmail.trim().toLowerCase() }, reason, revokedAt);
+  }
+  async revokeAllForOwners(match: DeviceOwnerMatch, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]> {
+    const revoked: Device[] = [];
+    for (const row of this.rows.values()) {
+      if (row.revokedAt || !ownerMatchesDevice(row.ownerEmail, match)) continue;
+      row.revokedAt = revokedAt;
+      row.revokedReason = reason;
+      revoked.push(clone(row));
+    }
+    return revoked;
   }
 }
 
@@ -166,26 +233,70 @@ export class MemoryDevices implements DevicesCollection {
 export type DeviceCodeDoc = DeviceCode & { _id: string; expireAt?: Date };
 export type DeviceDoc = Device & { _id: string };
 
+/** How long Mongo keeps a code past its own expiry before the TTL index removes it (§1.4), so a
+ * late poll still reads `expired_token` for a while rather than `invalid_grant`. */
+const DEVICE_CODE_RETENTION_MS = 60 * 60_000;
+
+function isDuplicateKey(err: unknown): boolean {
+  return (err as { code?: number } | null)?.code === 11000;
+}
+
+function fromCodeDoc(doc: DeviceCodeDoc | null): DeviceCode | null {
+  if (!doc) return null;
+  const { _id, expireAt: _expireAt, ...rest } = doc;
+  return rest as DeviceCode;
+}
+
+function fromDeviceDoc(doc: DeviceDoc | null): Device | null {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return rest as Device;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Mongo form of ownerMatchesDevice: anchored and case-insensitive, like store/mongo.ts's
+ * ownerEmailFilter for tokens. */
+function ownerRegex(match: DeviceOwnerMatch): RegExp {
+  return "email" in match
+    ? new RegExp(`^\\s*${escapeRegex(match.email)}\\s*$`, "i")
+    : new RegExp(`${escapeRegex(match.domain)}\\s*$`, "i");
+}
+
+/** `revokedAt: null` matches a missing field as well as an explicit null. The driver types an
+ * optional string field's condition as string | undefined, hence the cast (store/mongo.ts's
+ * notRevokedFilter does the same). */
+const NOT_REVOKED = { revokedAt: null } as unknown as { revokedAt: string };
+
 export class MongoDeviceCodes implements DeviceCodesCollection {
   private readonly col: MongoCollection<DeviceCodeDoc>;
   constructor(col: MongoCollection<DeviceCodeDoc>) {
     this.col = col;
   }
-  async insert(_code: DeviceCode): Promise<void> {
-    void this.col;
-    notImplemented("deviceCodes.insert");
+  async insert(code: DeviceCode): Promise<void> {
+    const expireAt = new Date(Date.parse(code.expiresAt) + DEVICE_CODE_RETENTION_MS);
+    try {
+      await this.col.insertOne({ ...code, _id: code.id, expireAt });
+    } catch (err) {
+      if (isDuplicateKey(err)) throw new DuplicateDeviceCodeError("device code already exists");
+      throw err;
+    }
   }
-  async findByDeviceCodeHash(_hash: string): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.findByDeviceCodeHash");
+  async findByDeviceCodeHash(hash: string): Promise<DeviceCode | null> {
+    return fromCodeDoc(await this.col.findOne({ deviceCodeHash: hash }));
   }
-  async findPendingByUserCode(_userCode: string): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.findPendingByUserCode");
+  async findPendingByUserCode(userCode: string): Promise<DeviceCode | null> {
+    return fromCodeDoc(await this.col.findOne({ userCode, status: "pending", expiresAt: { $gt: new Date().toISOString() } }));
   }
-  async transition(_id: string, _from: readonly DeviceCodeStatus[], _patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.transition");
+  async transition(id: string, from: readonly DeviceCodeStatus[], patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
+    return fromCodeDoc(
+      await this.col.findOneAndUpdate({ _id: id, status: { $in: [...from] } }, { $set: patch }, { returnDocument: "after" }),
+    );
   }
-  async update(_id: string, _patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
-    return notImplemented("deviceCodes.update");
+  async update(id: string, patch: Partial<DeviceCode>): Promise<DeviceCode | null> {
+    return fromCodeDoc(await this.col.findOneAndUpdate({ _id: id }, { $set: patch }, { returnDocument: "after" }));
   }
 }
 
@@ -194,30 +305,56 @@ export class MongoDevices implements DevicesCollection {
   constructor(col: MongoCollection<DeviceDoc>) {
     this.col = col;
   }
-  async insert(_device: Device): Promise<void> {
-    void this.col;
-    notImplemented("devices.insert");
+  async insert(device: Device): Promise<void> {
+    await this.col.insertOne({ ...device, _id: device.id });
   }
-  async findById(_id: string): Promise<Device | null> {
-    return notImplemented("devices.findById");
+  async findById(id: string): Promise<Device | null> {
+    return fromDeviceDoc(await this.col.findOne({ _id: id }));
   }
-  async findByAccessHash(_hash: string): Promise<Device | null> {
-    return null;
+  async findByAccessHash(hash: string): Promise<Device | null> {
+    return fromDeviceDoc(await this.col.findOne({ $or: [{ accessHash: hash }, { prevAccessHash: hash }] }));
   }
-  async findByRefreshHash(_hash: string): Promise<Device | null> {
-    return null;
+  async findByRefreshHash(hash: string): Promise<Device | null> {
+    return fromDeviceDoc(await this.col.findOne({ $or: [{ refreshHash: hash }, { prevRefreshHash: hash }] }));
   }
-  async listActiveForOwner(_ownerEmail: string): Promise<Device[]> {
-    return [];
+  async listActiveForOwner(ownerEmail: string): Promise<Device[]> {
+    const rows = await this.col.find({ ownerEmail, ...NOT_REVOKED }).sort({ createdAt: -1 }).toArray();
+    return rows.map((r) => fromDeviceDoc(r)!);
   }
-  async update(_id: string, _patch: Partial<Device>): Promise<Device | null> {
-    return notImplemented("devices.update");
+  async update(id: string, patch: Partial<Device>): Promise<Device | null> {
+    return fromDeviceDoc(await this.col.findOneAndUpdate({ _id: id }, { $set: patch }, { returnDocument: "after" }));
   }
-  async rotate(_id: string, _expectedRefreshHash: string, _patch: Partial<Device>): Promise<Device | null> {
-    return notImplemented("devices.rotate");
+  async rotate(id: string, expectedRefreshHash: string, patch: Partial<Device>): Promise<Device | null> {
+    return fromDeviceDoc(
+      await this.col.findOneAndUpdate(
+        { _id: id, refreshHash: expectedRefreshHash, ...NOT_REVOKED },
+        { $set: patch },
+        { returnDocument: "after" },
+      ),
+    );
   }
-  async revokeAllForOwner(_ownerEmail: string, _reason: DeviceRevokeReason, _revokedAt: string): Promise<Device[]> {
-    return [];
+  async revoke(id: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device | null> {
+    return fromDeviceDoc(
+      await this.col.findOneAndUpdate(
+        { _id: id, ...NOT_REVOKED },
+        { $set: { revokedAt, revokedReason: reason } },
+        { returnDocument: "after" },
+      ),
+    );
+  }
+  async revokeAllForOwner(ownerEmail: string, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]> {
+    return this.revokeAllForOwners({ email: ownerEmail.trim().toLowerCase() }, reason, revokedAt);
+  }
+  /** Collect, stamp, then read back by those ids at this call's stamp, like
+   * MongoTokens.revokeAllForOwners: a device another caller revoked in between keeps its own stamp
+   * and drops out of the result, so its lifecycle hook fires once. */
+  async revokeAllForOwners(match: DeviceOwnerMatch, reason: DeviceRevokeReason, revokedAt: string): Promise<Device[]> {
+    const found = await this.col.find({ ownerEmail: ownerRegex(match), ...NOT_REVOKED }, { projection: { _id: 1 } }).toArray();
+    const ids = found.map((r) => r._id);
+    if (ids.length === 0) return [];
+    await this.col.updateMany({ _id: { $in: ids }, ...NOT_REVOKED }, { $set: { revokedAt, revokedReason: reason } });
+    const rows = await this.col.find({ _id: { $in: ids }, revokedAt }).toArray();
+    return rows.map((r) => fromDeviceDoc(r)!);
   }
 }
 

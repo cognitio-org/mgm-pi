@@ -13,6 +13,7 @@ import { generateToken, hashToken, tokenPrefix } from "../src/tokens.ts";
 import { ideInternalUrlFor, runLabel, MAX_OPEN_PREVIEWS_PER_RUN } from "../src/previews.ts";
 import { IDE_REQUESTS_PER_RUN_PER_HOUR } from "../src/agentlink.ts";
 import type { Run, Store } from "../src/store/types.ts";
+import { TEST_IAP_AUDIENCE, iapHeaders, useFakeIap } from "./device-iap.ts";
 
 const ENV = { PREVIEW_DOMAIN: "kernal.run", PREVIEW_ALLOW: "domain:example.com", OUTFITTER_OPERATORS: "sysop@example.com" };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -36,17 +37,19 @@ async function bearerFor(store: Store, email: string): Promise<Record<string, st
 async function routeSetup(runFields: Partial<Run> = { browserIde: true }, sessionOwner: string | null = "owner@example.com") {
   const store = new MemoryStore();
   const ngrok = new FakeNgrok();
-  const app = await buildTestApp({ OUTFITTER_DEV: "0", ...ENV }, { store, ngrok });
+  const app = await buildTestApp({ OUTFITTER_DEV: "0", IAP_AUDIENCE: TEST_IAP_AUDIENCE, ...ENV }, { store, ngrok });
   const now = new Date().toISOString();
   await store.sessions.insert({ id: "s1", guruId: "g", repo: null, status: "open", cost: 0, ...(sessionOwner ? { ownerEmail: sessionOwner } : {}), createdAt: now, updatedAt: now });
   await store.runs.insert({ id: RUN_ID, sessionId: "s1", state: "running", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now, ...runFields } as unknown as Run);
-  return { app, store, ngrok, owner: await bearerFor(store, "owner@example.com"), other: await bearerFor(store, "someone@example.com"), sysop: await bearerFor(store, "sysop@example.com") };
+  // #390: a token is never an operator, so the sysop signs in through (fake) IAP.
+  return { app, store, ngrok, owner: await bearerFor(store, "owner@example.com"), other: await bearerFor(store, "someone@example.com"), sysop: iapHeaders("sysop@example.com") };
 }
 const post = (app: TestApp, headers: Record<string, string>) => app.fastify.inject({ method: "POST", url: "/api/sessions/s1/ide", headers });
 const get = (app: TestApp, headers: Record<string, string>) => app.fastify.inject({ method: "GET", url: "/api/sessions/s1/ide", headers });
 
 describe("IDE routes (#242)", () => {
-  test("only the owner or a sysop may open it or see its state", async () => {
+  test("only the owner or a sysop may open it or see its state", async (t) => {
+    useFakeIap(t);
     const { app, store, owner, other, sysop } = await routeSetup();
     assert.equal((await post(app, other)).statusCode, 403);
     assert.equal((await get(app, other)).statusCode, 403);
@@ -62,7 +65,8 @@ describe("IDE routes (#242)", () => {
     await app.fastify.close();
   });
 
-  test("refuses a Drive without the IDE, a floppy with no owner, and a Drive that isn't up", async () => {
+  test("refuses a Drive without the IDE, a floppy with no owner, and a Drive that isn't up", async (t) => {
+    useFakeIap(t);
     let s = await routeSetup({ browserIde: false });
     assert.equal((await post(s.app, s.owner)).statusCode, 409);
     assert.equal((await get(s.app, s.owner)).json().available, false);

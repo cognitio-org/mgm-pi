@@ -46,7 +46,8 @@ const LEVEL_WORDS: Record<string, string> = { add: "your account", profileAdd: "
 export async function changeCuration(action: "add" | "remove", rawId: string, target: CurationTarget, opts: { base?: string[]; catalogue?: string[] } = {}): Promise<string> {
   const id = rawId.trim();
   const base = opts.base ?? DEFAULT_OPENROUTER_MODELS;
-  if (!ID_SHAPE.test(id) || id.length > MAX_ID) throw new Error(`"${id.slice(0, 80)}" is not an OpenRouter model id (vendor/model)`);
+  // A removal takes any stored id (one saved on the Settings page may not have the shape); an add must.
+  if (!id || /,/.test(id) || (action === "add" && (!ID_SHAPE.test(id) || id.length > MAX_ID))) throw new Error(`"${id.slice(0, 80)}" is not an OpenRouter model id (vendor/model)`);
   if (action === "add" && opts.catalogue?.length && !opts.catalogue.includes(id) && !opts.catalogue.includes(id.replace(/:[^/:]+$/, ""))) throw new Error(`OpenRouter doesn't list ${id}`);
   const lists = curationLists();
   if (action === "add" && lists.fleetRemove.includes(id)) throw new Error(`${id} is hidden by your Sysop for everyone; it can't be added back`);
@@ -108,8 +109,9 @@ export async function changeCuration(action: "add" | "remove", rawId: string, ta
     if (res.status === 409) throw new Error("your account's settings changed elsewhere just now; try again");
     throw new Error(errors ? Object.entries(errors).map(([k, v]) => `${k}: ${v}`).join("; ") : String(res.body.error ?? `failed (${res.status})`));
   };
-  await save("account", account);
+  // This machine first: its only failure is a disk error, and then nothing reached the account.
   await save("machine", machine);
+  await save("account", account);
   const where = target === "account" ? (addName === "profileAdd" ? "your profile" : "your account") : "this machine";
   return action === "add" ? `Added ${id} to the OpenRouter list on ${where}` : `Removed ${id} from the OpenRouter list on ${where}`;
 }

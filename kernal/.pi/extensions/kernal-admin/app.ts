@@ -222,8 +222,9 @@ input[aria-invalid=true]:focus { box-shadow: 0 0 0 3px var(--err-soft); }
 .mlist li[hidden] { display: none; }
 .unlisted { padding: 0 16px 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .unlisted .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.mlist button.rm, .unlisted button.rm { border: 0; background: transparent; border-radius: var(--r-sm); cursor: pointer; }
 .mlist button.rm { width: auto; flex: none; min-height: 28px; padding: 0 8px; font-family: inherit; color: var(--muted); }
-.mlist button.rm:hover { color: var(--err); background: var(--err-soft); }
+.mlist button.rm:hover, .unlisted button.rm:hover { color: var(--err); background: var(--err-soft); }
 .curate { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 4px 16px 14px; }
 .curate input { flex: 1; min-width: 200px; max-width: 360px; }
 .empty { padding: 28px 20px; color: var(--muted); text-align: center; }

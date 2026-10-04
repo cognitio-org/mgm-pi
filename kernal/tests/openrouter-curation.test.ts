@@ -118,6 +118,10 @@ describe("changeCuration on this machine", () => {
     await assert.rejects(changeCuration("add", "x/\u0007bell", "machine"), /not an OpenRouter model id/);
     await assert.rejects(changeCuration("add", "x/typo", "machine", { catalogue: ["x/real"] }), /OpenRouter doesn't list x\/typo/);
     assert.match(await changeCuration("add", "x/real:nitro", "machine", { catalogue: ["x/real"] }), /Added/, "a routing variant of a listed model");
+    // an odd id saved on the Settings page can still be removed
+    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "openrouter.models.localAdd": "x/real:nitro,bad id" } }));
+    assert.match(await changeCuration("remove", "bad id", "machine"), /Removed/);
+    assert.equal(machineFile()["openrouter.models.localAdd"], "x/real:nitro");
     signedIn = true;
     writeCache({ "openrouter.models.fleetRemove": { value: "x/pricey", source: "fleet", locked: true } });
     setup();

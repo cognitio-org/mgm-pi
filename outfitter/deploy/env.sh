@@ -195,6 +195,25 @@ build_submit() {
     ${sa:+--service-account="${sa}"} "$@"
 }
 
+# build_api_image <source dir (outfitter/)> <image> -- outfitter-api's image (service.sh and
+# build-api-image.sh). With the secret sentry-release-token (sentry-token.sh), the web build uploads
+# its source maps to Sentry (cloudbuild-api-sentry.yaml, #423); without it, the same build without
+# them (cloudbuild-api.yaml), because Cloud Build fails a build whose availableSecrets name a
+# missing secret. The deployer can describe it: roles/secretmanager.viewer (ci-setup.sh) is
+# project-wide metadata, not the secret's value.
+SENTRY_TOKEN_SECRET="sentry-release-token"
+build_api_image() {
+  local src="$1" image="$2"
+  if gcloud_exists secrets describe "${SENTRY_TOKEN_SECRET}" --project="${PROJECT}"; then
+    echo "   Sentry: uploading web source maps to ${SENTRY_ORG}/${SENTRY_PROJECT} (secret ${SENTRY_TOKEN_SECRET})"
+    build_submit "${src}" "${src}/deploy/cloudbuild-api-sentry.yaml" \
+      --substitutions="_IMAGE=${image},_SENTRY_ORG=${SENTRY_ORG},_SENTRY_PROJECT=${SENTRY_PROJECT}" --timeout=20m
+  else
+    echo "   note: secret ${SENTRY_TOKEN_SECRET} does not exist yet; building without web source maps" >&2
+    build_submit "${src}" "${src}/deploy/cloudbuild-api.yaml" --substitutions="_IMAGE=${image}" --timeout=20m
+  fi
+}
+
 # web_iap_enabled -- whether outfitter-api still has IAP switched on (release.sh's smoke check; a
 # 302 alone could be the app's own redirect).
 web_iap_enabled() {

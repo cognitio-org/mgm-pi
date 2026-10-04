@@ -1380,6 +1380,9 @@ export interface FleetSettingsCollection {
   put(settings: FleetSettings): Promise<void>;
   /** Stores `settings` only if there is no document yet (atomic across instances). True when it did. */
   insertIfAbsent(settings: FleetSettings): Promise<boolean>;
+  /** #392: replaces the document only if its stored `version` (absent = 0, no document = 0) is
+   * `expectedVersion` (atomic across instances). True when it did. */
+  replaceAtVersion(settings: FleetSettings, expectedVersion: number): Promise<boolean>;
 }
 
 export interface Store {

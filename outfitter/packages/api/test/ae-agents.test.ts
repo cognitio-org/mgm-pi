@@ -496,7 +496,7 @@ describe("Settings → Agent Engine agents (sysops only)", () => {
 
   const URL = "/api/operator/agent-engine/agents";
 
-  test("a non-operator gets 403 on every route; an operator's Dongle may read but not change", async () => {
+  test("a non-operator gets 403 on every route, and so does an operator's Dongle (#390: tokens are never operators)", async () => {
     const store = new MemoryStore();
     const app = await buildTestApp(OPERATOR_ENV, { store });
     const someone = await bearerFor(store, "someone@mgms.eu");
@@ -512,11 +512,10 @@ describe("Settings → Agent Engine agents (sysops only)", () => {
       assert.equal(res.statusCode, 403, `${r.method} ${r.url}`);
       assert.equal(res.json().error, "operator role required");
     }
-    assert.equal((await app.fastify.inject({ method: "GET", url: URL, headers: sysopToken })).statusCode, 200);
-    for (const r of routes.slice(1)) {
+    for (const r of routes) {
       const res = await app.fastify.inject({ ...r, headers: sysopToken });
       assert.equal(res.statusCode, 403, `${r.method} ${r.url}`);
-      assert.equal(res.json().error, "change Agent Engine agents in the Outfitter web UI");
+      assert.equal(res.json().error, "operator role required");
     }
     assert.equal((await store.aeAgents.list()).length, 0);
     await app.fastify.close();

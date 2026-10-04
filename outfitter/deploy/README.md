@@ -144,7 +144,8 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    | `outfitter-mongodb-uri` | `MONGODB_URI` | `config.ts` (`loadConfig`) → `store/index.ts` (`openStore`) | required; without it the API falls back to `MemoryStore` |
    | `outfitter-local-tunnel-token` | `LOCAL_TUNNEL_TOKEN` | `config.ts` → `src/laptop.ts`'s `LaptopProbe` | required for the E2.8 laptop preflight to mean anything in prod |
    | `outfitter-github-pat` | `GITHUB_PAT` | **nothing yet** | deployed as a placeholder only — see (b) |
-   | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10) | calls `/health/liveliness`, `/model/info`, `/key/info`; falls back to `outfitter-litellm-key-default` (b) when unset |
+   | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10); device/run key minting and model reconciliation (#389, #384). Written only by `litellm-admin.sh` | calls `/health/liveliness`, `/model/info`, `/key/info`; falls back to `outfitter-litellm-key-default` (b) when unset |
+   | `outfitter-litellm-admin-key` | `OUTFITTER_LITELLM_ADMIN_KEY` | `config.ts` → `src/central/litellm-keys.ts` (#394), both roles | optional; a LiteLLM key allowed to manage users, keys and teams (only `/user/*`, `/key/*`, `/team/*`, `/spend/*` if LiteLLM allows). Mints each device's router key at `kernal login` and reads spend. Distinct from `outfitter-litellm-admin`. Unset means no minting: logins carry no router key and runs keep the shared keys. Personal provider keys (#393) are written by the api itself as `outfitter-user-<userId>-<provider>`; nothing to create |
    | `outfitter-ngrok-api-key` | `NGROK_API_KEY` | `config.ts` → `src/providers-status.ts`'s ngrok probe (E2.10) | optional; `GET https://api.ngrok.com/endpoints` reconciler. Unset means the "ngrok" row reports `unknown`/"not configured", not a poll failure |
    | `outfitter-deepgram-key` | `DEEPGRAM_API_KEY` | `config.ts` → `src/voice.ts`'s `VoiceService` (#252), **web role only** | optional; a Deepgram **Member** key with `usage:read`, in the same Deepgram project as kernal's bundle key (`DEEPGRAM_PROJECT_ID` in `config.env`). The bundle key is usage-only and can't mint the browser tokens. Unset means `POST /api/voice/token` answers 404 `voice_disabled` |
    | `outfitter-agentengine-memory-sa` | `AGENT_ENGINE_MEMORY_SA` | `config.ts` → `src/agentengine/` (E9), **link role only** | optional; JSON `{client_id, client_secret}` of the Agent Engine service account in the memory project (`AGENT_ENGINE_MEMORY_PROJECT_ID` in `config.env`, the Atlas project `outfitter`). Role `AGENT_DEVELOPER` is enough for memory. Mounted only while that project id is set. Record its expiry in `AGENT_ENGINE_MEMORY_SA_EXPIRES_AT`; the api warns from 14 days before |
@@ -153,7 +154,7 @@ the page and never moved the fleet, because `release.sh` deploys the page first.
    ```bash
    printf '%s' "<mongodb+srv connection string>" | gcloud secrets create outfitter-mongodb-uri --project=outfitter-509211 --data-file=-
    printf '%s' "<LOCAL_TUNNEL_TOKEN from ~/localllm/.env>" | gcloud secrets create outfitter-local-tunnel-token --project=outfitter-509211 --data-file=-
-   printf '%s' "<LiteLLM admin/master key>"   | gcloud secrets create outfitter-litellm-admin  --project=outfitter-509211 --data-file=-
+   # outfitter-litellm-admin: never the master key. ./litellm-admin.sh mints a scoped key (see below).
    printf '%s' "<ngrok API key, dashboard -> API keys>" | gcloud secrets create outfitter-ngrok-api-key --project=outfitter-509211 --data-file=-
    # Deepgram Member key (console -> project -> API keys, role Member); copy it, then:
    pbpaste | tr -d ' \r\n' | gcloud secrets create outfitter-deepgram-key --project=outfitter-509211 --replication-policy=automatic --labels=app=outfitter,purpose=voice --data-file=-
@@ -685,3 +686,24 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
   service accounts, then the budget (`gcloud billing budgets delete <name>`); leave the enabled
   APIs (harmless, and other work in the project may depend on them) unless decommissioning the
   whole project.
+
+## Router admin key (`litellm-admin.sh`, owner-run)
+
+Outfitter mints per-user/per-device router keys and short-lived run keys (#389, #394, #395) and
+keeps the router's model list in step with laptop hosts (#384). It does this with a **scoped** key,
+never the master key:
+
+- LiteLLM user `outfitter-svc` with `user_role: proxy_admin`, so it may mint keys for other users;
+- a key for that user with `allowed_routes` limited to key, user, team, spend and model routes
+  (enforced for every role, no enterprise licence needed); `/key/regenerate` is not included.
+
+```bash
+DRY_RUN=1 ./litellm-admin.sh                      # shows the plan, reads nothing secret
+./litellm-admin.sh                                # first time: creates the user + key, stores it
+ROTATE=1 ./litellm-admin.sh                       # new key, old secret versions disabled, old key deleted
+MASTER_KEY_PROJECT=<project> ./litellm-admin.sh   # if kernal-litellm-prod-master-key lives elsewhere
+```
+
+The master key goes to curl through a process substitution and the new key straight into
+`gcloud secrets versions add`; neither is printed. Running services pick the new version up on their
+next revision. Test: `bash test/litellm-admin.test.sh`.

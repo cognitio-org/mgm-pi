@@ -490,6 +490,22 @@ class MongoFleetSettings implements FleetSettingsCollection {
     const res = await this.col.updateOne({ _id: "fleet" }, { $setOnInsert: settings }, { upsert: true });
     return res.upsertedCount === 1;
   }
+
+  async replaceAtVersion(settings: FleetSettings, expectedVersion: number): Promise<boolean> {
+    if (expectedVersion > 0) {
+      const res = await this.col.replaceOne({ _id: "fleet", version: expectedVersion }, settings);
+      return res.matchedCount === 1;
+    }
+    // Version 0: no document, or one written before versions existed. Another version makes the
+    // upsert's insert collide on _id, which is the refusal.
+    try {
+      const res = await this.col.replaceOne({ _id: "fleet", $or: [{ version: { $exists: false } }, { version: 0 }] }, settings, { upsert: true });
+      return res.matchedCount === 1 || res.upsertedCount === 1;
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return false;
+      throw err;
+    }
+  }
 }
 
 class MongoTokens implements TokensCollection {

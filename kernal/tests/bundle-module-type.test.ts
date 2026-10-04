@@ -16,6 +16,11 @@ import { spawnSync } from "node:child_process";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const packageSh = readFileSync(join(root, "scripts", "package.sh"), "utf8");
 
+test("package.sh never calls a bare `timeout`: the macOS build runner has none (v0.3.2)", () => {
+  const bare = packageSh.split("\n").filter((l) => !l.trimStart().startsWith("#") && /(^|[\s;&|({])timeout \d/.test(l));
+  assert.deepEqual(bare, [], "use with_timeout");
+});
+
 test("package.sh writes a type:module package.json at the bundle root", () => {
   assert.match(packageSh, /"type": "module"[^\n]*> "\$STAGE\/package\.json"/);
 });

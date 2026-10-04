@@ -94,6 +94,31 @@ describe("provider keys at start-up", () => {
     assert.ok(pi.unregistered.includes("openrouter"), "not registered on the first pass");
   });
 
+  test("kernal-config's refresh lands while connect is still starting (2026-10-04): openrouter still gets the key", async () => {
+    // pi doesn't wait for connect's first registration before kernal-config runs, so the refresh's
+    // "reload" can be emitted before connect serves the bus, and busRequest drops it silently.
+    providerKeys = { openrouter: "sk-or-v1-acct" };
+    const pi = makePi();
+    // connect's first registration is still in flight (here: held on a slow router answer) when
+    // kernal-config's refresh lands, so its reload finds nobody serving the bus yet.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const restore = stubFetch({ "/models": () => ({ data: [] }) });
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (u: any, i?: any) => { await gate; return real(u, i); }) as any;
+    process.env.KERNAL_NO_DISCOVERY = "";
+    const starting = connect.default(pi as any);
+    let done!: Promise<void>;
+    configExtension(pi as any, { onRefresh: (p) => { done = p; } });
+    await done;                                   // delivered; its reload found nobody listening
+    release();
+    await starting;
+    globalThis.fetch = real; restore();
+    process.env.KERNAL_NO_DISCOVERY = "1";
+    await new Promise((r) => setTimeout(r, 50));  // connect's follow-up registration
+    assert.equal(pi.providers.filter((p) => p.name === "openrouter").at(-1)?.config.apiKey, "sk-or-v1-acct");
+  });
+
   test("nothing new delivered: no second registration", async () => {
     const { pi } = await start();
     assert.equal(pi.providers.filter((p) => p.name === "litellm").length, 1);

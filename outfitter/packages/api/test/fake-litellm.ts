@@ -21,7 +21,7 @@ export interface FakeKey {
 
 export class FakeLitellm {
   readonly calls: FakeLitellmCall[] = [];
-  readonly users = new Map<string, { user_id: string; user_email: string }>();
+  readonly users = new Map<string, { user_id: string; user_email?: string | null; user_role?: string; metadata?: Record<string, unknown> }>();
   readonly keys = new Map<string, FakeKey>();
   readonly teams: Array<{ team_id: string; team_alias: string }> = [];
   /** What GET /spend/logs answers (both the per-user and the operator call). */
@@ -71,7 +71,10 @@ export class FakeLitellm {
       }
       case "POST /user/new": {
         if (this.users.has(call.body.user_id)) return json(400, { error: { message: "User already exists" } });
-        this.users.set(call.body.user_id, { user_id: call.body.user_id, user_email: call.body.user_email });
+        // Real LiteLLM keeps user_email unique (409), which is how the first device mint failed.
+        const email = call.body.user_email;
+        if (email && [...this.users.values()].some((u) => u.user_email === email)) return json(409, { detail: { error: `User with email ${email} already exists` } });
+        this.users.set(call.body.user_id, { user_id: call.body.user_id, user_email: email ?? null, user_role: call.body.user_role, metadata: call.body.metadata });
         return json(200, { user_id: call.body.user_id });
       }
       case "GET /user/list":

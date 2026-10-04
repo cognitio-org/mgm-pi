@@ -1,0 +1,19 @@
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_38ec74cfb7fa1d::t_e1636f2f0ea755 122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b56b3d896e6195e145312b864b0ef6e7c7e73733",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

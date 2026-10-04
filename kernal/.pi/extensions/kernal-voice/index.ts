@@ -4,6 +4,10 @@
  * out once a Deepgram key is available (#249), and warns when no audio capture tool is installed.
  * Set KERNAL_VOICE_MODEL to pick another local model, or KERNAL_VOICE=off to leave pi-listen's
  * configuration alone.
+ *
+ * Centrally managed voice.enabled and voice.language (#437) are written over the seed at load, and
+ * again by /config reload and the start-up refresh (_shared/central-apply.ts applyVoiceSettings);
+ * pi-listen picks them up at its next session_start.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -12,6 +16,7 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { reconcileVoice, languageFromLocale, audioToolHint, AUDIO_TOOLS, DEFAULT_VOICE_MODEL, type Reconcile } from "./lib.ts";
 import { env } from "../_shared/env.ts";
+import { applyVoiceSettings } from "../_shared/central-apply.ts";
 
 /** pi-listen's global settings file (it ignores PI_CODING_AGENT_DIR); overridable for tests. */
 export const voiceSettingsPath = () => env("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
@@ -72,6 +77,11 @@ export default function (pi: ExtensionAPI) {
     console.error(`[kernal-voice] couldn't update voice settings: ${seeded.reason}`);
   }
   if (env("VOICE_DEBUG")) console.error(`[kernal-voice] ${seeded.reason} → ${seeded.path}`);
+  // #437: voice.enabled and voice.language from the account (or this machine's config.local.json)
+  // go over the seed, so pi-listen's session_start reads them. A legacy pi-listen value is left as
+  // it is. Never throws.
+  const central = applyVoiceSettings();
+  if (env("VOICE_DEBUG") && central.length) console.error(`[kernal-voice] central settings applied: ${central.join(", ")}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
     const model = env("VOICE_MODEL") || DEFAULT_VOICE_MODEL;

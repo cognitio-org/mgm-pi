@@ -25,6 +25,7 @@ import {
   setLocalOptOut, setLocalOverride,
   type ConfigValue, type KnownSetting, type ResolvedConfig, type SettingValue,
 } from "../_shared/central-config.ts";
+import { applyVoiceSettings } from "../_shared/central-apply.ts";
 
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -287,8 +288,10 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
     } catch (e: any) {
       return { status: 500, body: { error: String(e?.message ?? e).slice(0, 300) } };
     }
-    // config.local.json is the lowest local layer: a .env entry or a shell variable still wins over it.
+    // config.local.json is the lowest local layer: a .env entry or a shell variable still wins over it
+    // (except for the personal keys, where this machine's choice wins, #437).
     const after = (() => { try { return d.resolve(); } catch { return undefined; } })();
+    if (after) { try { applyVoiceSettings(after); } catch {} }
     const warnings: string[] = [];
     for (const k of Object.keys(patch)) {
       const v = after?.values[k];
@@ -297,7 +300,7 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
       }
     }
     const n = Object.keys(patch).length;
-    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). They take effect at the next start.`, saved: Object.keys(patch), ...(warnings.length ? { warnings } : {}) } };
+    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). ${whenSaved(Object.keys(patch))}`, saved: Object.keys(patch), ...(warnings.length ? { warnings } : {}) } };
   }
 
   if (req.target !== "account") return { status: 400, body: { error: "target is account or machine" } };
@@ -324,13 +327,67 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
 
   // As `/config reload`: the fresh answer becomes this process's own, so the page shows the new sources.
   try { await d.reload(); } catch {}
+  try { applyVoiceSettings(d.resolve()); } catch {}
   const n = Object.keys(patch).length;
   const where = target.level === "profile" ? `your account (profile ${target.name})` : "your account";
   return { status: 200, body: {
-    message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${where}. Every Kernal signed in to it picks them up at its next start.`,
+    message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${where}. Every Kernal signed in to it picks them up at its next start; here, ${whenSaved(Object.keys(patch))}`,
     saved: Object.keys(patch),
     version: parseEtag(res.etag) ?? (typeof res.body?.version === "number" ? res.body.version : undefined),
   } };
+}
+
+/** When saved keys reach this Kernal (#437): "a, b apply now; c at the next session (…); d at the next start." */
+export function whenSaved(keys: string[]): string {
+  const by: Record<string, string[]> = { now: [], session: [], start: [] };
+  for (const k of keys) by[KNOWN_SETTINGS.find((d) => d.key === k)?.takesEffect ?? "start"].push(k);
+  const parts = [
+    by.now.length ? `${by.now.join(", ")} ${by.now.length === 1 ? "applies" : "apply"} now` : "",
+    by.session.length ? `${by.session.join(", ")} at the next session (/new or a restart; a running conversation keeps its model)` : "",
+    by.start.length ? `${by.start.join(", ")} at the next start` : "",
+  ].filter(Boolean);
+  return parts.length ? `${parts.join("; ")}.` : "";
+}
+
+// ---------- the default model's save target (#437: /connect and the Model page) ----------
+
+export type ModelSaveTarget = "account" | "machine";
+
+/** Signed in: the two places a chosen default model can go, in the Settings page's words.
+ * Undefined signed out, where the choice only goes to settings.json, as it always did. */
+export function modelSaveTargets(): { account: string; machine: string } | undefined {
+  if (!signedInAccount()) return undefined;
+  let r: ResolvedConfig | undefined;
+  try { r = deps().resolve(); } catch { r = undefined; }
+  return { account: r ? targetLabel(accountTarget(r)) : "Save to my account", machine: "Only this machine" };
+}
+
+/**
+ * Saves `provider`/`model` as the default to the account (the versioned PUT of the Settings page:
+ * GET for the version, then PUT with If-Match) or to this machine (config.local.json). An account
+ * save also clears this machine's own model.* overrides, which would otherwise keep winning here.
+ * The caller has already switched the session and written settings.json (pi's own default).
+ */
+export async function saveModelDefault(target: ModelSaveTarget, provider: string, model: string): Promise<{ ok: boolean; message: string }> {
+  const values = { "model.provider": provider, "model.default": model };
+  if (target === "machine") {
+    const r = await saveSettings({ target: "machine", values });
+    return r.status === 200
+      ? { ok: true, message: `saved as this machine's default (${localOverridesPath()})` }
+      : { ok: false, message: `not saved to this machine: ${String(r.body.error ?? r.status)}${r.body.errors ? ` (${Object.values(r.body.errors as object).join("; ")})` : ""}` };
+  }
+  const view = await settingsView();
+  if (!view.target) return { ok: false, message: `not saved to your account: ${view.targetProblem ?? "Outfitter did not answer"}` };
+  const r = await saveSettings({ target: "account", values, version: view.target.version });
+  if (r.status !== 200) {
+    return { ok: false, message: `not saved to your account: ${String(r.body.error ?? r.status)}${r.body.errors ? ` (${Object.values(r.body.errors as object).join("; ")})` : ""}` };
+  }
+  const machine = readMachineValues();
+  try {
+    for (const k of Object.keys(values)) if (machine[k] !== undefined) setLocalOverride(k, undefined);
+  } catch {}
+  const where = view.target.name ? `your account (profile ${view.target.name})` : "your account";
+  return { ok: true, message: `saved as the default on ${where}` };
 }
 
 // ---------- personal provider keys (spec §4) ----------

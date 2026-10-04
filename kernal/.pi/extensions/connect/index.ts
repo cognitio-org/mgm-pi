@@ -10,7 +10,9 @@
  * Backends are registered as pi providers at startup. LM Studio and LiteLLM models are discovered
  * live (LiteLLM via /model/info for prices and limits, falling back to /v1/models); OpenRouter uses
  * a curated list (OPENROUTER_MODELS overrides). The chosen backend/model is saved to the agent
- * dir's settings.json. Secrets come from ~/localllm/.env, ../.env or ./.env (see README).
+ * dir's settings.json; signed in, /connect also asks whether it goes to the account (profile X) or
+ * only this machine (#437: model.provider/model.default are central settings, which the next
+ * session starts on). Secrets come from ~/localllm/.env, ../.env or ./.env (see README).
  * All pure logic lives in ./lib.ts and is unit-tested.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
@@ -24,7 +26,8 @@ import {
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
-import { layerCentralEnv, webOrigin } from "../_shared/central-config.ts";
+import { describeSource, layerCentralEnv, reresolve, webOrigin } from "../_shared/central-config.ts";
+import { modelSaveTargets, saveModelDefault } from "../kernal-admin/central.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
@@ -268,8 +271,31 @@ export default async function (pi: ExtensionAPI) {
       if (!modelId) return;
     }
     const problem = await selectModel(ctx, b.id, modelId);
-    if (problem) ctx.ui.notify(problem, "error");
-    else ctx.ui.notify(`Connected to ${b.id} / ${modelId} (saved as default)`, "info");
+    if (problem) { ctx.ui.notify(problem, "error"); return; }
+    const saved = await saveTarget(ctx, b.id, modelId);
+    ctx.ui.notify(`Connected to ${b.id} / ${modelId} (${saved.message})`, saved.ok ? "info" : "warning");
+  }
+
+  /**
+   * #437: signed in with a UI, where the new default goes: the account (profile X) or only this
+   * machine (kernal-admin/central.ts saves both, as the Settings page does). settings.json has it
+   * already (selectModel), so signed out, without a UI or on Escape nothing else changes.
+   */
+  async function saveTarget(ctx: Pick<ExtensionCommandContext, "ui" | "hasUI">, provider: string, model: string): Promise<{ ok: boolean; message: string }> {
+    const legacy = { ok: true, message: "saved as default" };
+    const targets = ctx.hasUI ? modelSaveTargets() : undefined;
+    if (!targets) {
+      // Non-interactive, signed in: settings.json only, as before; say when the account still wins.
+      const r = (() => { try { return reresolve(); } catch { return undefined; } })();
+      const v = r?.values["model.default"];
+      if (r?.account && v && v.source !== "legacy" && v.source !== "default" && v.value !== model) {
+        return { ok: true, message: `saved in settings.json; ${describeSource(v)} sets ${String(v.value)}, which the next session starts on: /connect in the TUI saves to your account or this machine` };
+      }
+      return legacy;
+    }
+    const pick = await ctx.ui.select(`Save ${provider}/${model} as the default`, [targets.account, targets.machine]);
+    if (pick === undefined) return { ok: true, message: "saved in this machine's settings.json only" };
+    return saveModelDefault(pick === targets.account ? "account" : "machine", provider, model);
   }
 
   /** Switch to a model and save it as the default. Returns why not, or undefined on success. */

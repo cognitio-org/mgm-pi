@@ -15,7 +15,10 @@
  *  /compaction now      compact immediately          /compaction model <provider/id|self|default>
  *  /pin [text]          keep text verbatim across compactions
  *  Settings persist under "kernal": {"compaction": {...}} in the agent settings.json.
- *  KERNAL_SUMMARY_MODEL overrides the summarizer; KERNAL_COMPACTION=off disables; KERNAL_COMPACTION_LOG=<file>.
+ *  KERNAL_SUMMARY_MODEL sets the summarizer; KERNAL_COMPACTION=off disables; KERNAL_COMPACTION_LOG=<file>.
+ *  The summarizer and masking are central settings too (compaction.summaryModel, compaction.masking,
+ *  #437): this machine's config.local.json and the account win over kernal.compaction and
+ *  KERNAL_SUMMARY_MODEL (see summarizerFrom below).
  */
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,6 +31,7 @@ import {
   summaryPrompt, shortenPrompt, pickSummarizer, rankSummarizers, statusText, SUMMARY_SYSTEM_PROMPT, collectPins, composeSummary, stripPinned,
 } from "./lib.ts";
 import { env } from "../_shared/env.ts";
+import { describeSource, reresolve, resolve as resolveSettings, type ConfigValue, type ResolvedConfig } from "../_shared/central-config.ts";
 
 const OFF = env("COMPACTION") === "off";
 const DEFAULT_SUMMARIZER = "litellm/gpt-5.4-nano";   // see docs/summarizer-benchmark.md
@@ -48,11 +52,61 @@ function writePrefs(patch: Partial<Prefs & { summaryModel?: string }>) {
   delete s.mgm;   // migrated onto s.kernal above
   writeFileSync(settingsPath(), JSON.stringify(s, null, 2) + "\n");
 }
-function summarizerSetting(): { value: string; source: string } {
+
+// ---------- the centrally managed part (#437): compaction.summaryModel and compaction.masking ----------
+// central-config resolves both with every layer: this machine (config.local.json) → the account →
+// the legacy places above (kernal.compaction in settings.json, KERNAL_SUMMARY_MODEL) → the fleet →
+// the default. Read on every use, so a /config reload (or the start-up refresh) applies at once.
+
+// The legacy places are read live, as compaction always did (a /compaction change or a hand edit
+// shows at once); this machine's choice and the account's win over them, the fleet's loses.
+
+const strong = (v: ConfigValue | undefined) => !!v && ((v.source === "local" && !v.sourceName) || ["user", "profile", "device"].includes(v.source));
+const fleetish = (v: ConfigValue | undefined) => !!v && (v.source === "fleet" || v.source === "group");
+
+/** The summarizer in force and where it comes from. `live` is the legacy value right now:
+ * KERNAL_SUMMARY_MODEL, else settings.json's kernal.compaction.summaryModel. */
+export function summarizerFrom(r: ResolvedConfig, live: { value: string; source: string } | undefined): { value: string; source: string } {
+  const v = r.values["compaction.summaryModel"];
+  if (strong(v)) return { value: String(v!.value), source: describeSource(v!) };
+  if (live) return live;
+  if (fleetish(v)) return { value: String(v!.value), source: describeSource(v!) };
+  return { value: DEFAULT_SUMMARIZER, source: "default" };
+}
+
+/** Masking on or off: this machine or the account, else settings.json's (`live`), else the fleet,
+ * else on. */
+export function maskingFrom(r: ResolvedConfig, live: boolean | undefined): boolean {
+  const v = r.values["compaction.masking"];
+  if (strong(v) && typeof v!.value === "boolean") return v!.value;
+  if (typeof live === "boolean") return live;
+  if (fleetish(v) && typeof v!.value === "boolean") return v!.value;
+  return true;
+}
+
+function liveSummarizer(): { value: string; source: string } | undefined {
   const envModel = env("SUMMARY_MODEL");
   if (envModel) return { value: envModel, source: "KERNAL_SUMMARY_MODEL" };
   const v = readPrefs().summaryModel;
-  return v ? { value: v, source: "settings" } : { value: DEFAULT_SUMMARIZER, source: "default" };
+  return v ? { value: v, source: "settings" } : undefined;
+}
+
+function summarizerSetting() {
+  return summarizerFrom(resolveSettings(), liveSummarizer());
+}
+
+/** After a write to settings.json's kernal.compaction: re-resolve, and say when a stronger level
+ * (this machine's config.local.json, or the account) still decides the key. */
+function writePrefsAndCheck(patch: Partial<Prefs & { summaryModel?: string }>, ctx: any): void {
+  writePrefs(patch);
+  const r = reresolve();
+  for (const [field, key] of [["summaryModel", "compaction.summaryModel"], ["masking", "compaction.masking"]] as const) {
+    if (!(field in patch)) continue;
+    const v = r.values[key];
+    if (v && strong(v)) {
+      ctx?.ui?.notify?.(`${key} is set by ${describeSource(v)} (${String(v.value)}), which wins over this setting: change it with /admin Settings or at your account page.`, "warning");
+    }
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -61,7 +115,8 @@ export default function (pi: ExtensionAPI) {
 
   // window budgets → profile → user overrides
   const eff = (ctx: any) => {
-    const prefs = readPrefs();
+    const legacyPrefs = readPrefs();
+    const prefs = { ...legacyPrefs, masking: maskingFrom(resolveSettings(), legacyPrefs.masking) };
     const detected = detectProfile(ctx.sessionManager?.getEntries?.() ?? []);
     const profile: Profile = prefs.profile && prefs.profile !== "auto" ? prefs.profile : detected.profile;
     return { ...effective(budgets(ctx.model?.contextWindow ?? 128_000), profile, prefs), detected, prefs };
@@ -175,7 +230,7 @@ export default function (pi: ExtensionAPI) {
       const e = eff(ctx); const u = ctx.getContextUsage?.(); const s = summarizerSetting();
       const profileLabel = e.prefs.profile && e.prefs.profile !== "auto" ? `${e.profile} (pinned)` : `auto → ${e.profile} (${e.detected.code} code / ${e.detected.research} research calls)`;
       const items = [
-        `Summarizer: ${s.value}${s.source === "default" ? "  (default)" : s.source === "KERNAL_SUMMARY_MODEL" ? "  (env override)" : ""}`,
+        `Summarizer: ${s.value}${s.source === "default" ? "  (default)" : `  (${s.source})`}`,
         `Profile: ${profileLabel}`,
         `Pruning: keep newest ${e.keepResults} tool results, mask > ${e.maskMinChars} chars${e.prefs.keepResults != null ? "  (custom)" : ""}`,
         `Masking: ${e.masking ? "on" : "off"}`,
@@ -194,7 +249,7 @@ export default function (pi: ExtensionAPI) {
         const m = await ctx.ui.select("Summarizer (cheapest first; $/fold = 10k in + 1.5k out)", opts);
         if (!m) continue;
         const key = m.startsWith("self") ? "self" : m.startsWith("default") ? undefined : m.split("  —  ")[0];
-        writePrefs({ summaryModel: key }); ctx.ui.notify(`Summarizer: ${key ?? DEFAULT_SUMMARIZER}`, "info");
+        writePrefsAndCheck({ summaryModel: key }, ctx); ctx.ui.notify(`Summarizer: ${key ?? DEFAULT_SUMMARIZER}`, "info");
       } else if (pick.startsWith("Profile")) {
         const m = await ctx.ui.select("Profile", ["auto  —  detect from tool usage each session", "code  —  keep paths, symbols, commands, errors; prune tool output aggressively", "research  —  keep sources, figures, conclusions; keep more tool output", "chat  —  keep preferences and decisions; prune hardest"]);
         if (m) writePrefs({ profile: m.split("  —  ")[0] as any });
@@ -202,7 +257,7 @@ export default function (pi: ExtensionAPI) {
         const v = await ctx.ui.input("Newest tool results to keep verbatim (blank = profile default)", String(e.keepResults));
         if (v !== undefined) writePrefs({ keepResults: v.trim() === "" ? undefined : Math.max(1, Number(v) || e.keepResults) });
       } else if (pick.startsWith("Masking")) {
-        writePrefs({ masking: !e.masking });
+        writePrefsAndCheck({ masking: !e.masking }, ctx);
       } else if (pick.startsWith("Trigger")) {
         const v = await ctx.ui.input("Compact when context reaches this % (blank = default)", String(e.triggerPercent));
         if (v !== undefined) writePrefs({ triggerPercent: v.trim() === "" ? undefined : Math.min(95, Math.max(20, Number(v) || e.triggerPercent)) });
@@ -212,7 +267,7 @@ export default function (pi: ExtensionAPI) {
       } else if (pick === "Compact now") {
         compacting = true; ctx.compact({ onError: (err: Error) => { compacting = false; ctx.ui.notify(`Compaction failed: ${err.message}`, "error"); } }); return;
       } else if (pick === "Reset to defaults") {
-        writePrefs({ summaryModel: undefined, profile: undefined, keepResults: undefined, triggerPercent: undefined, masking: undefined, summaryWords: undefined }); ctx.ui.notify("Compaction settings reset", "info");
+        writePrefsAndCheck({ summaryModel: undefined, profile: undefined, keepResults: undefined, triggerPercent: undefined, masking: undefined, summaryWords: undefined }, ctx); ctx.ui.notify("Compaction settings reset", "info");
       }
       refreshStatus(ctx);
     }
@@ -231,9 +286,9 @@ export default function (pi: ExtensionAPI) {
       if (sub === "model") {
         const v = rest[0];
         if (!v) { const p = summarizerSetting(); ctx.ui.notify(`summarizer: ${p.value} (from ${p.source})`, "info"); return; }
-        if (v === "default") { writePrefs({ summaryModel: undefined }); ctx.ui.notify(`summarizer reset to ${DEFAULT_SUMMARIZER}`, "info"); return; }
+        if (v === "default") { writePrefsAndCheck({ summaryModel: undefined }, ctx); ctx.ui.notify(`summarizer reset to ${DEFAULT_SUMMARIZER}`, "info"); return; }
         if (v !== "self") { const i = v.indexOf("/"); const m = i > 0 ? ctx.modelRegistry.find(v.slice(0, i), v.slice(i + 1)) : undefined; if (!m) { ctx.ui.notify(`Unknown model "${v}"`, "error"); return; } if (!ctx.modelRegistry.hasConfiguredAuth(m)) ctx.ui.notify(`${v} has no credentials; compaction will fall back to the working model`, "warning"); }
-        writePrefs({ summaryModel: v }); ctx.ui.notify(`summarizer set to ${v}`, "info"); return;
+        writePrefsAndCheck({ summaryModel: v }, ctx); ctx.ui.notify(`summarizer set to ${v}`, "info"); return;
       }
       if (!ctx.hasUI) { const e = eff(ctx); ctx.ui.notify(`summarizer ${summarizerSetting().value}; profile ${e.profile}; keep ${e.keepResults} results; trigger ${e.triggerPercent}%`, "info"); return; }
       await dialog(ctx);

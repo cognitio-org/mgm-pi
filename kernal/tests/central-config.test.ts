@@ -60,6 +60,8 @@ let signedIn: boolean;
 let shell: NodeJS.ProcessEnv;
 let dotenv: Record<string, string>;
 let settings: Record<string, unknown>;
+let shipped: Record<string, unknown>;
+let voice: Record<string, unknown>;
 let now: number;
 
 function setup(f?: typeof fetch) {
@@ -74,6 +76,8 @@ function setup(f?: typeof fetch) {
     env: () => shell,
     dotenv: () => dotenv,
     settings: () => settings,
+    shippedSettings: () => shipped,
+    voiceSettings: () => voice,
     now: () => now,
     warn: (line) => warnings.push(line),
     ...(f ? { fetch: f } : { fetch: (async () => { throw new Error("no network in this test"); }) as typeof fetch }),
@@ -97,6 +101,8 @@ beforeEach(() => {
   shell = { OUTFITTER_API: API };
   dotenv = {};
   settings = {};
+  shipped = {};
+  voice = {};
   now = Date.parse("2026-10-04T12:00:00.000Z");
   setup();
 });
@@ -121,20 +127,37 @@ describe("signed out", () => {
     assert.equal(r.values["model.default"], undefined);
   });
 
-  test("shell beats .env beats this machine's overrides; .env is not deprecated while signed out", () => {
-    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "compaction.summaryModel": "from-file" } }));
+  test("shell beats .env beats this machine's overrides for a key that isn't personal", () => {
+    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "router.baseUrl": "https://file.test/v1" } }));
     setup();
-    assert.equal(resolve().values["compaction.summaryModel"].source, "local");
+    assert.equal(resolve().values["router.baseUrl"].source, "local");
+    dotenv = { LITELLM_BASE_URL: "https://dotenv.test/v1" };
+    setup();
+    assert.deepEqual(resolve().values["router.baseUrl"], { value: "https://dotenv.test/v1", source: "dotenv", sourceName: "LITELLM_BASE_URL", override: "none", locked: false });
+    // bin/kernal exports .env into the process: the same value in the shell is still .env's.
+    shell = { LITELLM_BASE_URL: "https://dotenv.test/v1" };
+    setup();
+    assert.equal(resolve().values["router.baseUrl"].source, "dotenv");
+    shell = { LITELLM_BASE_URL: "https://shell.test/v1" };
+    setup();
+    assert.deepEqual(resolve().values["router.baseUrl"], { value: "https://shell.test/v1", source: "env", sourceName: "LITELLM_BASE_URL", override: "none", locked: false });
+    assert.deepEqual(warnings, []);
+  });
+
+  test("a personal key (#437): this machine beats the legacy shell, which beats legacy .env; no deprecation signed out", () => {
     dotenv = { KERNAL_SUMMARY_MODEL: "from-dotenv" };
     setup();
-    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-dotenv", source: "dotenv", sourceName: "KERNAL_SUMMARY_MODEL", override: "any", locked: false });
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-dotenv", source: "legacy", sourceName: "KERNAL_SUMMARY_MODEL in .env", override: "any", locked: false });
     // bin/kernal exports .env into the process: the same value in the shell is still .env's.
     shell = { KERNAL_SUMMARY_MODEL: "from-dotenv" };
     setup();
-    assert.equal(resolve().values["compaction.summaryModel"].source, "dotenv");
+    assert.equal(resolve().values["compaction.summaryModel"].sourceName, "KERNAL_SUMMARY_MODEL in .env");
     shell = { KERNAL_SUMMARY_MODEL: "from-shell" };
     setup();
-    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-shell", source: "env", sourceName: "KERNAL_SUMMARY_MODEL", override: "any", locked: false });
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-shell", source: "legacy", sourceName: "KERNAL_SUMMARY_MODEL in the shell", override: "any", locked: false });
+    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "compaction.summaryModel": "from-file" } }));
+    setup();
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-file", source: "local", override: "any", locked: false });
     assert.deepEqual(warnings, []);
   });
 

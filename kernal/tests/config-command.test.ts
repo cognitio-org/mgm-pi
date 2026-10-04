@@ -62,6 +62,7 @@ async function run(pi: ReturnType<typeof makePi>, args: string) {
 
 beforeEach(() => {
   process.env.KERNAL_HOME_DIR = mkdtempSync(join(tmpdir(), "kernal-config-cmd-"));
+  process.env.KERNAL_VOICE_SETTINGS = join(process.env.KERNAL_HOME_DIR, "pi-listen.json");   // never the real pi-listen settings
   signedIn = true;
   fetchCalls = [];
   answer = config({});

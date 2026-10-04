@@ -15,6 +15,12 @@
  * key the router refuses (401, at connect's key check or on a request) is re-minted once per
  * process (spec §5.5). Values are edited in the web app's Account page or with /admin (CA-9), not
  * here.
+ *
+ * Applying the personal keys (#437, _shared/central-apply.ts): at session_start a new, empty session
+ * switches once to the default model and thinking level the account (or this machine) sets; the
+ * background refresh and /config reload take over fresh values and apply what is safe live
+ * (compaction at once, voice and the model at the next session, memory at the next start). A
+ * running conversation never switches model.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inSandbox } from "../_shared/env.ts";
@@ -23,6 +29,10 @@ import {
   KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, describeSource, displayValue, providerKey, reloadConfig, remintRouterKeyIfDue,
   resolve, startBackgroundRefresh, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
+import { applyModelAtSessionStart, applyVoiceSettings, describeChanges, snapshot } from "../_shared/central-apply.ts";
+
+/** /config's note on when a change reaches this Kernal. */
+export const WHEN_NOTE = "Compaction changes apply at once; model, thinking and voice at the next session (/new or a restart: a running conversation never switches model); memory at the next start.";
 
 export type Deps = {
   /** Tests: the start-up refresh (and the reload it may ask for), to await it. */
@@ -30,6 +40,10 @@ export type Deps = {
   /** Tests: the re-mint a refused router key starts, to await it. */
   onRekey?: (done: Promise<void>) => void;
   fetch?: typeof fetch;
+  /** Tests: the command line the start-up model check reads (default process.argv). */
+  argv?: readonly string[];
+  /** Tests: what session_start applied. */
+  onApplied?: (r: import("../_shared/central-apply.ts").StartApplyResult) => void;
 };
 
 /** The device's router key in use, or undefined when a local key (or none) is. */
@@ -63,6 +77,7 @@ export function renderConfig(r: ResolvedConfig): string {
     lines.push(`  ${decl.key} = ${displayValue(decl.key, v.value)}  (${describeSource(v)}${lock})`);
   }
   if (r.api) lines.push(`Change them at ${webOrigin(r.api)}/account, or with /admin.`);
+  lines.push(WHEN_NOTE);
   return lines.join("\n");
 }
 
@@ -85,7 +100,11 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       if (await remintRouterKeyIfDue({ fetch: deps.fetch, force: true })) await reloadConnect();
     };
     const before = delivered();
+    const settingsBefore = snapshot(resolve());
     const done = startBackgroundRefresh({ fetch: deps.fetch }).then(async () => {
+      // #437: the refresh took over the personal keys' fresh values; voice goes to pi-listen now.
+      const changes = describeChanges(settingsBefore, resolve());
+      if (changes.length) applyVoiceSettings(resolve());
       if (delivered().some((v, i) => v !== before[i])) await reloadConnect();
       // connect's start-up key check found the device's key refused.
       const backends = await busRequest<{ id: string; rejected?: string }[]>(bus, "kernal:connect", { op: "state" }).catch(() => undefined);
@@ -101,6 +120,18 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     });
   }
 
+  // #437: a new, empty session starts on the default model and thinking level the account (or
+  // this machine) sets; pi chose its own from settings.json just before.
+  pi.on("session_start", async (event: any, ctx: any) => {
+    const r = await applyModelAtSessionStart(pi, event, ctx, { argv: deps.argv });
+    deps.onApplied?.(r);
+    if (!ctx?.hasUI) return;
+    const m = resolve().values["model.default"] ?? resolve().values["model.provider"];
+    if (r.model) ctx.ui.notify(`Started on ${r.model}${m ? ` (${describeSource(m)})` : ""}${r.thinking ? `, thinking ${r.thinking}` : ""}. /connect changes it.`, "info");
+    else if (r.thinking) ctx.ui.notify(`Thinking level ${r.thinking} (${describeSource(resolve().values["model.thinking"]!)}).`, "info");
+    if (r.problem) ctx.ui.notify(`Default model: ${r.problem}.`, "warning");
+  });
+
   pi.registerCommand("config", {
     description: "config [reload | profile] -- the settings in force here and where each comes from (your account, this machine, .env, shell)",
     getArgumentCompletions: (prefix: string) =>
@@ -110,9 +141,13 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       const sub = (args ?? "").trim();
       if (sub === "") return notify(renderConfig(resolve()));
       if (sub === "reload") {
+        const before = snapshot(resolve());
         const r = await reloadConfig({ fetch: deps.fetch });
+        applyVoiceSettings(r);
         const note = r.api && r.fromCache ? "Could not reach Outfitter; showing the cached settings.\n" : "";
-        return notify(`${note}${renderConfig(r)}\nThe model connections and Sentry pick up a change at the next start.`);
+        const changes = describeChanges(before, r);
+        const changed = changes.length ? `\nChanged:\n${changes.join("\n")}` : "";
+        return notify(`${note}${renderConfig(r)}${changed}\nThe model connections and Sentry pick up a change at the next start.`);
       }
       if (sub === "profile") return notify(renderProfile(resolve()));
       return notify(USAGE, "warning");

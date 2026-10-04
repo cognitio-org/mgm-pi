@@ -72,7 +72,7 @@ function setup(f: typeof fetch = (async () => { throw new Error("no network in t
   };
   let tokenCalls = 0;
   _resetCentralConfig();
-  _setCentralConfigDeps({ session, env: () => shell, dotenv: () => dotenv, settings: () => ({}), now: () => now, warn: () => {}, fetch: f });
+  _setCentralConfigDeps({ session, env: () => shell, dotenv: () => dotenv, settings: () => ({}), shippedSettings: () => ({}), voiceSettings: () => ({}), now: () => now, warn: () => {}, fetch: f });
   _setAdminCentralDeps({});
   _setAdminCentralDeps({ session, fetch: f, reload: async () => { reloads++; return resolve(); } });
 }
@@ -80,6 +80,7 @@ function setup(f: typeof fetch = (async () => { throw new Error("no network in t
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "kernal-admin-central-"));
   process.env.KERNAL_HOME_DIR = home;
+  process.env.KERNAL_VOICE_SETTINGS = join(home, "pi-listen", "settings.json");   // never the real pi-listen settings
   delete process.env.KERNAL_CONFIG_CACHE_DIR;
   signedIn = true;
   tokens = ["kda_one"];
@@ -106,7 +107,7 @@ describe("rows: each value's source and whether it can be edited", () => {
     const row = (k: string) => rows.find((x) => x.key === k)!;
     assert.equal(row("model.default").sourceLabel, "profile work");
     assert.equal(row("voice.language").sourceLabel, "your account");
-    assert.equal(row("compaction.summaryModel").sourceLabel, "shell (KERNAL_SUMMARY_MODEL)");
+    assert.equal(row("compaction.summaryModel").sourceLabel, "KERNAL_SUMMARY_MODEL in the shell (legacy)");
     assert.equal(row("router.baseUrl").sourceLabel, "fleet");
     assert.equal(row("router.baseUrl").locked, true);
     assert.equal(row("router.baseUrl").readOnly, "set by your Sysop");
@@ -173,9 +174,10 @@ describe("rows: each value's source and whether it can be edited", () => {
     const r = await saveSettings({ target: "machine", values: { "router.baseUrl": "https://mine.test/v1", "compaction.summaryModel": "mine", "model.default": "fine" } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const w = r.body.warnings as string[];
-    assert.equal(w.length, 2);
+    // #437: this machine's choice beats a legacy KERNAL_SUMMARY_MODEL, so only the router warns.
+    assert.equal(w.length, 1);
     assert.match(w[0], /LITELLM_BASE_URL in \.env still wins/);
-    assert.match(w[1], /KERNAL_SUMMARY_MODEL in the shell still wins/);
+    assert.equal(resolve().values["compaction.summaryModel"].value, "mine");
   });
 
   test("form values are checked against the schema; strings from a form are parsed; empty removes", () => {

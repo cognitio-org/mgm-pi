@@ -75,6 +75,8 @@ async function start() {
 }
 
 beforeEach(() => {
+  process.env.KERNAL_HOME_DIR = mkdtempSync(join(tmpdir(), "kernal-delivery-home-"));
+  process.env.KERNAL_VOICE_SETTINGS = join(process.env.KERNAL_HOME_DIR, "pi-listen.json");
   tmpAgentDir();
   process.env.KERNAL_NO_DISCOVERY = "1";
   for (const v of ["LITELLM_AGENT_KEY", "LITELLM_API_KEY", "LITELLM_BASE_URL", "OPENROUTER_API_KEY", "LMSTUDIO_BASE_URL", "KERNAL_SANDBOX"]) delete process.env[v];

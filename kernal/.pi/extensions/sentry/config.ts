@@ -11,7 +11,8 @@
  *     `/sentry off|on`. It can only turn sending off: `false` stops it whatever the fleet says;
  *     unset follows the fleet.
  */
-import type { FleetSettings } from "../_shared/fleet-settings.ts";
+import { parseFleetSettings, type FleetSettings } from "../_shared/fleet-settings.ts";
+import type { ConfigValue } from "../_shared/central-config.ts";
 import { kernalSection } from "../connect/settings.ts";
 
 export type SentryDecision =
@@ -21,6 +22,20 @@ export type SentryDecision =
 /** True when the person turned Sentry off on this laptop (`kernal.sentry: false`). */
 export function optedOut(settings: Record<string, unknown>): boolean {
   return kernalSection(settings).sentry === false;
+}
+
+/** Signed in (CA-8): the same three settings from the central resolution (_shared/central-config.ts),
+ * checked as strictly as GET /api/fleet-settings' answer. */
+export function fleetFromConfig(values: Record<string, ConfigValue>): FleetSettings {
+  return parseFleetSettings({
+    telemetry: {
+      sentry: {
+        enabled: values["telemetry.sentry.enabled"]?.value,
+        dsn: values["telemetry.sentry.dsn"]?.value,
+        tracesSampleRate: values["telemetry.sentry.tracesSampleRate"]?.value,
+      },
+    },
+  });
 }
 
 export function decide(fleet: FleetSettings, opts: { optedOut: boolean; hasDongle: boolean }): SentryDecision {

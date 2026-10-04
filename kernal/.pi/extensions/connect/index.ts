@@ -24,6 +24,8 @@ import {
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe,
 } from "./lib.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
+import { layerCentralEnv, webOrigin } from "../_shared/central-config.ts";
+import { loginState } from "../_shared/outfitter-session.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
 export function envFilePath(): string {
@@ -57,7 +59,9 @@ export function loadEnv(cwd: string): Record<string, string> {
   for (const f of [join(homedir(), "localllm", ".env"), envFilePath(), join(cwd, "..", ".env"), join(cwd, ".env")]) {
     if (existsSync(f)) out = { ...out, ...parseEnvText(readFileSync(f, "utf8")) };
   }
-  return { ...out, ...(process.env as Record<string, string>) };
+  // Signed in: the router's base URL, this device's router key and the account's provider keys
+  // from the central settings (_shared/central-config.ts has the rules; a key set here still wins).
+  return layerCentralEnv({ ...out, ...(process.env as Record<string, string>) });
 }
 
 export async function getJson(url: string, apiKey: string, timeoutMs = 4000): Promise<any | undefined> {
@@ -178,8 +182,12 @@ export default async function (pi: ExtensionAPI) {
 
   // ---------- /setup: first-run wizard, writes .env and re-registers providers live ----------
   pi.registerCommand("setup", {
-    description: "Configure your name, LiteLLM router, OpenRouter and an optional local model server (writes .env)",
+    description: "Run kernal login, then manage settings in the web app; this wizard writes only this machine's .env",
     handler: async (_args, ctx) => {
+      // CA-8: settings live in the account now; the wizard stays for this machine's own .env.
+      ctx.ui.notify(loginState().signedIn
+        ? `Your settings are managed at ${webOrigin()}/account (/config shows what is in force). This wizard only writes this machine's .env.`
+        : `Run kernal login, then manage settings at ${webOrigin()}/account. This wizard only writes this machine's .env.`, "info");
       if (!ctx.hasUI) { ctx.ui.notify(`Edit ${envFilePath()} (see .env.example); /setup needs the interactive UI`, "warning"); return; }
       const cur = loadEnv(process.cwd());
       // Enter on an empty field keeps what is shown (current value or default); Escape cancels the wizard.

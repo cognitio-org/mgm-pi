@@ -135,7 +135,7 @@ fi
 status=0
 OUT="$(cd "${REPO}/outfitter/deploy" && PREVIEW_DOMAIN=kernal.run ./service.sh web 2>&1)" || status=$?
 PREVIEW_ENV="$(grep '^run deploy outfitter-api' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
-WANT_PREVIEW="PREVIEW_DOMAIN=kernal.run,PREVIEW_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;mgm@mgms.eu;matej@mgms.eu"
+WANT_PREVIEW="PREVIEW_DOMAIN=kernal.run,PREVIEW_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu"
 if [[ ${status} -eq 0 && "${PREVIEW_ENV}" == *",${WANT_PREVIEW},"* ]]; then
   echo "ok: previews on: PREVIEW_DOMAIN and PREVIEW_ALLOW (IAP members + operators, ';'-separated) are set"
 else

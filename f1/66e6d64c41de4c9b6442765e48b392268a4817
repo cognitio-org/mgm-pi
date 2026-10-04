@@ -1,0 +1,29 @@
+outfitter/deploy/baseline.sh
+  s_38ec74cfb7fa1d::t_3969ea3174f853 77-79,118-121
+outfitter/deploy/secret-scope.sh
+  s_38ec74cfb7fa1d::t_7af7176b0f0d83 1-103
+outfitter/deploy/test/secret-scope.test.sh
+  s_38ec74cfb7fa1d::t_d2bcd65327ba16 1-67
+outfitter/deploy/README.md
+  s_38ec74cfb7fa1d::t_ace07e8d24c93f 279-284
+.github/workflows/outfitter-ci.yml
+  s_38ec74cfb7fa1d::t_cb3e5aa9513df0 49
+outfitter/deploy/CLAUDE.md
+  s_38ec74cfb7fa1d::t_de135ef63f17b3 20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f166e6d64c41de4c9b6442765e48b392268a4817",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

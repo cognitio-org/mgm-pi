@@ -3,6 +3,7 @@
  * LiteLLM /model/info parsing, spend-header parsing, and budget panel rendering.
  * Everything here is unit-tested in ../../../tests without pi or network.
  */
+import { type LocalModel, parseLmStudioNative } from "../_shared/local-discovery.ts";
 
 // ---------- env ----------
 export function parseEnvText(text: string): Record<string, string> {
@@ -69,18 +70,22 @@ export function parseModelInfo(json: any): { ids: string[]; meta: Map<string, Mo
 // ---------- LM Studio native /api/v0/models: the served context window ----------
 export type LmStudioMeta = { contextWindow: number; loaded: boolean; vision?: boolean; toolUse?: boolean };
 
-/** `loaded_context_length` is what the server will actually accept; `max_context_length` is the model's ceiling. */
-export function parseLmStudioModels(json: any): Map<string, LmStudioMeta> {
+/**
+ * `loaded_context_length` is what the server will actually accept; `max_context_length` is the model's ceiling.
+ * The reading itself is the shared discovery library's (_shared/local-discovery.ts); this keeps the
+ * chat models (llm/vlm) with a known window, as connect always has.
+ */
+export function lmStudioMeta(models: LocalModel[]): Map<string, LmStudioMeta> {
   const out = new Map<string, LmStudioMeta>();
-  for (const m of json?.data ?? []) {
-    if (!m?.id || (m.type && !["llm", "vlm"].includes(m.type))) continue;
-    const loaded = m.state === "loaded";
-    const ctx = (loaded && m.loaded_context_length) || m.max_context_length;
+  for (const m of models) {
+    if ((m.type && !["llm", "vlm"].includes(m.type)) || m.loaded === undefined) continue;   // embeddings; or listed by /v1/models only
+    const ctx = m.contextLength;
     if (typeof ctx !== "number" || ctx <= 0) continue;
-    out.set(m.id, { contextWindow: ctx, loaded, vision: m.type === "vlm", toolUse: Array.isArray(m.capabilities) ? m.capabilities.includes("tool_use") : undefined });
+    out.set(m.id, { contextWindow: ctx, loaded: m.loaded, vision: m.type === "vlm", toolUse: m.toolUse });
   }
   return out;
 }
+export const parseLmStudioModels = (json: any): Map<string, LmStudioMeta> => lmStudioMeta(parseLmStudioNative(json));
 
 // ---------- backend definitions ----------
 export type BackendId = "lmstudio" | "litellm" | "openrouter";

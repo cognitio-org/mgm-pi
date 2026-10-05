@@ -214,6 +214,9 @@ fi
 LOGIN_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
 ENV_VARS="${ENV_VARS},OUTFITTER_LOGIN_ALLOW=${LOGIN_ALLOW#;}"
 echo "   device login open to: ${LOGIN_ALLOW#;}"
+# #399 CA-10: Drives get per-run LiteLLM keys only (config.env; 0 = no shared-key fallback when a
+# mint fails). Both roles, so whichever builds a run.spec reads the same value.
+ENV_VARS="${ENV_VARS},OUTFITTER_RUN_KEY_FALLBACK=${OUTFITTER_RUN_KEY_FALLBACK:-0}"
 if [[ "${ROLE}" == "link" ]]; then
   # Where POST /api/device/code sends the person to approve: the web role's public origin
   # (app.kernal.one), read from its Ready domain mapping (env.sh public_origin) unless given.

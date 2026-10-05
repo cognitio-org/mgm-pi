@@ -212,7 +212,7 @@ app" }`), so no signed-in Kernal can approve another.
   of a device access token (the only re-check a machine token, §1.7, ever gets). Dev mode
   with an empty list allows everyone. Outside dev mode an empty list refuses every device login
   (`login_unavailable`) and leaves Dongles as they are today.
-- **Dongles** (until CA-10): also refused (generic 401) when the owner is no longer allowed, on
+- **Dongles** (no new ones since CA-10; existing ones until they expire or are revoked): also refused (generic 401) when the owner is no longer allowed, on
   every use, whenever `loginAllow` is non-empty. This is the "tokens outlive the owner's access"
   fix.
 - `deploy/service.sh` sets `OUTFITTER_LOGIN_ALLOW` the way it sets PREVIEW_ALLOW (IAP_MEMBERS
@@ -351,6 +351,10 @@ export function outfitterBearer(creds?: OutfitterCredentials): Promise<string | 
   one-line edits in those files and nothing else there. `bin/kernal`'s `pi_memory_env` checks
   "OUTFITTER_API and OUTFITTER_TOKEN"; E extends it to "or a stored login" by testing for
   `~/.kernal/auth/accounts.json` (no node call needed).
+- **CA-10 (#399) removed the Dongle branch**: signed out, `outfitterCredentials()` is
+  `{ api: OUTFITTER_API, token: undefined }`, `source` is only ever `"session"`, a leftover
+  `OUTFITTER_TOKEN` gets the one-time notice `Dongles are retired; run kernal login` (and is still
+  scrubbed from process.env), and `pi_memory_env` tests only for `accounts.json`.
 
 ## 3. Central settings (CA-3, task C, #392)
 
@@ -873,12 +877,22 @@ changes nothing, so an unconfigured Kernal starts as before.
    (`OPENROUTER_API_KEY`, …; never `LITELLM_AGENT_KEY`, which the device key replaces) to the
    account (`PUT /api/me/provider-keys/:provider`), then removes them from `.env` with connect's
    `writeEnvValues`. Asks once per key; never in `-p` mode.
-2. Retire the paste-a-Dongle flow: the Tokens page's Dongle creation, the `OUTFITTER_TOKEN`
-   fallback in `outfitter-env.ts` (after E merged, J owns that removal), and `/api/me/tokens` for
-   kind `dongle` (A2A keys stay).
+2. Retire the paste-a-Dongle flow (owner decision 2026-10-05): the Tokens page no longer creates
+   Dongles (it lists existing ones, marked retired, and still revokes them), Kernal no longer reads
+   `OUTFITTER_TOKEN` (`outfitter-env.ts`; a leftover one gets one notice, "Dongles are retired; run
+   kernal login", and is scrubbed from the environment), and `POST /api/me/tokens` refuses kind
+   `dongle` (and a missing kind) with 410. A2A keys are unchanged. Existing Dongles keep
+   authenticating until they expire or are revoked: auth does not reject them.
 3. Update `kernal/.env.example`, the READMEs and the setup docs.
 4. Rework #381, #382, #383 (Local Host) to authenticate with the device login: issue comments.
-5. Blocking the shared router keys is an owner step (§14).
+5. Drives use per-run keys only: `deploy/config.env` sets `OUTFITTER_RUN_KEY_FALLBACK=0`, so a
+   failed mint is a retryable run.spec failure (§9), never the shared key.
+6. Blocking the shared router keys is an owner step (§14) with `deploy/litellm-retire-keys.sh`:
+   `system-key` moves Outfitter's own calls (`outfitter-litellm-key-default`) from `MGM-Pi` (a key of
+   the owner's proxy_admin login) to an `outfitter-system` internal_user key in the
+   `outfitter-system` team; `block` then blocks `MGM-Pi`, `agent-testing` and
+   `litellm-autorouter-testing-c` (Matej's: he runs `kernal update && kernal login`). Not blocked
+   for now: `UPSTREAM_LITELLM_API_KEY`, `ROUTER_ADMIN_KEY`, `local-test`, `cognitio-mgmsr`.
 
 ## 13. File ownership
 
@@ -935,9 +949,11 @@ in this document.
    through a release tag (`LITELLM_ADMIN_KEY` is already mounted). Optionally set the router key
    limits (§3.2) with `PUT /api/operator/config/fleet`; the defaults apply otherwise.
 4. Point `link.kernal.one` at the link service if it isn't already (it's baked into releases).
-5. Move Outfitter's own default key into the `outfitter-system` team (I's PR says which).
-6. After everyone is on device keys: block the hand-issued `LITELLM_AGENT_KEY`s, Matej's key and the
-   shared Drive keys (`outfitter-litellm-key-*`) in LiteLLM.
+5. Move Outfitter's own default key into the `outfitter-system` team:
+   `deploy/litellm-retire-keys.sh system-key` (#399; DRY_RUN=1 first).
+6. After everyone is on device keys and a release with `OUTFITTER_RUN_KEY_FALLBACK=0` is out:
+   `deploy/litellm-retire-keys.sh block` (`MGM-Pi`, `agent-testing`,
+   `litellm-autorouter-testing-c`; #399).
 
 ## 15. Decisions (made for this contract; the owner may revisit)
 

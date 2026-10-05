@@ -412,8 +412,9 @@ A spec re-sent while the run still provisions never deletes a key that may have 
 shared key while the fallback is on, otherwise an additional key `outfitter-run-<runId>-<n>`.
 The api deletes all of the run's keys when its `bye` is stored; a run that ends any other way leaves its key
 to LiteLLM's expiry and the tick's sweep. Without minting, without an owner, and for an A2A session
-the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the default until
-CA-10) a failed mint also falls back to it, and with it off the spec build fails retryably (1011).
+the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the api's default when
+unset) a failed mint also falls back to it, and with it off (`deploy/config.env` since CA-10, #399)
+the spec build fails retryably (1011).
 
 `run.spec.settings?` `{ schemaVersion, profile, values: { "<key>": { value, source, sourceName? } } }`
 is the owner's resolved central settings (their default profile, no device level; `router.*` and
@@ -738,6 +739,11 @@ operators (PREVIEW_ALLOW's format). Operators always count. Empty outside dev mo
 **Dongle changes** (#390): no token (Dongle or device) creates tokens (`POST /api/me/tokens`, either
 kind: `403 tokens are created in the web app`); no token is ever an operator, on any role; and once
 `OUTFITTER_LOGIN_ALLOW` is set, a Dongle whose owner is not on it gets the generic 401.
+
+**Dongles retired** (#399, CA-10): `POST /api/me/tokens` with `kind: "dongle"` or no `kind` answers
+`410` (error "Dongles are retired: sign Kernal in with ...", `routes/tokens.ts` `DONGLES_RETIRED`) and stores nothing;
+`kind: "a2a"` is unchanged. Existing Dongles keep authenticating (and listing and revoking) until
+they expire or are revoked. Kernal no longer sends one.
 
 **Rate limits**, per instance: `/code` 10 per IP per 10 minutes; `/token` 120 per IP per minute;
 `/pending` and `/approve` together 20 per person per 10 minutes. Over the limit: `429 { error:

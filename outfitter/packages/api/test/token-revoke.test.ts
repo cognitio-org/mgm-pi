@@ -4,7 +4,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp } from "./helpers.ts";
+import { buildTestApp, seedDongle, seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { ownerEmailFilter } from "../src/store/mongo.ts";
 import type { ApiToken } from "../src/store/types.ts";
@@ -27,15 +27,9 @@ function tokenRow(ownerEmail: string, overrides: Partial<ApiToken> = {}): ApiTok
   };
 }
 
-/** Mints a real outf_ token for `ownerEmail` through a throwaway dev-mode app sharing `store` (same
- * trick as operator.test.ts's bearerFor), returning the plaintext. */
+/** An existing outf_ Dongle for `ownerEmail` in `store` (helpers.ts seedDongle), returning the plaintext. */
 async function mintToken(store: MemoryStore, ownerEmail: string): Promise<string> {
-  const dev = await buildTestApp({}, { store });
-  const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "laptop" } });
-  const { token, record } = created.json();
-  await store.tokens.update(record.id, { ownerEmail });
-  await dev.fastify.close();
-  return token;
+  return (await seedDongle(store, ownerEmail)).token;
 }
 
 async function linkStatus(store: MemoryStore, token: string): Promise<number> {
@@ -238,9 +232,10 @@ describe("POST /api/operator/tokens/revoke", () => {
 });
 
 describe("token expiry", () => {
-  test("a new token carries expiresAt = createdAt + 90 days", async () => {
+  test("a new token (an A2A key; Dongles are retired, #399) carries expiresAt = createdAt + 90 days", async () => {
     const app = await buildTestApp();
-    const res = await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "laptop" } });
+    await seedGuru(app.store, { id: "coder", name: "Coder", tools: ["read", "bash", "edit", "write"] });
+    const res = await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "k", kind: "a2a", a2a: { tapes: ["coder"] } } });
     const { record } = res.json();
     assert.equal(Date.parse(record.expiresAt) - Date.parse(record.createdAt), TOKEN_TTL_MS);
     await app.fastify.close();
@@ -287,8 +282,7 @@ describe("token expiry", () => {
     assert.equal(await store.tokens.countActiveForOwner("dev@localhost"), 0);
 
     const app = await buildTestApp({}, { store });
-    const created = await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "fresh" } });
-    assert.equal(created.statusCode, 201);
+    await seedDongle(store, "dev@localhost", "fresh");
     const revoked = await store.tokens.revokeAllForOwners({ email: "dev@localhost" }, new Date().toISOString());
     assert.deepEqual(revoked.map((t) => t.name), ["fresh"]);
     await app.fastify.close();

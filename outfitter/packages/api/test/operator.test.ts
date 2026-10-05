@@ -7,7 +7,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp, seedGuru } from "./helpers.ts";
+import { buildTestApp, seedDongle, seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { MemorySecretAdmin } from "../src/secrets.ts";
 import type { Session, Store } from "../src/store/types.ts";
@@ -34,15 +34,9 @@ async function seedSession(store: Store, overrides: Partial<Session> = {}): Prom
   return session;
 }
 
+/** An existing Dongle for `ownerEmail` (#399: no longer created through the API, still accepted). */
 async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
-  const dev = await buildTestApp({}, { store }); // OUTFITTER_DEV=1 by default -- owner is dev@localhost
-  const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
-  const id = created.json().record.id;
-  const token = created.json().token;
-  if (ownerEmail !== "dev@localhost") {
-    await store.tokens.update(id, { ownerEmail });
-  }
-  await dev.fastify.close();
+  const { token } = await seedDongle(store, ownerEmail, "t");
   return { authorization: `Bearer ${token}` };
 }
 

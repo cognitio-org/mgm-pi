@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Guru, type TokenKind, type TokenRecord } from "../api/client.ts";
+import { api, type Guru, type TokenRecord } from "../api/client.ts";
 import { a2aTapeProblem, expiresIn, normalizeA2ARepo } from "../lib/a2a-keys.ts";
 import { Working } from "../components/Working.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
@@ -8,15 +8,6 @@ import { withFloppySound } from "../lib/floppy-sound.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 import { VoiceSpendView } from "../components/VoiceSpend.tsx";
-
-function envLines(linkOrigin: string, token: string): string {
-  const api = linkOrigin || "<ask your operator for the link URL>";
-  return [
-    `export OUTFITTER_API=${api}`,
-    `export OUTFITTER_TOKEN=${token}`,
-    "export KERNAL_TELEPORT_STORE=outfitter",
-  ].join("\n");
-}
 
 /** E9: what an Agent Engine agent (integrations/agent-engine) needs to reach Outfitter's A2A server. */
 function a2aEnvLines(linkOrigin: string, token: string): string {
@@ -30,10 +21,9 @@ function copyToClipboard(text: string) {
   });
 }
 
-function createdEnvLines(linkOrigin: string, created: { token: string; record: TokenRecord }): string {
-  return created.record.kind === "a2a" ? a2aEnvLines(linkOrigin, created.token) : envLines(linkOrigin, created.token);
-}
-
+/** #399 CA-10: Dongles are retired. This page lists and revokes the ones that still exist (they
+ * keep working until they expire or are revoked) and makes A2A keys only; Kernal signs in with
+ * `kernal login` (the Devices page). */
 export function TokensPage() {
   const [tokens, setTokens] = useState<TokenRecord[]>([]);
   const [linkOrigin, setLinkOrigin] = useState("");
@@ -43,8 +33,7 @@ export function TokensPage() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [justCreated, setJustCreated] = useState<{ token: string; record: TokenRecord } | null>(null);
-  // E9 §5.2: an A2A key is made here too, with the tapes and repositories its tasks may use.
-  const [kind, setKind] = useState<TokenKind>("dongle");
+  // E9 §5.2: an A2A key, with the tapes and repositories its tasks may use (the only kind made here).
   const [tapes, setTapes] = useState<Guru[] | null>(null);
   const [chosenTapes, setChosenTapes] = useState<string[]>([]);
   const [repos, setRepos] = useState<string[]>([]);
@@ -70,12 +59,12 @@ export function TokensPage() {
   }, []);
 
   useEffect(() => {
-    if (kind !== "a2a" || tapes) return;
+    if (tapes) return;
     api
       .gurus()
       .then(setTapes)
       .catch((err) => setApiError(toApiErrorState(err, "Failed to load tapes")));
-  }, [kind, tapes]);
+  }, [tapes]);
 
   function toggleTape(id: string) {
     setChosenTapes((current) => (current.includes(id) ? current.filter((t) => t !== id) : [...current, id]));
@@ -92,7 +81,7 @@ export function TokensPage() {
     setRepos((current) => (current.some((r) => r.toLowerCase() === repo.toLowerCase()) ? current : [...current, repo]));
   }
 
-  const a2aIncomplete = kind === "a2a" && chosenTapes.length === 0;
+  const a2aIncomplete = chosenTapes.length === 0;
 
   async function createToken(e: React.FormEvent) {
     e.preventDefault();
@@ -100,7 +89,7 @@ export function TokensPage() {
     if (!name.trim() || a2aIncomplete) return;
     // A repository typed but not added yet is meant too; one that isn't owner/name stops here.
     let scopeRepos = repos;
-    if (kind === "a2a" && repoInput.trim()) {
+    if (repoInput.trim()) {
       const typed = normalizeA2ARepo(repoInput);
       if (!typed) {
         setRepoError("use owner/name, or clear the field");
@@ -111,8 +100,7 @@ export function TokensPage() {
     }
     setCreating(true);
     try {
-      const scope = kind === "a2a" ? { tapes: chosenTapes, repos: scopeRepos, maxConcurrent } : undefined;
-      const result = await withFloppySound(api.createToken(name.trim(), scope));
+      const result = await withFloppySound(api.createToken(name.trim(), { tapes: chosenTapes, repos: scopeRepos, maxConcurrent }));
       setJustCreated(result);
       setName("");
       setCreateAttempted(false);
@@ -142,8 +130,8 @@ export function TokensPage() {
         <p className="page-subtitle">{vocabSubtitle("token")}</p>
       </div>
       <p className="session-meta">
-        Used by <code>kernal --teleport</code> (and <code>/teleport</code>) to talk to the Outfitter link service
-        from your laptop. Each token acts as you; revoke it if it leaks.
+        {vocabulary.token.many} are retired: Kernal signs in with <code>kernal login</code> (see Devices), and no new{" "}
+        {vocabulary.token.one} can be made. One you already have keeps working until it expires or you revoke it here.
       </p>
       <p className="session-meta">
         An <strong>A2A key</strong> lets another agent (an Agent Engine agent, any A2A client) start coding tasks on
@@ -168,19 +156,15 @@ export function TokensPage() {
               </button>
             </div>
           </div>
-          {justCreated.record.kind === "a2a" ? (
-            <p>Give these to the agent (for Agent Engine, as its two secrets):</p>
-          ) : (
-            <p>Set these in your shell:</p>
-          )}
-          <pre style={{ whiteSpace: "pre-wrap" }}>{createdEnvLines(linkOrigin, justCreated)}</pre>
+          <p>Give these to the agent (for Agent Engine, as its two secrets):</p>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{a2aEnvLines(linkOrigin, justCreated.token)}</pre>
           {!linkOrigin && (
             <p className="session-meta">
               This deployment hasn't set OUTFITTER_LINK_ORIGIN yet — ask your operator for the link URL.
             </p>
           )}
           <div className="form-actions">
-            <button type="button" className="btn" onClick={() => copyToClipboard(createdEnvLines(linkOrigin, justCreated))}>
+            <button type="button" className="btn" onClick={() => copyToClipboard(a2aEnvLines(linkOrigin, justCreated.token))}>
               Copy env lines
             </button>
             <button type="button" className="btn btn-primary" onClick={() => setJustCreated(null)}>
@@ -194,40 +178,32 @@ export function TokensPage() {
       <form onSubmit={createToken}>
         <div className="toolbar toolbar-with-error">
           <div className="form-row" style={{ marginBottom: 0 }}>
-            <select value={kind} onChange={(e) => setKind(e.target.value as TokenKind)} aria-label="Token kind">
-              <option value="dongle">{vocabulary.token.one}</option>
-              <option value="a2a">A2A key</option>
-            </select>
-          </div>
-          <div className="form-row" style={{ marginBottom: 0 }}>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={kind === "a2a" ? "agent-engine" : "laptop"}
+              placeholder="agent-engine"
               aria-label="Token name"
               aria-invalid={createAttempted && !name.trim()}
             />
             {createAttempted && !name.trim() && <SyntaxError>name cannot be empty.</SyntaxError>}
           </div>
           <button type="submit" className="btn btn-primary" disabled={creating || !name.trim() || a2aIncomplete}>
-            {creating ? <Working label="Creating" /> : kind === "a2a" ? "Create A2A key" : "Create token"}
+            {creating ? <Working label="Creating" /> : "Create A2A key"}
           </button>
         </div>
-        {kind === "a2a" && (
-          <A2AScopeFields
-            tapes={tapes}
-            chosenTapes={chosenTapes}
-            onToggleTape={toggleTape}
-            repos={repos}
-            repoInput={repoInput}
-            repoError={repoError}
-            onRepoInput={setRepoInput}
-            onAddRepo={addRepo}
-            onRemoveRepo={(repo) => setRepos((current) => current.filter((r) => r !== repo))}
-            maxConcurrent={maxConcurrent}
-            onMaxConcurrent={setMaxConcurrent}
-          />
-        )}
+        <A2AScopeFields
+          tapes={tapes}
+          chosenTapes={chosenTapes}
+          onToggleTape={toggleTape}
+          repos={repos}
+          repoInput={repoInput}
+          repoError={repoError}
+          onRepoInput={setRepoInput}
+          onAddRepo={addRepo}
+          onRemoveRepo={(repo) => setRepos((current) => current.filter((r) => r !== repo))}
+          maxConcurrent={maxConcurrent}
+          onMaxConcurrent={setMaxConcurrent}
+        />
       </form>
 
       {loading ? (
@@ -287,7 +263,7 @@ export function TokensPage() {
 }
 
 function kindLabel(t: TokenRecord): string {
-  if (t.kind !== "a2a") return vocabulary.token.one;
+  if (t.kind !== "a2a") return `${vocabulary.token.one} (retired)`;
   if (!t.a2a) return "A2A key";
   const repos = t.a2a.repos.length > 0 ? t.a2a.repos.join(", ") : "no repository";
   return `A2A key · ${t.a2a.tapes.join(", ")} · ${repos}`;

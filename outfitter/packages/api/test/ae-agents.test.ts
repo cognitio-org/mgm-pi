@@ -15,7 +15,7 @@ import { decideApproval } from "../src/admin/approvals.ts";
 import { AE_RESULT_CAP, aeResult, aeSessionId, session8 } from "../src/admin/ae-ops.ts";
 import { approvalNeeded, runAdminOp } from "../src/admin/ops.ts";
 import { AeSessions } from "../src/ae-sessions.ts";
-import { buildTestApp, seedGuru } from "./helpers.ts";
+import { buildTestApp, seedDongle, seedGuru } from "./helpers.ts";
 import type { AeAgent, AdminApproval, Store } from "../src/store/types.ts";
 
 const OWNER = "ada@example.com";
@@ -487,11 +487,8 @@ describe("Settings → Agent Engine agents (sysops only)", () => {
   const OPERATOR_ENV = { OUTFITTER_DEV: "0", OUTFITTER_OPERATORS: "operator@mgms.eu" };
 
   async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
-    const dev = await buildTestApp({}, { store });
-    const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
-    await store.tokens.update(created.json().record.id, { ownerEmail });
-    await dev.fastify.close();
-    return { authorization: `Bearer ${created.json().token}` };
+    const { token } = await seedDongle(store, ownerEmail, "t");
+    return { authorization: `Bearer ${token}` };
   }
 
   const URL = "/api/operator/agent-engine/agents";

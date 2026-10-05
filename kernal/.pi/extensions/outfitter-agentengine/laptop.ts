@@ -1,12 +1,12 @@
 /**
  * Agent Engine memory on a laptop (outfitter/docs/specs/atlas-agent-engine-and-a2a.md §3.5, #349):
- * the same memory as the person's Drives, through their Dongle (POST /api/admin/ops).
+ * the same memory as the person's Drives, through their login (`kernal login`; POST /api/admin/ops).
  *
  * Settings, in the agent settings.json under `kernal` (connect/settings.ts; changed with `/memory`,
  * read once when Kernal starts, like every `kernal.*` setting):
  *
- *   memory        "off" | "tool" | "auto"  -- unset: `auto` when OUTFITTER_API and OUTFITTER_TOKEN
- *                                            are set, else off. `tool` = the `memory` tool;
+ *   memory        "off" | "tool" | "auto"  -- unset: `auto` when signed in (`kernal login`),
+ *                                            else off. `tool` = the `memory` tool;
  *                                            `auto` = the tool plus recall before each prompt.
  *   memoryRecord  true                     -- opt-in: also record this laptop's turns (record.ts).
  *   memoryImported, memoryImportOffered    -- the one-time pi-memory import (pi-memory.ts).
@@ -21,7 +21,7 @@
  *
  * Each call carries `laptop: {sessionId: "laptop:<pi session id>", repo}`. The repo is the working
  * directory's GitHub `origin` remote, lowercased; it only scopes the owner's own memory. The API
- * decides whose memory it is (the Dongle's owner) and enforces every rule. A shared or taxonomic
+ * decides whose memory it is (the login's owner) and enforces every rule. A shared or taxonomic
  * save waits for the owner's yes in the Outfitter web app's approval widget (laptop-approval.ts):
  * this agent's shell runs as the person and could answer a TUI confirm itself, so that is no gate.
  * `/memory import` saves private notes only, so it needs no approval.

@@ -341,9 +341,9 @@ describe("the effective file bin/kernal reads", () => {
       writeIndex(EMAIL);
       assert.equal(memoryEnv(agent.dir, path, cache), "off=", "a again");
       assert.equal(memoryEnv(agent.dir, path, { ...cache, OUTFITTER_API: "https://other.test" }), "off=1", "another API");
-      // Signed out (no accounts.json) the effective file is not read.
+      // Signed out (no accounts.json) memory is off, and a leftover Dongle no longer counts (#399).
       rmSync(join(home, "auth", "accounts.json"));
-      assert.equal(memoryEnv(agent.dir, path, { ...cache, OUTFITTER_API: "x", OUTFITTER_TOKEN: "y" }), "off=1");
+      assert.equal(memoryEnv(agent.dir, path, { ...cache, OUTFITTER_API: "x", OUTFITTER_TOKEN: "y" }), "off=", "signed out: a retired Dongle does not turn memory on");
     });
   }
 

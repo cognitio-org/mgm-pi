@@ -119,7 +119,7 @@ else
   echo "ok: --set-env-vars has no GKE_ variable while GKE is off"
 fi
 
-EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,OUTFITTER_LOGIN_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
+EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,OUTFITTER_LOGIN_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu,OUTFITTER_RUN_KEY_FALLBACK=0,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
 if [[ "${ENV_VARS_ARG}" == "--set-env-vars=${EXPECTED}" ]]; then
   echo "ok: --set-env-vars is exactly config.env's pre-GKE list, unchanged"
 else
@@ -178,6 +178,27 @@ if [[ "${REL_ENV}" == *",OUTFITTER_BUILD_COMMIT=${TAG},OUTFITTER_RELEASE=outfitt
   echo "ok: a release deploy also sets OUTFITTER_RELEASE"
 else
   echo "FAIL: expected OUTFITTER_RELEASE=outfitter-v2026.09.28.1 after OUTFITTER_BUILD_COMMIT; got: ${REL_ENV}"
+  fails=$((fails + 1))
+fi
+
+# #399 CA-10: Drives use per-run keys only. config.env's default turns the shared-key fallback off
+# on both roles; exporting OUTFITTER_RUN_KEY_FALLBACK=1 brings it back.
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && ./service.sh link 2>&1)" || true
+LINK_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${LINK_ENV}" == *",OUTFITTER_RUN_KEY_FALLBACK=0,"* ]]; then
+  echo "ok: link gets OUTFITTER_RUN_KEY_FALLBACK=0 (per-run keys only)"
+else
+  echo "FAIL: expected OUTFITTER_RUN_KEY_FALLBACK=0 on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_RUN_KEY_FALLBACK=1 ./service.sh link 2>&1)" || true
+LINK_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${LINK_ENV}" == *",OUTFITTER_RUN_KEY_FALLBACK=1,"* ]]; then
+  echo "ok: OUTFITTER_RUN_KEY_FALLBACK=1 from the environment brings the fallback back"
+else
+  echo "FAIL: expected OUTFITTER_RUN_KEY_FALLBACK=1 on link; got: ${LINK_ENV:-<no deploy call>}"
   fails=$((fails + 1))
 fi
 

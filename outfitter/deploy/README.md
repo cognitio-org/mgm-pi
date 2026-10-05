@@ -706,8 +706,10 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
      Domains match exactly (not subdomains), and shared mail providers such as `@gmail.com` are
      refused: revoke those users by email. Tokens also expire on their own 90 days after creation
      (`TOKEN_TTL_MS` in `packages/api/src/tokens.ts`), so this is the fast path, not the only one.
-     Dongles are deprecated (`kernal login` replaces them, central-auth.md §12); new Kernals warn
-     while one is still in use.
+     Dongles are retired (`kernal login` replaces them, central-auth.md §12): the web app no
+     longer creates them and `POST /api/me/tokens` refuses kind `dongle`, Kernal no longer reads
+     `OUTFITTER_TOKEN`, and existing Dongles keep working (for older clients) until they expire
+     or are revoked. A2A keys are unchanged.
   3. Signed-in Kernals (`kernal login`, central-auth.md §1.6): with `OUTFITTER_LOGIN_ALLOW` set by
      the deploy, a person dropped from `IAP_MEMBERS` loses every device at its next token refresh
      (within an hour), and their Dongles are refused too. To cut them off at once, revoke their
@@ -751,6 +753,42 @@ MASTER_KEY_PROJECT=<project> ./litellm-admin.sh   # if kernal-litellm-prod-maste
 The master key goes to curl through a process substitution and the new key straight into
 `gcloud secrets versions add`; neither is printed. Running services pick the new version up on their
 next revision. Test: `bash test/litellm-admin.test.sh`.
+
+## Retiring the shared router keys (`litellm-retire-keys.sh`, owner-run)
+
+#399 (CA-10, `docs/specs/central-auth.md` §12, §14). Drives now get a per-run key each
+(`OUTFITTER_RUN_KEY_FALLBACK=0` in `config.env`: a failed mint is a retryable run.spec failure, never
+the shared key), and laptops get per-device keys at `kernal login`. What is left is to move
+Outfitter's own model calls off `MGM-Pi` and block the old shared keys:
+
+```bash
+DRY_RUN=1 ./litellm-retire-keys.sh system-key    # the plan; reads nothing secret, writes nothing
+./litellm-retire-keys.sh system-key              # outfitter-system key -> outfitter-litellm-key-default
+# ... release, check a Drive run and Outfitter's own calls ...
+DRY_RUN=1 ./litellm-retire-keys.sh block
+./litellm-retire-keys.sh block                   # blocks MGM-Pi, agent-testing, litellm-autorouter-testing-c
+./litellm-retire-keys.sh unblock <alias>         # undo one block
+```
+
+- **`system-key`**: `outfitter-litellm-key-default` (what `secrets.ts`'s
+  `SecretsBroker.defaultLitellmKey` reads: the router probe and model list when `LITELLM_ADMIN_KEY` is
+  unset, tapes without a key of their own in a run without an owner) held `MGM-Pi`, a key of the
+  owner's proxy_admin login. The script makes the LiteLLM user `outfitter-system` with
+  `user_role: internal_user` (a key takes its role from its user, so never proxy_admin), adds it to
+  the team with alias `outfitter-system`, mints a key for it in that team (`outfitter-system-<UTC
+  time>`, metadata `owner: outfitter`), stores it as a new version of the secret (created if missing),
+  and disables the older versions; a failed store deletes the new key again. The api reads the secret
+  live, so no deploy is needed for this step. A rerun does nothing while the stored key already is an
+  `outfitter-system-*` key (checked with `/key/info` as that key; only its alias is printed);
+  `ROTATE=1` mints a fresh one.
+- **`block`**: looks each alias up with `/key/list?key_alias=` and blocks it with `POST /key/block`
+  (master key), printing `blocked`, `already blocked` or `not found` per alias. It refuses to block
+  `MGM-Pi` while `outfitter-litellm-key-default` still holds it. Not blocked for now:
+  `UPSTREAM_LITELLM_API_KEY`, `ROUTER_ADMIN_KEY`, `local-test`, `cognitio-mgmsr`.
+
+Both read the master key (`kernal-litellm-prod-master-key`, `MASTER_KEY_PROJECT` as for
+`litellm-admin.sh`) into a variable and hand it to curl through a process substitution; no key value
+is printed. Test: `bash test/litellm-retire-keys.test.sh`.
 
 ## Web source maps (`sentry-token.sh`, owner-run)
 

@@ -648,10 +648,10 @@ export const api = {
     return request("/api/me/tokens");
   },
 
-  /** A Dongle by default; `a2a` makes an A2A key scoped to those tapes and repositories. */
-  createToken(name: string, a2a?: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
-    const body = a2a ? { name, kind: "a2a", a2a } : { name };
-    return request("/api/me/tokens", { method: "POST", body: JSON.stringify(body) });
+  /** An A2A key scoped to those tapes and repositories. Dongles are retired (#399): the api refuses
+   * to make one, so there is no way to ask for it here. */
+  createToken(name: string, a2a: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
+    return request("/api/me/tokens", { method: "POST", body: JSON.stringify({ name, kind: "a2a", a2a }) });
   },
 
   revokeToken(id: string): Promise<{ record: TokenRecord }> {

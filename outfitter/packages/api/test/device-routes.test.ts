@@ -374,7 +374,7 @@ describe("Dongle fixes (§1.8)", () => {
       }
     }
     const person = await p.web.fastify.inject({ method: "POST", url: "/api/me/tokens", headers: iapHeaders("alice@example.com"), payload: { name: "laptop" } });
-    assert.equal(person.statusCode, 201, "a person in the web app still can");
+    assert.equal(person.statusCode, 410, "#399: not even a person in the web app makes a Dongle now");
     await p.close();
   });
 

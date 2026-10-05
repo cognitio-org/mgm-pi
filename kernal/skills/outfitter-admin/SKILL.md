@@ -6,10 +6,9 @@ description: Administer Outfitter with the outfitter_* and session_* tools - bui
 # Outfitter admin
 
 Outfitter runs Kernal agents in the cloud. Its words: a **Tape** is a saved agent setup (code and API
-name: guru), a **Floppy** is a session, a **Drive** is one run of it, a **Dongle** is a personal API
-token, a **Sysop** is an operator. Use the tools below, never curl or the web API. If they aren't
-available, this tape has admin tools off, or no Dongle (OUTFITTER_API and OUTFITTER_TOKEN) is set:
-say so and stop.
+name: guru), a **Floppy** is a session, a **Drive** is one run of it, a **Sysop** is an operator. Use the tools below,
+never curl or the web API. If they aren't available, this tape has admin tools off, or this laptop
+is not signed in (`kernal login`): say so and stop.
 
 ## Tools
 

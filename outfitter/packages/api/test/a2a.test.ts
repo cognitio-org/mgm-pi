@@ -144,7 +144,7 @@ describe("A2A keys: creation (routes/tokens.ts)", () => {
     assert.equal(body.record.kind, "a2a");
     assert.deepEqual(body.record.a2a, { tapes: ["coder", "reviewer"], repos: ["Acme/Widgets"], maxConcurrent: 2 });
     assert.equal(body.record.hash, undefined);
-    await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "laptop" } });
+    await mintToken(app.store, { ownerEmail: "dev@localhost", name: "laptop" });
     const list = (await app.fastify.inject({ method: "GET", url: "/api/me/tokens" })).json() as Array<{ name: string; kind: string }>;
     assert.deepEqual(list.map((t) => [t.name, t.kind]).sort(), [["ae", "a2a"], ["laptop", "dongle"]]);
     await app.fastify.close();
@@ -168,7 +168,8 @@ describe("A2A keys: creation (routes/tokens.ts)", () => {
     }
     assert.equal((await create({ tapes: ["memtool"], maxConcurrent: 3 })).statusCode, 201);
     assert.equal((await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "k", kind: "root" } })).statusCode, 400);
-    assert.equal((await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "k", a2a: { tapes: ["coder"] } } })).statusCode, 400);
+    // No kind meant a Dongle, which is retired (#399): refused before the a2a body is looked at.
+    assert.equal((await app.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "k", a2a: { tapes: ["coder"] } } })).statusCode, 410);
     await app.fastify.close();
   });
 

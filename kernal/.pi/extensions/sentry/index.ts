@@ -90,7 +90,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   const creds = deps.credentials ?? outfitterCredentials();
   const signedIn = deps.signedIn ?? loginState().signedIn;
   const central = deps.central ?? { resolve: () => resolve(), refresh: () => refreshConfig({ fetch: deps.fetch }) };
-  // Connected to Outfitter: a login (CA-8) or, on a laptop not signed in yet, a Dongle.
+  // Connected to Outfitter: a login (CA-8). Dongles are retired, so creds come from a session only.
   const hasDongle = signedIn || !!(creds.api && creds.token);
   const version = installedVersion();
   const runtime = { environment: defaultEnvironment(version !== undefined), ...(version ? { release: releaseName(version) } : {}) };

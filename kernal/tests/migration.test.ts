@@ -160,7 +160,7 @@ describe("offerEnvImport", () => {
     assert.deepEqual(r.kept, ["OPENROUTER_API_KEY", "OUTFITTER_TOKEN"]);
     assert.equal(readFileSync(s.envFile, "utf8"), text);
     assert.ok(!s.server.calls.some((c) => c.method === "PUT"));
-    assert.ok(s.lines.includes("OUTFITTER_TOKEN in .env is deprecated: kernal login replaces it"));
+    assert.ok(s.lines.includes("Dongles are retired; OUTFITTER_TOKEN in .env is no longer read"));
   });
 
   test("an upload the server refuses keeps the key in .env", async () => {
@@ -178,7 +178,7 @@ describe("offerEnvImport", () => {
     const r = await offerEnvImport(s.io(["y", "n"]));
     assert.ok(!s.server.calls.some((c) => c.method === "PUT"));
     assert.match(s.asked[0], /^Remove LITELLM_AGENT_KEY from .*This device's own router key replaces it/);
-    assert.match(s.asked[1], /^Remove OUTFITTER_TOKEN from .*This login replaces the Dongle/);
+    assert.match(s.asked[1], /^Remove OUTFITTER_TOKEN from .*Dongles are retired and Kernal no longer reads it/);
     assert.deepEqual(r.removed, ["LITELLM_AGENT_KEY"]);
     assert.deepEqual(r.kept, ["OUTFITTER_TOKEN"]);
     assert.equal(readFileSync(s.envFile, "utf8"), "OUTFITTER_TOKEN=outf_abc\n");

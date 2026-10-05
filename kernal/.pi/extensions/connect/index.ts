@@ -204,6 +204,11 @@ export default async function (pi: ExtensionAPI) {
       // key when it works, gone when it is missing or rejected, so no OpenRouter model is offered
       // anywhere unless OpenRouter is actually connected.
       if (b.id === "openrouter") { if (usable) process.env.OPENROUTER_API_KEY = b.apiKey; else delete process.env.OPENROUTER_API_KEY; }
+      // The router MCP server (.pi/mcp.json) builds its header from KERNAL_ROUTER_KEY when it connects:
+      // the key in use here, from .env or this device's login, and none means it doesn't connect at all
+      // instead of sending an empty "Bearer " the router logs as a malformed key (#447). Like
+      // OPENROUTER_API_KEY above (and LITELLM_AGENT_KEY for .env users), child processes inherit it.
+      if (b.id === "litellm") { if (usable) process.env.KERNAL_ROUTER_KEY = b.apiKey; else delete process.env.KERNAL_ROUTER_KEY; }
       if (!usable) { models.set(b.id, []); try { pi.unregisterProvider?.(b.id); } catch {} return; }
       const ids = await discover(b, litellmMeta, lmstudioMeta);
       models.set(b.id, ids);

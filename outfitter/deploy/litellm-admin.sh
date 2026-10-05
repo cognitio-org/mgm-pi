@@ -138,9 +138,8 @@ new_key="$(api POST /key/generate "$(jq -nc --arg u "${SVC_USER}" --arg a "${ali
 if [[ "${secret_exists}" == 1 ]]; then
   store=(gcloud secrets versions add "${ADMIN_SECRET}" --project="${PROJECT}" --data-file=-)
 else
-  # shellcheck disable=SC2054 # the commas belong to --labels, not array separators
   store=(gcloud secrets create "${ADMIN_SECRET}" --project="${PROJECT}" --replication-policy=automatic \
-    --labels=app=outfitter,purpose=litellm-${KEY} --data-file=-)
+    "--labels=app=outfitter,purpose=litellm-${KEY}" --data-file=-)
 fi
 if ! printf '%s' "${new_key}" | "${store[@]}" >/dev/null; then
   api POST /key/delete "$(jq -nc --arg a "${alias}" '{key_aliases: [$a]}')" >/dev/null || true

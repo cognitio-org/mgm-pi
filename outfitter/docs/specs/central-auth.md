@@ -539,6 +539,7 @@ version, updatedAt }`.
 | `PATCH /api/config/profiles/:name` `{ rename?, isDefault?: true }` (If-Match) | the user |
 | `DELETE /api/config/profiles/:name` (If-Match) → 204 | the user |
 | `GET`/`PUT /api/config/devices/:deviceId` (own active devices only, else 404) | the user |
+| `GET /api/config/models?profile=` → `{ providers: [{ id, label, models, note? }] }` (#458: options for the model dropdowns; router list cached 5 min) | the user |
 | `GET`/`PUT /api/operator/config/fleet` (web/all, `requireOperator`) | operators |
 
 Who "the user" can be: on web, an IAP person; on link, a device token. A Dongle may `GET
@@ -706,6 +707,10 @@ previous key first. `deleteKey` treats "not found" as deleted; on any other fail
   profile's values with controls generated from `GET /api/config/schema` (only keys whose levels
   include `profile`). A 409 shows "changed elsewhere, reload" and never overwrites.
 - **Account-wide values** (the `user` level): same editor.
+- **Model fields** (#458): `model.provider` is a select; `model.default` is a searchable dropdown of
+  the selected provider's models and `compaction.summaryModel` of every provider's (as
+  `provider/id`), from `GET /api/config/models`. "Other…" types any id; a stored value that isn't
+  listed is shown, marked "not in the list". Writes are validated by type only, as before.
 - **Where values come from**: `GET /api/config?profile=` drives a read-only "effective value" column
   with its source; `locked` values (fleet wins) are shown read-only with "set by your Sysop".
 - **Keys**: personal provider keys, write-only: shows `…last4` and the date, Set/Replace/Remove.
@@ -844,6 +849,11 @@ changes nothing, so an unconfigured Kernal starts as before.
   "Only this machine" → `setLocalOverride`.
 - Signed in, keys typed into `/admin` go to `PUT /api/me/provider-keys/:provider` (link), not `.env`.
 - `locked` values are read-only with "set by your Sysop".
+- **Model fields (#458)**: the Settings page's `model.default` and `compaction.summaryModel` are
+  searchable dropdowns like the web's (§7), their options from `connect`'s discovered models (the
+  router's, the curated OpenRouter list, the local server's) over the `kernal:connect` bus (op
+  `state`, as the Model page), in `GET /settings`'s `modelOptions`. "Other…" and "not in the list"
+  as on the web; a provider that isn't connected has no list.
 - Signed out: exactly today's behaviour (.env and settings.json).
 - **Default model (CA-11, #437)**: signed in, the Model page and `/connect` (TUI: `ctx.ui.select`)
   offer the same two targets for a newly chosen default, through the same versioned PUT

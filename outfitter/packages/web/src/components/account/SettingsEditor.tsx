@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ConfigResponse, SettingDecl, SettingsDocView, SettingValue } from "../../api/account.ts";
+import { accountApi, type ConfigResponse, type ModelOptions, type SettingDecl, type SettingsDocView, type SettingValue } from "../../api/account.ts";
 import {
   accountErrorText,
   changedValues,
@@ -10,7 +10,9 @@ import {
   LOCKED_TEXT,
   sourceLabel,
 } from "../../lib/account.ts";
+import { choicesFor, isModelSetting, PROVIDER_KEY, PROVIDER_LABELS } from "../../lib/model-choices.ts";
 import { SyntaxError } from "../SyntaxError.tsx";
+import { ModelField } from "./ModelField.tsx";
 import { Working } from "../Working.tsx";
 
 interface Props {
@@ -24,19 +26,37 @@ interface Props {
   onSave: (values: Record<string, SettingValue | null>, version: number) => Promise<SettingsDocView>;
   /** Fetch the document (and its effective values) again, after a 409 or on request. */
   onReload: () => void;
+  /** The profile these values belong to, for the model dropdowns' curated OpenRouter list (#458). */
+  profile?: string;
 }
 
 /** #389 CA-7 (§7): one level's own values (user or a profile) as a form generated from the schema,
  * beside the effective value and where it comes from. A field left empty inherits. A save sends
  * only the changed keys with If-Match; a 409 says "changed elsewhere" and never overwrites. Values
  * a higher level locks are read-only, "set by your Sysop". */
-export function SettingsEditor({ label, decls, doc, effective, onSave, onReload }: Props) {
+export function SettingsEditor({ label, decls, doc, effective, onSave, onReload, profile }: Props) {
   const [drafts, setDrafts] = useState<Record<string, string>>(() => draftsFor(decls, doc));
   const [saving, setSaving] = useState(false);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const [models, setModels] = useState<ModelOptions | null>(null);
+
+  // #458: the model dropdowns' options, when this level has a model-valued key. A failure leaves
+  // them as free-text boxes.
+  const wantsModels = decls.some((d) => isModelSetting(d.key));
+  useEffect(() => {
+    if (!wantsModels) return;
+    let cancelled = false;
+    accountApi
+      .modelOptions(profile)
+      .then((m) => !cancelled && setModels(m))
+      .catch(() => !cancelled && setModels(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [wantsModels, profile]);
 
   // The stored values the drafts were last based on, to tell a person's edits from them.
   const declKeys = decls.map((d) => d.key).join(",");
@@ -68,6 +88,8 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
   }
 
   const { values, problems } = changedValues(decls, doc.values, drafts);
+  // The provider model.default's list follows: this form's choice, else the one in effect.
+  const provider = drafts[PROVIDER_KEY] || String(effective?.values[PROVIDER_KEY]?.value ?? decls.find((d) => d.key === PROVIDER_KEY)?.default ?? "litellm");
   const dirty = Object.keys(values).length > 0;
 
   async function save(e: React.FormEvent) {
@@ -134,12 +156,23 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload 
                     <div className="session-meta">{decl.description}</div>
                   </td>
                   <td data-label="Set here">
-                    <ValueField
-                      decl={decl}
-                      value={drafts[decl.key] ?? ""}
-                      disabled={locked || saving}
-                      onChange={(v) => setDraft(decl.key, v)}
-                    />
+                    {isModelSetting(decl.key) ? (
+                      <ModelField
+                        settingKey={decl.key}
+                        value={drafts[decl.key] ?? ""}
+                        disabled={locked || saving}
+                        onChange={(v) => setDraft(decl.key, v)}
+                        set={choicesFor(decl.key, provider, models)}
+                        placeholder={placeholderFor(decl)}
+                      />
+                    ) : (
+                      <ValueField
+                        decl={decl}
+                        value={drafts[decl.key] ?? ""}
+                        disabled={locked || saving}
+                        onChange={(v) => setDraft(decl.key, v)}
+                      />
+                    )}
                     {locked && <div className="session-meta">{LOCKED_TEXT}</div>}
                     {problem && <SyntaxError>{problem}</SyntaxError>}
                   </td>
@@ -179,6 +212,10 @@ function draftsFor(decls: SettingDecl[], doc: SettingsDocView): Record<string, s
   return Object.fromEntries(decls.map((d) => [d.key, draftFromValue(doc.values[d.key])]));
 }
 
+function placeholderFor(decl: SettingDecl): string {
+  return decl.default !== undefined ? `default: ${formatValue(decl.default)}` : "not set";
+}
+
 /** The control for one key's type; "" is always "not set here" (inherit). */
 function ValueField({
   decl,
@@ -207,7 +244,7 @@ function ValueField({
         <option value="">not set</option>
         {(decl.values ?? []).map((v) => (
           <option key={v} value={v}>
-            {v}
+            {decl.key === PROVIDER_KEY && PROVIDER_LABELS[v] ? `${v}: ${PROVIDER_LABELS[v]}` : v}
           </option>
         ))}
       </select>
@@ -221,7 +258,7 @@ function ValueField({
       step={decl.type === "number" ? "any" : undefined}
       value={value}
       disabled={disabled}
-      placeholder={decl.default !== undefined ? `default: ${formatValue(decl.default)}` : "not set"}
+      placeholder={placeholderFor(decl)}
       onChange={(e) => onChange(e.target.value)}
       aria-label={aria}
     />

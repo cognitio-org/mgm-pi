@@ -70,6 +70,12 @@ export interface UserSpend {
   fetchedAt: string;
 }
 
+/** GET /api/config/models (#458): the options behind the model dropdowns, per provider. Model ids
+ * are as model.default holds them for that provider (no provider prefix). */
+export interface ModelOptions {
+  providers: Array<{ id: string; label: string; models: string[]; note?: string }>;
+}
+
 /** A write's 409: the document changed since it was read. */
 export interface StaleWrite {
   error: "stale_version";
@@ -84,6 +90,9 @@ export const accountApi = {
   },
   config(profile?: string): Promise<ConfigResponse> {
     return request(`/api/config${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`);
+  },
+  modelOptions(profile?: string): Promise<ModelOptions> {
+    return request(`/api/config/models${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`);
   },
   userDoc(): Promise<SettingsDocView> {
     return request("/api/config/user");

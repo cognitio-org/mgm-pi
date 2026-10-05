@@ -1,0 +1,29 @@
+outfitter/docs/protocol.md
+  s_ca69cd935abc78::t_ad1bb79e4ab32d 557
+outfitter/packages/api/src/session-model.ts
+  s_ca69cd935abc78::t_38530f2fa01de9 14-16,18-19,21,52-57,59,65,68,70
+outfitter/packages/api/test/session-model.test.ts
+  s_ca69cd935abc78::t_38530f2fa01de9 24,131-150
+  s_ca69cd935abc78::t_061bb6e966176f 151-154
+outfitter/packages/web/src/components/SwitchModelDialog.tsx
+  s_ca69cd935abc78::t_38530f2fa01de9 24,26,34
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_ca69cd935abc78::t_38530f2fa01de9 824-826,828
+  s_ca69cd935abc78::t_05d8fba0ee8f3b 827
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "dbeab1e4fa6597cd24bf86d06ec7777af45ea188",
+  "prompts": {},
+  "sessions": {
+    "s_ca69cd935abc78": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "deb1531a-a91a-4670-8a11-4170f73a66c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+outfitter/image/render-mcp.sh
+  s_c67f9150e24079::t_0ffa0be0cb36f6 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "8759a9c8ca0a11ce0fa3cdfcc731217c0f38ea55",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

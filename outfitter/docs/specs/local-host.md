@@ -50,7 +50,7 @@ Shipped building blocks this builds on (do not rewrite them):
 | Tunnel provider, guard proxy, `interimCredentialsFromEnv`, `parseTunnelChoice` | `kernal/.pi/extensions/_shared/tunnel/` (#457) | C |
 | ngrok API client, fake | `api/src/ngrok-api.ts`, `api/test/fake-ngrok.ts` | A |
 | Drive-preview pattern (credential ACL + api-written cloud endpoint, metadata-stamped sweep) | `api/src/previews.ts` | A |
-| Scoped router admin key `LITELLM_ADMIN_KEY` (`outfitter-svc`), `allowed_routes` | `deploy/litellm-admin.sh`, `deploy/test/litellm-admin.test.sh`, `api/src/central/litellm-keys.ts` | B |
+| Scoped router keys minted by `deploy/litellm-admin.sh` (`outfitter-svc`, `allowed_routes`); B gets its own key, `LOCAL_HOST_ROUTER_KEY` (§3.5), not `LITELLM_ADMIN_KEY` | `deploy/litellm-admin.sh`, `deploy/test/litellm-admin.test.sh`, `api/src/central/litellm-keys.ts` | B |
 | LaptopProbe, E2.8 preflight | `api/src/laptop.ts`, `api/src/agentlink.ts` (`resolveRunModel`) | A |
 
 ## 1. Host registry and heartbeat (task A, #382)
@@ -124,12 +124,14 @@ but gets no router entry, and the answer's `problems` says `model id not routabl
 
 1. `userId = userIdFor(identity.email)`, `id = localHostId(userId, hostId)` (`naming.ts`).
 2. Load the record. **New** record: `routerPrefix` = the first of
-   `routerPrefixCandidates(email, hostName, id)` that `findByRouterPrefix` doesn't return for another
-   id (upsert throws `LocalHostPrefixTakenError` on a race: try the next); `accessGroup: "everyone"`;
-   `createdAt`. **Existing**: `routerPrefix`, `accessGroup`, `managed`, `createdAt` are kept;
-   `deviceId` becomes the caller's device (a re-login on the same machine takes the host over), and
-   `revokedAt` is cleared (a revoked device's tokens no longer work, so any accepted heartbeat
-   comes from a newer login).
+   `routerPrefixCandidates(email, hostName, id)` that is free under §3.1's user-aware rule (upsert
+   throws `LocalHostPrefixTakenError` on a race: try the next); `accessGroup: "everyone"`;
+   `createdAt`. **Existing** (a tombstone from §1.8 included): `routerPrefix`, `accessGroup`,
+   `managed`, `lastBearerVersion`, `createdAt` are kept; `deviceId` becomes the caller's device (a
+   re-login on the same machine takes the host over), and `revokedAt` and `deletedAt` are cleared (a
+   revoked device's tokens no longer work, so any accepted heartbeat comes from a newer login). A
+   clears a field by unsetting it, never by storing `undefined`/`null` (the Mongo client keeps
+   `undefined` as `null`, and `listSharing` filters on the field being absent).
 3. Write `hostName`, `kernalVersion`, `platform`, `shareModels`, `discoveryKey`, `servers`, `models`,
    `tunnel`, `updatedAt`, `lastSeenAt` = now.
 4. If `routerFingerprint(previous) !== routerFingerprint(next)` (or there was no previous record):
@@ -160,7 +162,8 @@ but gets no router entry, and the answer's `problems` says `model id not routabl
   `sharedModels(next)`, when status is `online` and `tunnel.managed`; else `[]`. It is what task B
   will register, computed here from the same functions, not read back from the router.
 - `credentials` (`CredentialsHint`), first match wins:
-  1. `none`: `shareModels` false, or the record is revoked.
+  1. `none`: `shareModels` false. (A revoked record never gets here: the revoked device's tokens
+     are refused in §1.1, and a newer login's heartbeat clears `revokedAt` in step 2.)
   2. `unavailable`: no `ctx.localHostNgrok` or no `config.localHostDomain`.
   3. `fetch`: no `managed`, or no `managed.endpointId`, or `tunnel.managed` with
      `tunnel.credentialId !== managed.credentialId`.
@@ -176,6 +179,8 @@ but gets no router entry, and the answer's `problems` says `model id not routabl
   While it is false: none after the one that reported the change.
 - No "busy" or per-request state (owner decision 2026-10-04): each model's `loaded` flag travels at
   this rate, and loading/unloading/downloading a model changes `discoveryKey`, which sends one.
+- Each heartbeat request waits up to **30 s** (the api may wait `LISTENER_TIMEOUT_MS`, 20 s, for
+  its listeners before answering); a timeout counts as a network failure below.
 - At start: one with `reason: "start"`. On SIGTERM/SIGINT and `kernal local disable`: one with
   `reason: "stop"` and `tunnel.state: "stopped"` (3 s timeout, best effort), so the router entries
   go at once instead of after the stale window.
@@ -202,12 +207,16 @@ but gets no router entry, and the answer's `problems` says `model id not routabl
 | `servers`, `models` | arrays | `HeartbeatServer[]`, `HeartbeatModel[]` |
 | `tunnel` | `HeartbeatTunnel` | as reported |
 | `managed?` | `LocalHostManaged` | `credentialId`, `credentialIssuedAt`, `endpointId?`, `publicUrl?`, `bearerSecret`, `bearerVersion`, `bearerHash` (§2) |
+| `lastBearerVersion?` | number | the highest `bearerVersion` ever minted for this record; revoke, the idle sweep and DELETE never clear it (§2.3) |
 | `createdAt`, `updatedAt`, `lastSeenAt` | ISO | |
 | `revokedAt?` | ISO | device revoked (§2.5) |
+| `deletedAt?` | ISO | tombstone of a DELETE (§1.8): holds the prefix for the same user |
 
 Indexes (`ensureLocalHostIndexes`): `{ routerPrefix: 1 }` unique; `{ userId: 1, lastSeenAt: -1 }`;
 `{ deviceId: 1 }`; `{ shareModels: 1, lastSeenAt: -1 }`. Records are small (≤ 256 models); no TTL:
-a host stays listed (as stale) until its owner deletes it.
+a host stays in its owner's listing (as stale) until they delete it, and others see it for
+`OTHERS_STALE_LISTED_SECONDS` (§1.7). A tombstone (§1.8) is never removed, so a prefix never passes
+to another person.
 
 Status, `hostStatus(host, now)` (spec-owned), first match wins:
 
@@ -232,8 +241,9 @@ narrows who may see and use a host; it then maps the field onto a LiteLLM model 
 
 **200** `LocalHostListResponse` `{ "hosts": LocalHostView[] }` (contract.ts):
 
-- The caller's own hosts, any status (revoked included), newest `lastSeenAt` first; then everyone
-  else's hosts with `shareModels` true, not revoked, status `online` or `offline` or `stale`
+- The caller's own hosts, any status (revoked included, tombstones excluded), newest `lastSeenAt`
+  first; then everyone else's hosts with `shareModels` true, not revoked, status `online` or
+  `offline`, or `stale` while `now - lastSeenAt < OTHERS_STALE_LISTED_SECONDS` (7 days)
   (`listSharing()`), newest first. `accessGroup` filtering is a later issue (every value is
   `everyone`).
 - `LocalHostView`: `id`, `hostName`, `owner { email, mine }`, `status`, `shareModels`,
@@ -248,15 +258,19 @@ narrows who may see and use a host; it then maps the field onto a LiteLLM model 
 
 ### 1.8 `DELETE /api/local-hosts/:id`, stop sharing, and LaptopProbe
 
-- `DELETE /api/local-hosts/:id` (owner or operator; anyone else **404**): delete the cloud endpoint
-  and the ngrok credential (§2.5, failures retried by the sweep through metadata), disable the
-  bearer secret's versions (`secretAdmin.disableAllEnabled`), delete the record, then
-  `changed({ reason: "deleted", host: <the record before> })` so task B removes the router
-  entries. **204**.
-- If the laptop still runs with sharing on, its next heartbeat creates the record again (a new one,
-  same `id`, a new prefix only if the old one was taken meanwhile). "Stop sharing" for good is the
-  setting: #385's UI turns `localHost.shareModels` off (device or user level, central settings) and
-  then calls DELETE. On the laptop, `kernal local disable` stops the service (§4.2).
+- `DELETE /api/local-hosts/:id` (owner or operator; anyone else **404**; a tombstone **404**):
+  delete the cloud endpoint and the ngrok credential (§2.5, failures retried by the sweep through
+  metadata), disable the bearer secret's versions (`secretAdmin.disableAllEnabled`), then turn the
+  record into a **tombstone**: set `deletedAt`, `shareModels: false`, `servers: []`, `models: []`,
+  `tunnel.state: "off"`, unset `managed` (keeping `routerPrefix`, `userId`, `lastBearerVersion`),
+  then `changed({ reason: "deleted", host: <the record before> })` so task B removes the router
+  entries. **204**. The tombstone keeps the prefix for its user (§3.1): Tapes and Drives that name
+  `local/<prefix>/<model>` can never reach another person's laptop. Tombstones are not listed
+  (§1.7), have no router entries (not sharing) and are not counted by `listSharing()`.
+- If the laptop still runs with sharing on, its next heartbeat revives the tombstone (same `id`,
+  same prefix, step 2 of §1.3). "Stop sharing" for good is the setting: #385's UI turns
+  `localHost.shareModels` off (device or user level, central settings) and then calls DELETE. On the
+  laptop, `kernal local disable` stops the service (§4.2).
 - **LaptopProbe** (A, `laptop.ts`): `LaptopProbeConfig.localHosts` is wired in this PR. A adds
   `isOnlineFor(model: string): Promise<boolean>`: for a name that `parseRouterModelName` accepts,
   `findByRouterPrefix` → `hostStatus === "online"` and the model is in `sharedModels`; cached
@@ -270,8 +284,8 @@ narrows who may see and use a host; it then maps the field onto a LiteLLM model 
 ### 2.1 Configuration
 
 - `NGROK_API_KEY` (existing, Secret Manager `outfitter-ngrok-api-key`, mounted on both roles).
-- `LOCAL_HOST_DOMAIN` → `config.localHostDomain` (in this PR), default `PREVIEW_DOMAIN`
-  (`kernal.run`). Cloud endpoints are `https://lh-<26 base32>.<domain>`. Sharing the preview domain
+- `LOCAL_HOST_DOMAIN` → `config.localHostDomain` (in this PR); unset or empty falls back to
+  `PREVIEW_DOMAIN` (`kernal.run` in the deployed services); both unset → provisioning off. Cloud endpoints are `https://lh-<26 base32>.<domain>`. Sharing the preview domain
   is safe: the preview sweep only touches endpoints whose metadata says `purpose:
   "outfitter-preview"`, and this feature's say `purpose: "outfitter-local-host"`.
 - `ctx.localHostNgrok` (in this PR): `opts.ngrok ?? createNgrokApi(NGROK_API_KEY)` when the key is
@@ -303,8 +317,13 @@ What the api does, in order (a failure at any step deletes what the step made an
 `{ "error": "ngrok_failed" }`; no secret in the message):
 
 1. **Bearer**: if the record has no `managed`, mint one: `addVersion(bearerSecretName(id),
-   bearer)`, `bearerVersion: 1`, `bearerHash`. Existing: read it back with `accessLatest` (it is
-   stable across credential refetches, so the router entries don't churn).
+   bearer)`, `bearerVersion = (lastBearerVersion ?? 0) + 1` (also stored as `lastBearerVersion`),
+   `bearerHash`. `bearerVersion` is **monotonic per record**: a revoke or DELETE unsets `managed`
+   but never `lastBearerVersion`, so a re-mint under the same secret name always gets a higher
+   number than any bearer before it. Existing `managed`: read it back with `accessLatest` (it is
+   stable across credential refetches, so the router entries don't churn). Consumers that cache the
+   bearer (B) key the cache on `bearerHash` and check `sha256(value) === bearerHash`, never on the
+   version alone.
 2. **Credential**: always mint a new one, `createCredential({ description: "outfitter local host
    <id>", metadata, acl: credentialAcl(id) })` (ngrok shows a token once only); then delete the
    previous `managed.credentialId` (idempotent). An agent still running on the old token is cut off
@@ -367,9 +386,9 @@ the endpoint (a new `publicUrl`).
 - **Device revoked** (`deviceLifecycle.register({ name: "local hosts", onRevoked })`, A, one line
   in server.ts): for each record `listForDevice(device.id)`: delete its credential and endpoint,
   `disableAllEnabled(bearerSecret)`, set `revokedAt`, unset `managed`, then `changed({ reason:
-  "device-revoked", ... })`. A later heartbeat from another device of the same user on that machine
-  clears `revokedAt` (§1.3) and gets `credentials: "fetch"`, which mints a new bearer
-  (`bearerVersion` + 1).
+  "device-revoked", ... })`; `lastBearerVersion` stays. A later heartbeat from another device of the
+  same user on that machine clears `revokedAt` (§1.3) and gets `credentials: "fetch"`, which mints a
+  new bearer with `bearerVersion = lastBearerVersion + 1` (§2.3 step 1), never 1 again.
 - **Host deleted**: §1.8.
 - **Sharing off**: §1.3 step 5 (endpoint deleted; credential kept, harmless: it can only bind an
   internal endpoint nothing forwards to).
@@ -386,7 +405,8 @@ the endpoint (a new `publicUrl`).
 ### 2.6 Where the bearer lives
 
 The bearer is in exactly three places: Secret Manager `outfitter-localhost-<hex>` (the api's copy,
-read by A when it reissues credentials and by B when it writes a router entry), the cloud endpoint's
+read by A when it reissues credentials and by B when it writes a router entry; B caches it in
+memory keyed on `bearerHash`), the cloud endpoint's
 traffic policy (at ngrok), and the router's deployment `litellm_params.api_key` (LiteLLM stores it
 encrypted with its salt key). The laptop holds it in memory for its own guard proxy. Mongo has only
 `bearerHash`. Nothing logs it; `problems` and errors never include it.
@@ -400,8 +420,14 @@ encrypted with its salt key). The laptop holds it in memory for its own guard pr
 - `routerPrefix` = `<userSlug>-<hostSlug>`, fixed per record at creation (§1.3): `userSlug` is the
   email's local part before `+`, lowercased, runs of non-`[a-z0-9]` to `-`, ≤ 16 characters
   (`user` if empty); `hostSlug` the host name without `.local`/`.lan`/`.home`/`.localdomain`, same
-  rule, ≤ 20 (`host` if empty). Collision with another record: append 4, then 8, hex characters of
-  the record id. ≤ 46 characters, `[a-z0-9-]`.
+  rule, ≤ 20 (`host` if empty). ≤ 46 characters, `[a-z0-9-]`.
+- **Collision rule (user-aware).** A candidate is free when `findByRouterPrefix` returns nothing, or
+  returns a record of the **same `userId`** that is a tombstone (`deletedAt`); A then removes that
+  tombstone in the same step (`delete`, before the upsert) so the prefix moves to the user's new
+  record. A record of another user, live or tombstone, or a live record of the same user, takes the
+  next candidate: append 4, then 8, hex characters of the record id. So a prefix, once held, only
+  ever names the same person's machines; `<user>-<host>` being ambiguous (`mgm-matthews`+`macbook`
+  vs `mgm`+`matthews-macbook`) is first-come at creation only.
 - `modelId` verbatim when `routableModelId` (1-160 of `[A-Za-z0-9._:@+/-]`, no empty, `.` or `..`
   segment); otherwise the model gets no entry.
 - Kernal users see them as `litellm/local/<prefix>/<id>` (the router provider's prefix);
@@ -442,17 +468,24 @@ hosts) has none. Every downloaded model is registered (owner decision), loaded o
       "hostId": "lh_8d0b7c6a5e4f3a2b1c0d9e8f",
       "ownerUserId": "u_...",
       "modelId": "qwen/qwen3-coder-30b",
-      "fingerprint": "<routerFingerprint(host)>"
+      "fingerprint": "<routerFingerprint(host)>",
+      "payloadVersion": 1
     }
   }
 }
 ```
 
 - `model_info.id` = `routerDeploymentId(host.id, modelId)`: deterministic, so a retry or a second
-  instance finds the entry instead of adding another.
+  instance finds the entry instead of adding another. This needs the router to keep a
+  caller-supplied `model_info.id` (§7 owner check).
+- `metadata.payloadVersion`: a constant in B's code, bumped whenever B changes the payload's shape
+  (for example the thinking switch), so existing entries are updated although the host's fingerprint
+  didn't change.
 - `model`: always `openai/<modelId>` (every supported server speaks OpenAI's API at `/v1`).
-- `api_base`: `managed.publicUrl + "/v1"`. `api_key`: `secretAdmin.accessLatest(bearerSecret)`
-  (B may cache it per `bearerVersion` in memory).
+- `api_base`: `managed.publicUrl + "/v1"`. `api_key`: `secretAdmin.accessLatest(bearerSecret)`.
+  B may cache it in memory keyed on `managed.bearerHash`, and uses a value only when
+  `sha256(value) === bearerHash` (a mismatch re-reads once; still a mismatch, it fails that host and
+  leaves its entries alone). Never key it on `bearerVersion` alone.
 - `mode`: `"embedding"` when `type === "embeddings"`, else `"chat"`.
 - `max_input_tokens`: `contextLength` when known (omit otherwise). `supports_vision`: `vision ===
   true`; `supports_function_calling`: `toolUse === true`.
@@ -483,23 +516,47 @@ hosts) has none. Every downloaded model is registered (owner decision), loaded o
 - Duplicates (two instances adding the same id at once): the sweep keeps one per `model_info.id` and
   deletes the rest. B serialises per host within an instance (a promise chain keyed by host id).
 - Changes must not interrupt requests already running: an update keeps the deployment id; a delete
-  only happens when the host is no longer online (its requests fail anyway).
-- `LITELLM_ADMIN_KEY` unset (`ctx.litellmKeys` undefined): B's listener is not registered, and the
-  heartbeat's `routerModels` still says what would be registered.
+  happens only for a deployment whose model or host is gone (the model was deleted or moved off the
+  tunnelled server, or the host is no longer online), whose requests fail anyway.
+- If the router does not keep the caller's `model_info.id` (an entry B added comes back from
+  `/model/info` under another id), B must not delete and re-add in a loop: it logs an error naming
+  the problem once per instance, leaves such entries alone and counts them `failed`.
+- The sweep has an overall deadline (B's choice, under the tick's request timeout) and stops at the
+  first call that doesn't answer; what is left waits for the next tick.
+- B's listener runs only where `LOCAL_HOST_ROUTER_KEY` is set **and** the role is not `web` (§3.5).
+  Elsewhere it is not registered, and the heartbeat's `routerModels` still says what would be
+  registered.
 
 ### 3.5 Admin-key routes
 
-B calls exactly `/model/new`, `/model/update`, `/model/delete` (POST) and `/model/info` (GET, already
-allowed). B:
+B calls exactly `/model/new`, `/model/update`, `/model/delete` (POST) and `/model/info` (GET).
 
-- adds `"/model/new", "/model/update", "/model/delete"` to `ALLOWED_ROUTES` in
-  `deploy/litellm-admin.sh` (and drops the "#384 adds its routes" sentence);
-- adds its module (`api/src/local-hosts/router-sync.ts`) to the file list `called=` greps in
-  `deploy/test/litellm-admin.test.sh`, so the test keeps enforcing allowed = called. B's calls must
-  match the test's pattern: a private `call`/`ok` method invoked as
-  `this.call("POST", "/model/new", ...)` (as `litellm-keys.ts` does);
-- owner step: `ROTATE=1 ./outfitter/deploy/litellm-admin.sh` after merge (a key's routes are fixed
-  at mint).
+**Owner decision (2026-10-05): a separate key.** These routes do **not** go on the existing
+`outfitter-litellm-admin` key (`LITELLM_ADMIN_KEY`, both roles, mints keys), nor on
+`outfitter-litellm-key` (the shared router key). B uses a dedicated key:
+
+- Secret Manager `outfitter-litellm-admin-key` in `outfitter-509211`, env `LOCAL_HOST_ROUTER_KEY`
+  → `config.localHostRouterKey` (in this PR). Its LiteLLM key belongs to `outfitter-svc` (a
+  `proxy_admin`, which `/model/*` needs) under its own alias prefix, with `allowed_routes` exactly
+  `/model/info`, `/model/new`, `/model/update`, `/model/delete`: it can't mint or delete keys.
+- Mounted only on the **link** role (`outfitter-link`), the narrowest role that runs router sync:
+  heartbeats (§1.1) and the tick (`/api/hooks/tick`, Cloud Scheduler) both arrive there. Never on
+  web (`outfitter-api`), never on a Drive. Both roles run as the same service account, which may
+  read every `outfitter-*` secret, so the mount, not IAM, is what keeps it off web; a separate
+  service account for link is a follow-up if that matters.
+- B registers its listener only when `config.localHostRouterKey` is set and `config.role !== "web"`.
+  A DELETE or a device revoke handled on web therefore has no router listener; its entries go at the
+  next tick's sweep on link (≤ 5 minutes; those hosts' requests fail at ngrok meanwhile).
+- `deploy/litellm-admin.sh` mints it with `KEY=local-hosts` (its own `ALLOWED_ROUTES`, secret, alias
+  and `purpose` metadata); `deploy/service.sh` mounts it on link; `deploy/test/litellm-admin.test.sh`
+  checks that this key's routes equal the routes `router-sync.ts` calls, and that the main key's
+  routes equal the rest of the api's (no `/model/new|update|delete` on it). B's calls must match the
+  test's pattern: a private `call`/`ok` method invoked as `this.call("POST", "/model/new", ...)`.
+- The key itself can still rewrite **any** deployment (`allowed_routes` is route-level): the "only
+  entries carrying our metadata" rule lives in B's code. **Follow-up (#466):** a guard in our router fork
+  so this key's `/model/new|update|delete` may only touch `model_name` `local/*` entries whose
+  `model_info.metadata.outfitter == "local-host"`.
+- Owner steps in §7.
 
 ### 3.6 Who may use local models
 
@@ -664,8 +721,10 @@ every 15 s (POLL):
   want = shareModels && server && hint !== "none"
   if want:
     creds = managed (signed in, last hint not "unavailable"):
-              cached answer, refetched when hint is "fetch", when expiresAt is < 24 h away, or after
-              the tunnel failed with kind "credentials"
+              cached answer; fetched when none is cached (always after a service restart: the
+              answer lives in memory only, while the api may still answer "current"), when hint is
+              "fetch", when expiresAt is < 24 h away, or after the tunnel failed with kind
+              "credentials"
             else interimCredentialsFromEnv(env)                   # tunnel only, no router entries
     if no creds: state.tunnel = { state: "off", reason: "no tunnel credentials" }
     elif no tunnel, or its server/credentials changed, or it is down: (re)open it with
@@ -687,8 +746,12 @@ on SIGTERM/SIGINT: stop heartbeat ("stop", 3 s), stop tunnel, release lock, exit
   at once on the same reserved domain (ngrok ERR_NGROK_334 shows as the tunnel's reason). #387
   retires tunnel.sh.
 - The tunnel choice is `KERNAL_LOCAL_TUNNEL` (`auto` | `ngrok` | `cloudflare`, through
-  `parseTunnelChoice`) until #386 adds a central `localHost.tunnel` setting; Outfitter provisions
-  ngrok only in this wave.
+  `parseTunnelChoice`) until #386 adds a central `localHost.tunnel` setting. Outfitter provisions
+  ngrok only in this wave, so **managed credentials always mean ngrok**: when the loop uses managed
+  credentials it opens ngrok whatever `KERNAL_LOCAL_TUNNEL` says (and logs once that the choice was
+  overridden). `cloudflare` is interim and local-only in wave 2: it runs only on `.env` credentials,
+  reports `tunnel.managed: false`, and so gets no router entries. Managed Cloudflare tunnels are
+  #386.
 
 ### 4.7 `kernal local status`
 
@@ -715,13 +778,16 @@ read). The service never needs the router master key.
 - Built in `server.ts` and passed to routes as `ctx.localHostEvents` (in this PR); the tick
   (`routes/hooks.ts`) already calls `ctx.localHostEvents.sweep()` and reports `localHosts` in its
   answer (in this PR).
-- A listener's `onChange` gets `LISTENER_TIMEOUT_MS` (10 s) before `changed()` reports
-  `"<name>: still updating"` and returns; the work continues, and its later failure is logged.
+- A listener's `onChange` gets `LISTENER_TIMEOUT_MS` (20 s) before `changed()` reports
+  `"<name>: still updating"` and returns; the work continues, and its later failure is logged. A
+  listener caps each upstream call in `onChange` well under that (B: about 4 s per router call), so
+  a slow upstream shows as its own error.
 - Listeners register in `server.ts` at the marked lines, one line per task:
   - A: `localHostEvents.register(localHostTunnelListener({ store, ngrok: localHostNgrok, config,
     secretAdmin, log }))` and `deviceLifecycle.register(localHostDeviceHook({ ... }))`;
-  - B: `if (litellmKeys) localHostEvents.register(localHostRouterListener({ store, config,
-    secretAdmin, fetch, log }))`.
+  - B: `if (config.localHostRouterKey && config.role !== "web")
+    localHostEvents.register(localHostRouterListener({ store, config, secretAdmin, fetch, log }))`
+    (§3.5).
 - A calls `changed()`; B never calls it. B never imports A's modules (only `store/local-hosts.ts`,
   `local-hosts/naming.ts`, `local-hosts/contract.ts`, `local-hosts/events.ts`); A never imports
   B's.
@@ -746,13 +812,21 @@ read). The service never needs the router master key.
 
 ## 7. Owner steps (never performed by an agent)
 
-1. After B merges: `ROTATE=1 ./outfitter/deploy/litellm-admin.sh` (adds the `/model/*` routes to
-   the scoped key), then a release so the services mount the new secret version.
-2. Optional: set `LOCAL_HOST_DOMAIN` in `deploy/service.sh` if local hosts should not share
+1. Before B's entries can work, check the deployed router (our fork) and record the answers on
+   #384: (a) `STORE_MODEL_IN_DB=True` is set (`/model/new|update|delete` need DB-backed models);
+   (b) a `/model/new` with a caller-supplied `model_info.id` keeps it (one test add, then
+   `/model/info`, then `/model/delete`); if it doesn't, B's ids never match and B stops with a
+   logged error instead of looping (§3.4); (c) an access-group name in a key's `models` resolves to
+   that group's deployments (§3.6).
+2. After B merges: `KEY=local-hosts ./outfitter/deploy/litellm-admin.sh` (creates
+   `outfitter-litellm-admin-key` with the `/model/*`-only key; `DRY_RUN=1` first to see the plan),
+   then a release (or `./outfitter/deploy/link.sh`) so the link role mounts it. The main key needs
+   no rotation for this feature.
+3. Optional: set `LOCAL_HOST_DOMAIN` in `deploy/service.sh` if local hosts should not share
    `kernal.run` with previews (a new wildcard domain needs reserving in ngrok first). With nothing
    set, they use `PREVIEW_DOMAIN`.
-3. Optional: a fleet `router.keys.models` value, if any, is re-minted onto keys over a week (§3.6).
-4. Release a Kernal version with C, then on each sharing machine: `kernal login`, turn on
+4. Optional: a fleet `router.keys.models` value, if any, is re-minted onto keys over a week (§3.6).
+5. Release a Kernal version with C, then on each sharing machine: `kernal login`, turn on
    `localHost.shareModels`, `kernal local enable`; stop `tunnel.sh` there (#387 removes it).
 
 ## 8. Decisions (made for this contract; the owner may revisit)
@@ -776,6 +850,22 @@ read). The service never needs the router master key.
    the loop's imports are limited to built-ins and relative files so both work.
 10. **Heartbeats only while sharing** (plus one on each change), so a machine with the service
     enabled and sharing off sends nothing periodic.
+11. **A separate router key for model writes** (owner decision 2026-10-05, §3.5):
+    `outfitter-litellm-admin-key`, `/model/*` routes only, mounted on link only. Follow-up #466: a
+    router fork guard limiting its writes to `local/*` entries with our metadata.
+12. **Prefixes never pass between people** (§3.1, §1.8): DELETE leaves a tombstone, and only the
+    same user can take a tombstoned prefix.
+13. **`bearerVersion` is monotonic per record** (`lastBearerVersion`, §2.3); caches key on
+    `bearerHash`.
+14. **The sharer's email is visible to every router key holder**: each entry's `description` (and
+    the listing's `owner.email`) names the host and its owner's email, which `/model/info` and
+    `/v1/models` metadata show to anyone with a router key. It fits "everyone signed in shares";
+    the owner may switch the description to the user slug instead (B's one-line change).
+15. **No new laptop-held router keys.** The laptop holds an ngrok authtoken (bind-scoped to its one
+    internal endpoint) and its bearer, both in memory only (§2.3); neither can call the router or
+    the api. The owner decision "no new laptop-held keys" meant router keys, and none is added.
+16. **Managed tunnels are ngrok in wave 2** (§4.6); `cloudflare` stays interim/local-only until
+    #386.
 
 ## 9. File ownership
 
@@ -788,7 +878,8 @@ Rules (as central-auth.md §13):
   `api/test/local-hosts-contract.test.ts` (a task whose change breaks one of its assertions updates
   that assertion and says so under "Contract changes"), and the scaffold lines this PR added to
   `store/types.ts` (the `localHosts` field), `store/memory.ts`, `store/mongo.ts`, `routes/index.ts`,
-  `routes/context.ts`, `routes/hooks.ts` (the sweep call), `config.ts` (`localHostDomain`),
+  `routes/context.ts`, `routes/hooks.ts` (the sweep call), `config.ts` (`localHostDomain`,
+  `localHostRouterKey`),
   `server.ts` (events, ngrok client, LaptopProbe `localHosts`, the ctx fields, `App.localHostEvents`)
   and `test/stop.test.ts`.
 - **Contract types inside a task's own files** (`LocalHost`, `LocalHostsCollection`, `hostStatus`,
@@ -800,7 +891,7 @@ Rules (as central-auth.md §13):
 | Task | Owns (create/modify) | Additive edits allowed in shared files |
 |---|---|---|
 | **A** #382 + #383 api registry and credentials | `api/src/store/local-hosts.ts`, `api/src/routes/local-hosts.ts` (stub), `api/src/local-hosts/registry.ts` (new: heartbeat, listing, delete, device hook), `api/src/local-hosts/tunnel-credentials.ts` (new: minting, policies, sweep listener), `api/src/laptop.ts`, `api/test/local-hosts-registry.test.ts`, `api/test/local-hosts-credentials.test.ts`, `api/test/local-hosts-routes.test.ts`, `api/test/laptop.test.ts` (as needed) | `api/src/server.ts` (the two "Task A" lines at the marker); `api/src/agentlink.ts` (the one preflight line, §1.8); `api/src/ngrok-api.ts` + `api/test/fake-ngrok.ts` (`updateCloudEndpoint`, optional); `docs/protocol.md` (a "Local hosts" section) |
-| **B** #384 router reconciliation | `api/src/local-hosts/router-sync.ts` (new: the listener, `/model/*` client), `api/test/local-hosts-router.test.ts`, `deploy/litellm-admin.sh` (`ALLOWED_ROUTES` and its comment) | `api/src/server.ts` (the one "Task B" line at the marker); `api/src/central/litellm-keys.ts` (`routerKeyLimits`, one block, §3.6) + one test in `api/test/litellm-keys.test.ts`; `deploy/test/litellm-admin.test.sh` (the `called=` file list); `api/test/fake-litellm.ts` (`/model/*` handlers); `deploy/README.md` (the admin key's routes line) |
+| **B** #384 router reconciliation | `api/src/local-hosts/router-sync.ts` (new: the listener, `/model/*` client), `api/test/local-hosts-router.test.ts`, `deploy/litellm-admin.sh` (the `KEY=local-hosts` key, §3.5) | `api/src/server.ts` (the one "Task B" line at the marker); `api/src/central/litellm-keys.ts` (`routerKeyLimits`, one block, §3.6) + one test in `api/test/litellm-keys.test.ts`; `deploy/test/litellm-admin.test.sh` (both keys' route checks); `deploy/service.sh` (the link-only `LOCAL_HOST_ROUTER_KEY` mount); `api/test/fake-litellm.ts` (`/model/*` handlers); `deploy/README.md` (the secrets table and the router key section) |
 | **C** #381 Kernal service | `kernal/.pi/extensions/kernal-local/*` (new), `kernal/tests/local-*.test.ts` (new), `kernal/docs/local-host.md` (new: user guide) | `kernal/bin/kernal` (the `local)` dispatch block and `exec_local_runtime`); `kernal/README.md` (one "Share local models" section); `kernal/.env.example` (`KERNAL_LOCAL_TUNNEL`, `KERNAL_LOCAL_HOST_SERVER`) |
 
 Web pages (#385, #388) are wave 3 and build on §1.7.

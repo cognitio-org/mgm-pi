@@ -16,7 +16,8 @@ export type LocalHostChangeReason =
   | "heartbeat"
   /** New credentials: a new public URL or bearer. */
   | "credentials"
-  /** DELETE /api/local-hosts/:id: `host` is the record as it was; it is gone from the store. */
+  /** DELETE /api/local-hosts/:id: `host` is the record as it was; the store keeps only a tombstone
+   * (`deletedAt`, sharing off, no models) that holds its router prefix for the same user (§1.8). */
   | "deleted"
   /** The device that owned it was revoked; `host.revokedAt` is set. */
   | "device-revoked";
@@ -40,8 +41,10 @@ export interface LocalHostListener {
 }
 
 /** How long changed() waits for one listener before reporting it as still running. The work goes
- * on; the heartbeat answer just doesn't wait for it. */
-export const LISTENER_TIMEOUT_MS = 10_000;
+ * on; the heartbeat answer just doesn't wait for it. Longer than one upstream call's timeout (the
+ * router listener makes a list call plus writes, each capped shorter), so a slow upstream shows as
+ * its own error rather than "still updating". Kernal's heartbeat request waits 30 s (§1.4). */
+export const LISTENER_TIMEOUT_MS = 20_000;
 
 export class LocalHostEvents {
   private readonly listeners: LocalHostListener[] = [];

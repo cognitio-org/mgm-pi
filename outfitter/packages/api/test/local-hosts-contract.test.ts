@@ -38,6 +38,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { MongoStore } from "../src/store/mongo.ts";
 import type { Store } from "../src/store/types.ts";
 import { buildTestApp } from "./helpers.ts";
+import { loadConfig } from "../src/config.ts";
 
 const NOW = new Date("2026-10-05T12:00:00.000Z");
 const ago = (s: number) => new Date(NOW.getTime() - s * 1000).toISOString();
@@ -262,4 +263,19 @@ suite("local hosts store: MongoDB", async () => {
 after(async () => {
   for (const s of opened) await s.close();
   await server?.stop();
+});
+
+describe("local hosts config", () => {
+  test("LOCAL_HOST_DOMAIN falls back to PREVIEW_DOMAIN when unset or empty; both unset turn provisioning off", () => {
+    assert.equal(loadConfig({ PREVIEW_DOMAIN: "kernal.run" }).localHostDomain, "kernal.run");
+    assert.equal(loadConfig({ PREVIEW_DOMAIN: "kernal.run", LOCAL_HOST_DOMAIN: "" }).localHostDomain, "kernal.run");
+    assert.equal(loadConfig({ PREVIEW_DOMAIN: "kernal.run", LOCAL_HOST_DOMAIN: " " }).localHostDomain, "kernal.run");
+    assert.equal(loadConfig({ PREVIEW_DOMAIN: "kernal.run", LOCAL_HOST_DOMAIN: "Hosts.Example.COM." }).localHostDomain, "hosts.example.com");
+    assert.equal(loadConfig({}).localHostDomain, "");
+  });
+
+  test("the router key is its own setting, separate from LITELLM_ADMIN_KEY", () => {
+    assert.equal(loadConfig({ LITELLM_ADMIN_KEY: "sk-a" }).localHostRouterKey, "");
+    assert.equal(loadConfig({ LOCAL_HOST_ROUTER_KEY: " sk-b " }).localHostRouterKey, "sk-b");
+  });
 });

@@ -16,6 +16,9 @@ export const STALE_SLACK_SECONDS = 60;
 /** A stale host's ngrok cloud endpoint is deleted after this long (§2.5); the next
  * tunnel-credentials call makes a new one. */
 export const ENDPOINT_IDLE_SECONDS = 24 * 60 * 60;
+/** GET /api/local-hosts lists another person's stale host only while its last heartbeat is younger
+ * than this (§1.7); the owner always sees their own. */
+export const OTHERS_STALE_LISTED_SECONDS = 7 * 24 * 60 * 60;
 /** Kernal refetches credentials this long after they were issued (advisory; §2.3). */
 export const CREDENTIALS_REFETCH_SECONDS = 7 * 24 * 60 * 60;
 

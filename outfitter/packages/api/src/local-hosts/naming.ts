@@ -68,8 +68,10 @@ export function hostSlug(hostName: string): string {
 
 /**
  * The router prefix candidates for a new host, in order: `<user>-<host>`, then with 4 and then 8
- * hex characters of the id appended. The registry takes the first that no other host holds and
- * keeps it for the record's lifetime: renaming the machine does not rename its router models.
+ * hex characters of the id appended. The registry takes the first that is free under the spec's
+ * user-aware rule (local-host.md §3.1: no record holds it, or only a tombstone of the same user)
+ * and keeps it for the record's lifetime: renaming the machine does not rename its router models,
+ * and a prefix never passes to another person.
  */
 export function routerPrefixCandidates(email: string, hostName: string, id: string): string[] {
   const base = `${userSlug(email)}-${hostSlug(hostName)}`;

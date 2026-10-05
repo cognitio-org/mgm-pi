@@ -108,11 +108,13 @@ conversation first:
 - **Transcript spacing.** Cards have smaller gaps and padding, and the who-marks and rail glyphs
   are slightly smaller. Prose in a message is 0.94rem with a 1.55 line height, a little larger
   than the UI around it.
-- **Composer.** On a desktop the editor spans the full width and **Send** closes the controls row
-  in the bottom-right corner, so no space is trapped beside a tall draft. On a phone Send sits
-  beside the editor at its bottom edge, because the phone controls row has no room for it. Both
-  layouts come from one CSS grid (`grid-template-areas`). Send is the largest control (42px tall
-  on desktop, 48px on touch, at least 7rem wide on desktop, ▶ glyph). With an empty
+- **Composer.** The editor spans the full width, and **Send** closes the controls row under it in
+  the bottom-right corner, on desktop and phone alike, so no space is trapped beside a tall
+  draft. Send is the largest control: 42px tall on desktop, 48px on touch, at least 7rem wide on
+  desktop, with a ▶ glyph. Send mode is a `<select>` with full labels on desktop. On a phone it's
+  a small native picker with the short labels (Prompt / Steer / Follow-up), which replaces the
+  old three-button segmented control. The phone also drops **Aa** and the formatting toolbar; the
+  editor still highlights Markdown as you type. With an empty
   draft it dims its colours rather than its opacity, so the label stays readable. The editor
   starts at three lines and grows to `min(26rem, 50vh)`. The ⇡ toggle next to **Aa** switches to
   a tall editor (`min(22rem, 40vh)` up to 70vh; on phones 34svh up to 55svh). The choice is

@@ -43,8 +43,8 @@ type Behavior = "" | "steer" | "followUp";
 const NO_ENTRIES: PiEntry[] = [];
 
 const MODES: Array<{ value: Behavior; label: string; short: string }> = [
-  // Short label "Prompt", not "Send": on phones the segmented control sits beside the Send button,
-  // and two buttons both reading "Send" left it unclear which one sends.
+  // Short label "Prompt", not "Send": on phones the compact picker sits in the row with the Send
+  // button, and two controls both reading "Send" would leave it unclear which one sends.
   { value: "", label: "Prompt (queued if idle)", short: "Prompt" },
   { value: "steer", label: "Steer", short: "Steer" },
   { value: "followUp", label: "Follow-up", short: "Follow-up" },
@@ -52,9 +52,9 @@ const MODES: Array<{ value: Behavior; label: string; short: string }> = [
 
 /** Send/steer/follow-up composer. "Send" queues a plain prompt (the API wakes a run if none is
  * running); "steer" and "follow-up" set `behavior` for a currently-running run (protocol.md's
- * `prompt.behavior`). The mode picker is a `<select>` on desktop and a compact segmented control
- * on phones (styles/mobile.css toggles which one is visible) -- both drive the same `behavior`
- * state, so nothing about the send logic differs between them. */
+ * `prompt.behavior`). The mode picker is a `<select>` with full labels on desktop and one with the
+ * short labels on phones (styles/mobile.css toggles which one is visible) -- both drive the same
+ * `behavior` state, so nothing about the send logic differs between them. */
 export function Composer({
   onSend,
   disabled,
@@ -314,21 +314,19 @@ export function Composer({
             </option>
           ))}
         </select>
-        <div className="composer-mode-buttons" role="radiogroup" aria-label="Send mode">
+        <select
+          className="composer-mode-compact"
+          value={behavior}
+          onChange={(e) => setBehavior(e.target.value as Behavior)}
+          disabled={disabled}
+          aria-label="Send mode"
+        >
           {MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              role="radio"
-              aria-checked={behavior === m.value}
-              className={behavior === m.value ? "active" : ""}
-              disabled={disabled}
-              onClick={() => setBehavior(m.value)}
-            >
+            <option key={m.value} value={m.value}>
               {m.short}
-            </button>
+            </option>
           ))}
-        </div>
+        </select>
         <VoiceControl voice={voice} speaker={speaker} />
       </div>
       {(voice.note || speaker.note) && (

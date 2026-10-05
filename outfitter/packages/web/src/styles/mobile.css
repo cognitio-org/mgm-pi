@@ -29,14 +29,12 @@ a,
   }
 }
 
-/* Composer.tsx renders both a <select> (desktop) and a segmented button group (phones) for the
- * send mode, so CSS alone decides which one shows. Base/hidden state lives here, above every
- * media query that might turn it on, so the max-width:700px override below wins on source order
- * (both rules target the same single-class selector, so specificity is tied). */
-.composer-mode-buttons {
+/* Composer.tsx renders two send-mode <select>s: full labels (desktop) and short labels (phones),
+ * so CSS alone decides which one shows. Base/hidden state lives here, above every media query that
+ * might turn it on, so the max-width:700px override below wins on source order (both rules target
+ * the same single-class selector, so specificity is tied). */
+.composer-mode-compact {
   display: none;
-  border: 1px solid var(--border);
-  overflow: hidden;
 }
 
 /* A comfortable minimum tap target everywhere, not just at phone width -- no hover-only
@@ -474,17 +472,16 @@ select {
     overscroll-behavior: contain;
   }
 
-  /* Aa, the size toggle, send mode and voice share the row under the editor: tighter gaps and
-   * segment padding keep "Follow-up" whole at 390px. */
   .composer-controls {
-    gap: 0.25rem;
+    gap: 0.35rem;
   }
 
-  .composer-controls .composer-mode-buttons button {
-    padding-left: 0.32rem;
-    padding-right: 0.32rem;
-    font-size: 0.75rem;
-    white-space: nowrap;
+  /* Markdown formatting by toolbar isn't how anyone writes on a phone keyboard: Aa and its
+   * toolbar go, and the editor (still highlighting Markdown as you type) gets the room. */
+  .composer-controls .md-tools-toggle,
+  .md-toolbar,
+  .md-toolbar.open {
+    display: none;
   }
 
   /* On a phone the editor starts at two lines (the keyboard takes half the screen already) and
@@ -500,35 +497,27 @@ select {
     max-height: 55svh;
   }
 
-  /* Send beside the editor, at its bottom edge (by the thumb); the controls row below keeps the
-   * full width for Aa, the size toggle, send mode and voice. */
-  .composer {
-    grid-template-areas:
-      "status status"
-      "editor send"
-      "controls controls"
-      "note note";
-  }
-
-  .composer > .send-wrap {
-    align-self: end;
-  }
-
+  /* Same arrangement as the desktop: the editor spans the full width and Send closes the row under
+   * it, in the bottom-right corner by the thumb. */
   .send-button {
     min-width: 4.75rem;
     min-height: 48px;
     padding: 0.5rem 0.75rem;
   }
 
-  /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --
-   * swap it for a compact segmented control of short labels (Composer.tsx renders both; CSS
-   * picks one per breakpoint) rather than trying to shrink the select further. */
+  /* The full-label <select> truncates itself below ~140px ("Prompt (queued i..."), and a
+   * three-button segmented control took most of the row. One small native picker with the short
+   * labels (Prompt / Steer / Follow-up) opens the phone's own selection sheet instead. */
   .composer-mode-select {
     display: none;
   }
 
-  .composer-mode-buttons {
-    display: flex;
+  .composer-mode-compact {
+    display: block;
+    min-width: 0;
+    max-width: 8.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.3rem;
   }
 
   /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
@@ -563,29 +552,6 @@ select {
   .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
     display: block;
   }
-}
-
-/* ---------- composer mode: <select> on desktop, segmented control on phones ---------- */
-/* Base (hidden) state lives near the top of this file; the max-width:700px block above turns it
- * on. This section is visual styling only. */
-
-.composer-mode-buttons button {
-  box-shadow: none;
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg-elevated);
-  font-size: 0.78rem;
-  padding: 0.42rem 0.55rem;
-  border-radius: 0;
-}
-
-.composer-mode-buttons button:last-child {
-  border-right: none;
-}
-
-.composer-mode-buttons button.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
 }
 
 /* ---------- dialogs: full-height sheets on mobile ---------- */
@@ -643,17 +609,5 @@ select {
   .app-main {
     max-width: 100%;
     padding: 1rem;
-  }
-}
-
-/* Small Android phones (360px): a few more pixels out of the composer's control row. */
-@media (max-width: 374px) {
-  .composer-controls {
-    gap: 0.2rem;
-  }
-
-  .composer-controls .composer-mode-buttons button {
-    padding-left: 0.22rem;
-    padding-right: 0.22rem;
   }
 }

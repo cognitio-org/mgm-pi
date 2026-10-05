@@ -382,3 +382,41 @@ describe("races (review round 1)", () => {
     assert.ok(h.ngrok.endpoints.has(fresh.endpointId!), "the endpoint in use is not deleted");
   });
 });
+
+describe("races (review round 2)", () => {
+  test("DELETE with a stale snapshot still deletes the credentials a call stored meanwhile", async () => {
+    const h = harness();
+    await issueTunnelCredentials(h.deps, await registered(h));
+    const stale = await h.host(); // what the DELETE route read
+    h.clock.now = new Date(T0.getTime() + 1000);
+    await issueTunnelCredentials(h.deps, await h.host()); // a refetch lands before the delete writes
+    await deleteLocalHost(h.deps, stale);
+    assert.equal(h.ngrok.credentials.size, 0, "the newer credential is deleted too");
+    assert.equal(h.ngrok.endpoints.size, 0);
+    assert.ok((await h.host()).deletedAt);
+  });
+
+  test("a call releases only its own hold", async () => {
+    const h = harness();
+    const host = await registered(h);
+    const realCreate = h.ngrok.createCredential.bind(h.ngrok);
+    h.ngrok.createCredential = async (input) => {
+      // Our hold expired and another call took it.
+      await h.store.localHosts.update(ID, { issuingUntil: "2999-01-01T00:00:00.000Z" });
+      return realCreate(input);
+    };
+    await issueTunnelCredentials(h.deps, host);
+    assert.equal((await h.host()).issuingUntil, "2999-01-01T00:00:00.000Z");
+  });
+
+  test("the idle sweep leaves the endpoint alone while a credentials call holds the record", async () => {
+    const h = harness();
+    await issueTunnelCredentials(h.deps, await registered(h));
+    const later = new Date(T0.getTime() + 961_000 + 24 * 3600_000);
+    await h.store.localHosts.update(ID, { issuingUntil: new Date(later.getTime() + 30_000).toISOString() });
+    const counts = await localHostTunnelListener(h.deps).sweep!(later);
+    assert.equal(counts!.endpointsIdle, 0);
+    assert.ok((await h.host()).managed?.endpointId);
+  });
+});
+

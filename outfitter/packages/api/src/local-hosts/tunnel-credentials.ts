@@ -196,10 +196,11 @@ export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: Lo
   if (!provisioningOn(deps)) throw new TunnelCredentialsError("local_host_tunnels_off", "per-host tunnels are off");
   const now = (deps.now ?? (() => new Date()))();
   const hosts = deps.store.localHosts;
+  const holdUntil = new Date(now.getTime() + ISSUING_LEASE_MS).toISOString();
   const leased = await hosts.updateIf(
     host.id,
     { notRevoked: true, notDeleted: true, shareModels: true, freeAt: now.toISOString() },
-    { issuingUntil: new Date(now.getTime() + ISSUING_LEASE_MS).toISOString() },
+    { issuingUntil: holdUntil },
   );
   if (!leased) {
     const code = await refusal(hosts, host.id);
@@ -208,7 +209,8 @@ export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: Lo
   try {
     return await issueHeld(deps, leased, now);
   } finally {
-    await hosts.update(host.id, { issuingUntil: undefined }).catch(() => {});
+    // Only this call's hold: one that expired and was taken by another call stays theirs.
+    await hosts.updateIf(host.id, { issuingUntil: holdUntil }, { issuingUntil: undefined }).catch(() => {});
   }
 }
 
@@ -351,11 +353,15 @@ export async function deleteHostNgrok(deps: LocalHostTunnelDeps, host: LocalHost
  * the endpoint is deleted only once that write matched. Returns the updated record, or null when
  * there was nothing to drop or the record moved on.
  */
-export async function dropCloudEndpoint(deps: LocalHostTunnelDeps, host: LocalHost): Promise<LocalHost | null> {
+export async function dropCloudEndpoint(deps: LocalHostTunnelDeps, host: LocalHost, opts: { freeAt?: Date } = {}): Promise<LocalHost | null> {
   const managed = host.managed;
   if (!managed?.endpointId) return null;
   const { endpointId: _e, publicUrl: _p, ...rest } = managed;
-  const next = await deps.store.localHosts.updateIf(host.id, { credentialId: managed.credentialId, endpointId: managed.endpointId }, { managed: rest });
+  const next = await deps.store.localHosts.updateIf(
+    host.id,
+    { credentialId: managed.credentialId, endpointId: managed.endpointId, ...(opts.freeAt ? { freeAt: opts.freeAt.toISOString() } : {}) },
+    { managed: rest },
+  );
   if (!next) return null;
   if (deps.ngrok) {
     // Forgotten even when the delete fails: an unreferenced endpoint is an orphan the sweep deletes.
@@ -393,7 +399,8 @@ export function localHostTunnelListener(deps: LocalHostTunnelDeps): LocalHostLis
       for (const host of hosts) {
         if (!host.managed?.endpointId || hostStatus(host, now) !== "stale") continue;
         if (now.getTime() - Date.parse(host.lastSeenAt) <= idleMs) continue;
-        const next = await dropCloudEndpoint(deps, host);
+        // Never under a credentials call in flight (it would store the endpoint this deletes).
+        const next = await dropCloudEndpoint(deps, host, { freeAt: now });
         if (next) {
           host.managed = next.managed;
           out.endpointsIdle++;

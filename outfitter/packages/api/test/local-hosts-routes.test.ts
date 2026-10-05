@@ -278,6 +278,27 @@ describe("the flow through the routes", () => {
     await app.fastify.close();
   });
 
+  test("a revoked device's credentials on a host another device took over: retired, the host not revoked", async () => {
+    const ngrok = new FakeNgrok();
+    const app = await linkApp({ ngrok, domain: "kernal.run" });
+    const { token, device } = await seedDevice(app);
+    await app.fastify.inject({ method: "POST", url: "/api/local-hosts/heartbeat", headers: auth(token), payload: heartbeat() });
+    const realCreate = ngrok.createCloudEndpoint.bind(ngrok);
+    ngrok.createCloudEndpoint = async (input) => {
+      await app.store.localHosts.update(ID, { deviceId: "dev_newer_login" });
+      await app.store.devices.revoke(device.id, "revoked", new Date().toISOString());
+      return realCreate(input);
+    };
+    const res = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/tunnel-credentials", headers: auth(token), payload: { hostId: HOST_ID } });
+    assert.equal(res.statusCode, 404);
+    const rec = (await app.store.localHosts.findById(ID))!;
+    assert.equal(rec.revokedAt, undefined, "the newer device's host stays");
+    assert.equal(rec.managed, undefined, "what the revoked device was handed is gone");
+    assert.equal(ngrok.credentials.size, 0);
+    assert.equal(ngrok.endpoints.size, 0);
+    await app.fastify.close();
+  });
+
   test("a heartbeat racing its device's revoke doesn't un-revoke the host", async () => {
     const ngrok = new FakeNgrok();
     const app = await linkApp({ ngrok, domain: "kernal.run" });

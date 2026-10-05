@@ -19,6 +19,7 @@ import {
   listLocalHosts,
   parseHeartbeat,
   recordHeartbeat,
+  retireIssued,
   revokeLocalHost,
   type LocalHostDeps,
 } from "../local-hosts/registry.ts";
@@ -135,7 +136,8 @@ export async function registerLocalHostRoutes(app: FastifyInstance, ctx: RouteCo
         if (await revokedMeanwhile(ctx, device.id)) {
           // Never hand a just-revoked device a working credential: revoking the host deletes it.
           const now = await ctx.store.localHosts.findById(host.id);
-          if (now) await revokeLocalHost(deps(req), now);
+          if (now?.deviceId === device.id) await revokeLocalHost(deps(req), now);
+          else if (now) await retireIssued(deps(req), now, answer.credentialId);
           return reply.code(404).send({ error: "device not found" });
         }
         req.log.info({ id: host.id, credentialId: answer.credentialId }, "local host tunnel credentials issued");

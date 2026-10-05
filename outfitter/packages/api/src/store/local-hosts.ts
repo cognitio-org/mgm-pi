@@ -88,6 +88,8 @@ export interface LocalHostExpect {
   endpointId?: string;
   /** No credentials call holds the record at this ISO time (issuingUntil absent or earlier). */
   freeAt?: string;
+  /** issuingUntil equals this (a call releasing its own hold). */
+  issuingUntil?: string;
 }
 
 export interface LocalHostsCollection {
@@ -118,6 +120,7 @@ function meets(h: LocalHost, e: LocalHostExpect): boolean {
   if (typeof e.credentialId === "string" && h.managed?.credentialId !== e.credentialId) return false;
   if (e.endpointId !== undefined && h.managed?.endpointId !== e.endpointId) return false;
   if (e.freeAt !== undefined && h.issuingUntil && h.issuingUntil >= e.freeAt) return false;
+  if (e.issuingUntil !== undefined && h.issuingUntil !== e.issuingUntil) return false;
   return true;
 }
 
@@ -306,6 +309,7 @@ export class MongoLocalHosts implements LocalHostsCollection {
     if (typeof expect.credentialId === "string") and.push({ "managed.credentialId": expect.credentialId });
     if (expect.endpointId !== undefined) and.push({ "managed.endpointId": expect.endpointId });
     if (expect.freeAt !== undefined) and.push({ $or: [{ issuingUntil: { $exists: false } }, { issuingUntil: { $type: "null" } }, { issuingUntil: { $lt: expect.freeAt } }] });
+    if (expect.issuingUntil !== undefined) and.push({ issuingUntil: expect.issuingUntil });
     return this.updateWhere({ $and: and }, patch);
   }
   private async updateWhere(filter: Filter<LocalHostDoc>, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null> {

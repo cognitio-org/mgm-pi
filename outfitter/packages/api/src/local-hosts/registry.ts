@@ -374,19 +374,56 @@ export async function listLocalHosts(deps: Pick<LocalHostDeps, "store" | "now">,
  * tells the listeners. */
 export async function deleteLocalHost(deps: LocalHostDeps, host: LocalHost): Promise<void> {
   const now = (deps.now ?? (() => new Date()))();
-  await deleteHostNgrok(deps, host);
-  await retireBearer(deps, host);
-  await deps.store.localHosts.update(host.id, {
+  const done = await retireManaged(deps, host, (cur) => ({
     deletedAt: now.toISOString(),
     shareModels: false,
     servers: [],
     models: [],
-    tunnel: { provider: host.tunnel.provider, managed: host.tunnel.managed, state: "off" },
+    tunnel: { provider: cur.tunnel.provider, managed: cur.tunnel.managed, state: "off" },
     managed: undefined,
     issuingUntil: undefined,
-  });
-  const { problems } = await deps.events.changed({ reason: "deleted", host });
+  }));
+  if (!done) return;
+  const { problems } = await deps.events.changed({ reason: "deleted", host: done.before });
   if (problems.length) deps.log?.("local hosts: listeners reported problems on delete", { id: host.id, problems });
+}
+
+/**
+ * Writes `patch` (which unsets `managed`) only while the record still holds the credential it was
+ * read with, then deletes that credential, its endpoint and the bearer. A credentials call that
+ * stored new ones meanwhile makes the write miss; the record is read again and the write retried,
+ * so what gets deleted is always what the record held when it was retired. Null when the record
+ * is gone.
+ */
+async function retireManaged(
+  deps: LocalHostDeps,
+  host: LocalHost,
+  patch: (cur: LocalHost) => Partial<Omit<LocalHost, "id">>,
+): Promise<{ before: LocalHost; after: LocalHost } | null> {
+  let cur: LocalHost | null = host;
+  for (let attempt = 0; cur && attempt < 5; attempt++) {
+    const after = await deps.store.localHosts.updateIf(cur.id, { credentialId: cur.managed?.credentialId ?? null }, patch(cur));
+    if (after) {
+      await deleteHostNgrok(deps, cur);
+      await retireBearer(deps, cur);
+      return { before: cur, after };
+    }
+    cur = await deps.store.localHosts.findById(host.id);
+  }
+  if (cur) throw new Error("the host record kept changing while it was being retired");
+  return null;
+}
+
+/** The credentials one call handed to a device revoked meanwhile, on a host another device of the
+ * same person now holds: gone (credential, endpoint, bearer), the record left unrevoked. */
+export async function retireIssued(deps: LocalHostDeps, host: LocalHost, credentialId: string): Promise<void> {
+  if (host.managed?.credentialId !== credentialId) return;
+  const after = await deps.store.localHosts.updateIf(host.id, { credentialId }, { managed: undefined });
+  if (!after) return;
+  await deleteHostNgrok(deps, host);
+  await retireBearer(deps, host);
+  const { problems } = await deps.events.changed({ reason: "credentials", host: after, previous: host });
+  if (problems.length) deps.log?.("local hosts: listeners reported problems on retiring credentials", { id: host.id, problems });
 }
 
 // ---------- device revoked (§2.5) ----------
@@ -415,10 +452,8 @@ export function localHostDeviceHook(deps: LocalHostDeps): DeviceLifecycleHook {
  * device turns out to be revoked while its own request ran. */
 export async function revokeLocalHost(deps: LocalHostDeps, host: LocalHost): Promise<void> {
   const now = (deps.now ?? (() => new Date()))();
-  await deleteHostNgrok(deps, host);
-  await retireBearer(deps, host);
-  const next = await deps.store.localHosts.update(host.id, { revokedAt: now.toISOString(), managed: undefined });
-  if (!next) return;
-  const { problems } = await deps.events.changed({ reason: "device-revoked", host: next, previous: host });
+  const done = await retireManaged(deps, host, () => ({ revokedAt: now.toISOString(), managed: undefined }));
+  if (!done) return;
+  const { problems } = await deps.events.changed({ reason: "device-revoked", host: done.after, previous: done.before });
   if (problems.length) deps.log?.("local hosts: listeners reported problems on revoke", { id: host.id, problems });
 }

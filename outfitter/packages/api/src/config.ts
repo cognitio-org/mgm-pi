@@ -114,6 +114,11 @@ export interface Config {
    * credential's metadata, so the sweep only ever removes this deployment's own, not another
    * environment's sharing the ngrok account and PREVIEW_DOMAIN. */
   previewEnv: string;
+  /** LOCAL_HOST_DOMAIN (default: PREVIEW_DOMAIN): the domain Local Host cloud endpoints are made on,
+   * `https://lh-<random>.<domain>` (#383, docs/specs/local-host.md §2.2). Per-host tunnel credentials
+   * are provisioned when this and NGROK_API_KEY are both set. Endpoints carry purpose
+   * outfitter-local-host in their metadata, so the preview sweep never touches them. */
+  localHostDomain: string;
   /** Browser IDE (#241, docs/specs/browser-ide.md §2): the code-server release IDE Drives download,
    * and its SHA-256 per architecture (the release publishes none; we compute them when we bump the
    * pin). IDE_CODE_SERVER_VERSION / IDE_CODE_SERVER_SHA256_AMD64 / IDE_CODE_SERVER_SHA256_ARM64
@@ -524,6 +529,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
     previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
     previewEnv: (env.PREVIEW_ENV || env.GCP_PROJECT || "local").trim(),
+    localHostDomain: (env.LOCAL_HOST_DOMAIN ?? env.PREVIEW_DOMAIN ?? "").trim().toLowerCase().replace(/^\.+|\.+$/g, ""),
     ideCodeServer: {
       version: (env.IDE_CODE_SERVER_VERSION || IDE_CODE_SERVER_PIN.version).trim(),
       artifacts: {

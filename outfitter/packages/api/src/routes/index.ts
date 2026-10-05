@@ -24,6 +24,7 @@ import { registerLaptopApprovalRoutes } from "./laptop-approvals.ts";
 import { registerDeviceRoutes } from "./device.ts";
 import { registerConfigRoutes } from "./config.ts";
 import { registerKeyRoutes } from "./keys.ts";
+import { registerLocalHostRoutes } from "./local-hosts.ts";
 
 export type { RouteContext } from "./context.ts";
 
@@ -72,6 +73,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
   await registerDeviceRoutes(app, ctx);
   await registerConfigRoutes(app, ctx);
   await registerKeyRoutes(app, ctx);
+  // Local Host (#378, docs/specs/local-host.md): the module registers its own routes per role.
+  await registerLocalHostRoutes(app, ctx);
   if (ctx.config.role !== "web") {
     await registerHookRoutes(app, ctx);
     // E9 §5.1: the A2A server lives on the public link origin (and "all" in dev). The web role is

@@ -120,6 +120,9 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     const a2a = await ctx.a2a.sweep().catch(() => undefined);
     // #394 §5.5: router key deletes that failed, and run keys past their expiry. Never fails the tick.
     const routerKeys = await sweepRouterKeys(ctx.litellmKeys, ctx.store);
+    // #378 Local Host (local-host.md §5): every listener's sweep (task A's ngrok clean-up, task B's
+    // router reconcile). Never fails the tick.
+    const localHosts = await ctx.localHostEvents.sweep().catch(() => undefined);
     return {
       woken,
       ...(previews ? { previews } : {}),
@@ -127,6 +130,7 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
       ...(agentEngine ? { agentEngine } : {}),
       ...(a2a !== undefined ? { a2a } : {}),
       ...(routerKeys ? { routerKeys } : {}),
+      ...(localHosts && Object.keys(localHosts).length ? { localHosts } : {}),
     };
   });
 

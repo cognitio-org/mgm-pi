@@ -27,6 +27,8 @@ import { RunKeys } from "./central/run-keys.ts";
 import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
 import { LocalHostEvents } from "./local-hosts/events.ts";
+import { localHostTunnelListener } from "./local-hosts/tunnel-credentials.ts";
+import { localHostDeviceHook } from "./local-hosts/registry.ts";
 import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
@@ -271,6 +273,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const localHostEvents = new LocalHostEvents((msg, err) => fastify.log.warn({ err }, msg));
   const localHostNgrok = opts.ngrok ?? (config.ngrokApiKey ? createNgrokApi(config.ngrokApiKey) : undefined);
   // Task A (#382/#383): its LocalHostListener (ngrok clean-up) and device-revoke hook go here.
+  localHostEvents.register(localHostTunnelListener({ store, ngrok: localHostNgrok, config, secretAdmin, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) }));
+  deviceLifecycle.register(localHostDeviceHook({ store, ngrok: localHostNgrok, config, secretAdmin, events: localHostEvents, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) }));
   // Task B (#384): its LocalHostListener (router reconciliation) goes here.
   // Its own key (LOCAL_HOST_ROUTER_KEY), mounted on link only; never on web (local-host.md §3.5).
   if (config.localHostRouterKey && config.role !== "web") localHostEvents.register(localHostRouterListener({ store, config, secretAdmin, log: (msg, err) => fastify.log.warn({ err }, msg) }));

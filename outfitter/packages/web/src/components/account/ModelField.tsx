@@ -98,6 +98,21 @@ export function ModelField({ settingKey, value, onChange, disabled, set, placeho
     setQuery("");
   }
 
+  /** Leaving the box (Tab, a click elsewhere, Save) with something typed keeps it: a listed
+   * model when it is one (any case), else the text as typed, as Other… would. */
+  function commitTyped() {
+    const q = query.trim();
+    if (open && q) {
+      const hit = choices.find((c) => c.value.toLowerCase() === q.toLowerCase());
+      if (hit) onChange(hit.value);
+      else {
+        onChange(q);
+        setMode("other");
+      }
+    }
+    close();
+  }
+
   function choose(item: Item) {
     if (item.kind === "unset") onChange("");
     else if (item.kind === "model") onChange(item.value);
@@ -197,11 +212,15 @@ export function ModelField({ settingKey, value, onChange, disabled, set, placeho
           spellCheck={false}
           onClick={show}
           onChange={(e) => {
-            setQuery(e.target.value);
-            setActive(0);
+            const q = e.target.value;
+            setQuery(q);
+            // The first listed match, not the unlisted stored value, is what Enter picks.
+            const next = menuItems(choices, value, q);
+            const firstModel = next.findIndex((it) => it.kind === "model");
+            setActive(firstModel >= 0 ? firstModel : 0);
             setOpen(true);
           }}
-          onBlur={close}
+          onBlur={commitTyped}
           onKeyDown={onKeyDown}
         />
         {marker}

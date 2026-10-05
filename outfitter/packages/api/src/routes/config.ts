@@ -167,11 +167,13 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
   // #458: the models the Account page's dropdowns offer for model.default and
   // compaction.summaryModel, per provider: the router's (cached by ModelsService) and the curated
   // OpenRouter list for this person (and `profile`, when named). Options only: writes are still
-  // validated by type, so an unlisted model can still be saved.
+  // validated by type, so an unlisted model can still be saved. `scope=account` (the account-wide
+  // editor) leaves the default profile's OpenRouter adds and removes out.
   app.get("/api/config/models", async (req, reply) => {
     if (refuseDongle(req, reply)) return reply;
-    const q = req.query as { profile?: unknown };
+    const q = req.query as { profile?: unknown; scope?: unknown };
     const profile = typeof q.profile === "string" && q.profile !== "" ? q.profile : undefined;
+    const accountOnly = !profile && q.scope === "account";
     const fleet = withDefaults(await store.fleetSettings.get());
     try {
       const [router, resolved] = await Promise.all([
@@ -179,7 +181,7 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
         resolveConfig(store, fleet, { email: req.identity!.email, ...(profile ? { profile } : {}), allowHttp: ctx.config.devMode }),
       ]);
       reply.header("cache-control", "no-store");
-      return modelOptions(router, resolved.values);
+      return modelOptions(router, resolved.values, { routerAnswered: ctx.modelsService.routerAnswered(), accountOnly });
     } catch (err) {
       if (err instanceof UnknownProfileError) return reply.code(404).send({ error: "unknown_profile", profiles: err.profiles });
       throw err;

@@ -433,7 +433,8 @@ function modelChoices(key, provider, mo) {
     if (!p) return { choices: [], note: "No list for the provider " + provider + ": type the model's id with Other…" };
     return { choices: p.models.map(function (m) { return { value: m, group: p.label }; }), note: p.note };
   }
-  var out = [];
+  // "self": summarize with the working model (/compaction model self).
+  var out = [{ value: "self", group: "The working model" }];
   mo.providers.slice().sort(function (a, b) { return (b.id === provider ? 1 : 0) - (a.id === provider ? 1 : 0); })
     .forEach(function (p) { p.models.forEach(function (m) { out.push({ value: p.id + "/" + m, group: p.label }); }); });
   return { choices: out };
@@ -954,7 +955,14 @@ function drawSettings(view, d) {
   // #458: model.default's list follows model.provider: this form's choice, else the value in effect.
   var providerRow = d.rows.filter(function (r) { return r.key === "model.provider"; })[0];
   var combos = {};
-  function currentProvider() { return fs.get("model.provider") || (providerRow && providerRow.value) || "litellm"; }
+  // Clearing the target's own provider: the value in effect is the one about to go, so the default stands in.
+  function currentProvider() {
+    var v = fs.get("model.provider");
+    if (v) return v;
+    var own = providerRow && (target === "account" ? providerRow.account : providerRow.machine);
+    if (v === "" && own !== undefined) return (providerRow && providerRow.default) || "litellm";
+    return (providerRow && providerRow.value) || "litellm";
+  }
   function refreshCombos() { for (var k in combos) combos[k].setChoices(modelChoices(k, currentProvider(), d.modelOptions)); }
 
   var list = el("div", { class: "rows" });
@@ -1520,6 +1528,16 @@ function modelCombo(o) {
     open = true; paint();
   }
   function close() { open = false; query = ""; paint(); }
+  // Leaving the box (Tab, a click elsewhere, Save) with something typed keeps it: a listed model
+  // when it is one (any case), else the text as typed, as Other… would.
+  function commitTyped() {
+    var q = query.trim();
+    if (open && q) {
+      var hit = choices().filter(function (c) { return c.value.toLowerCase() === q.toLowerCase(); })[0];
+      if (hit) setValue(hit.value); else { setValue(q); mode = "other"; }
+    }
+    close();
+  }
   function choose(item) {
     if (item.kind === "unset") setValue("");
     else if (item.kind === "model") setValue(item.value);
@@ -1529,10 +1547,16 @@ function modelCombo(o) {
   }
   input.addEventListener("click", show);
   input.addEventListener("input", function () {
-    if (listMode()) { query = input.value; active = 0; open = true; paint(); }
+    if (listMode()) {
+      query = input.value; open = true;
+      // The first listed match, not the unlisted stored value, is what Enter picks.
+      var first = -1; modelMenu(choices(), value, query).forEach(function (it, i) { if (first < 0 && it.kind === "model") first = i; });
+      active = first >= 0 ? first : 0;
+      paint();
+    }
     else { setValue(input.value); paint(); }
   });
-  input.addEventListener("blur", function () { if (open) close(); });
+  input.addEventListener("blur", function () { if (open) commitTyped(); });
   input.addEventListener("keydown", function (e) {
     if (!listMode()) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {

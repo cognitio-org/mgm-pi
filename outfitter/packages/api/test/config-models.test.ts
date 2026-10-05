@@ -78,7 +78,9 @@ describe("curatedOpenRouter", () => {
     assert.deepEqual(opts.providers.find((p) => p.id === "litellm")?.models, ["a", "b"]);
     assert.equal(opts.providers.find((p) => p.id === "litellm")?.note, undefined);
     assert.match(modelOptions([], {}).providers[0].note ?? "", /couldn't be read/);
-    assert.match(modelOptions([{ id: "litellm/local-qwen-mlx", auto: false, local: true }], {}).providers[0].note ?? "", /couldn't be read/);
+    assert.match(modelOptions([{ id: "litellm/local-qwen-mlx", auto: false, local: true }], {}, { routerAnswered: false }).providers[0].note ?? "", /couldn't be read/);
+    // Every router model also in LOCAL_MODELS is still the router answering.
+    assert.equal(modelOptions([{ id: "litellm/local-qwen-mlx", auto: false, local: true }], {}, { routerAnswered: true }).providers[0].note, undefined);
     assert.deepEqual(opts.providers.find((p) => p.id === "lmstudio")?.models, []);
   });
 });
@@ -115,6 +117,15 @@ describe("GET /api/config/models", () => {
       assert.ok(work.providers.find((p) => p.id === "openrouter")!.models.includes("mistral/large"));
       // The router list is cached: the second answer made no new /model/info call.
       assert.equal(calls.filter((c) => c.url.endsWith("/model/info")).length, 1);
+
+      // The account-wide editor (scope=account) leaves the default profile's adds out.
+      const patch = await f.inject({ method: "PATCH", url: "/api/config/profiles/work", headers: { "if-match": 'W/"2"' }, payload: { isDefault: true } });
+      assert.equal(patch.statusCode, 200);
+      const viaDefault = (await f.inject({ method: "GET", url: "/api/config/models" })).json() as typeof body;
+      assert.ok(viaDefault.providers.find((p) => p.id === "openrouter")!.models.includes("mistral/large"), "no scope: the default profile applies");
+      const account = (await f.inject({ method: "GET", url: "/api/config/models?scope=account" })).json() as typeof body;
+      assert.ok(!account.providers.find((p) => p.id === "openrouter")!.models.includes("mistral/large"));
+      assert.ok(account.providers.find((p) => p.id === "openrouter")!.models.includes("x-ai/grok-5"));
 
       const unknown = await f.inject({ method: "GET", url: "/api/config/models?profile=nope" });
       assert.equal(unknown.statusCode, 404);

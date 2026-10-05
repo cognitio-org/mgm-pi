@@ -91,8 +91,9 @@ export const accountApi = {
   config(profile?: string): Promise<ConfigResponse> {
     return request(`/api/config${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`);
   },
+  /** No profile: the account-wide list (no profile's OpenRouter adds or removes). */
   modelOptions(profile?: string): Promise<ModelOptions> {
-    return request(`/api/config/models${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`);
+    return request(`/api/config/models${profile ? `?profile=${encodeURIComponent(profile)}` : "?scope=account"}`);
   },
   userDoc(): Promise<SettingsDocView> {
     return request("/api/config/user");

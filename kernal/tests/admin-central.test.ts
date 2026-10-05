@@ -541,7 +541,7 @@ describe("#458: the Settings page's model dropdowns", () => {
     assert.deepEqual(pick.modelChoices("model.default", "lmstudio", mo).choices.map((c: any) => c.value), ["qwen/qwen3.6-35b-a3b"]);
     // The summarizer names its provider: every provider's models as provider/id, the selected one first.
     const summary = pick.modelChoices("compaction.summaryModel", "openrouter", mo).choices.map((c: any) => c.value);
-    assert.equal(summary[0], "openrouter/anthropic/claude-sonnet-5");
+    assert.deepEqual(summary.slice(0, 2), ["self", "openrouter/anthropic/claude-sonnet-5"], "self (the working model) first");
     assert.ok(summary.includes("litellm/gpt-5.4-nano") && summary.includes("lmstudio/qwen/qwen3.6-35b-a3b"));
     assert.equal(pick.modelChoices("model.default", "litellm", { providers: [] }), null, "connect not loaded: no list, a text box");
     assert.match(pick.modelChoices("model.default", "openrouter", settingModelOptions(STATE)).note, /not connected/);
@@ -566,6 +566,11 @@ describe("#458: the Settings page's model dropdowns", () => {
     assert.match(APP_JS, /"not in the list"/);
     assert.match(APP_JS, /role: "listbox"/);
     assert.match(APP_JS, /"Choose from the list"/);
+    // Leaving the box keeps what was typed; typing makes Enter pick the first listed match.
+    assert.match(APP_JS, /input\.addEventListener\("blur", function \(\) \{ if \(open\) commitTyped\(\); \}\)/);
+    assert.match(APP_JS, /if \(first < 0 && it\.kind === "model"\) first = i/);
+    // Clearing the target's own provider falls back to the default provider.
+    assert.match(APP_JS, /if \(v === "" && own !== undefined\) return/);
   });
 });
 

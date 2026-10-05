@@ -56,7 +56,8 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload,
     return () => {
       cancelled = true;
     };
-  }, [wantsModels, profile]);
+    // After a save too: a change to the curated OpenRouter list changes the options.
+  }, [wantsModels, profile, doc.version]);
 
   // The stored values the drafts were last based on, to tell a person's edits from them.
   const declKeys = decls.map((d) => d.key).join(",");
@@ -88,8 +89,13 @@ export function SettingsEditor({ label, decls, doc, effective, onSave, onReload,
   }
 
   const { values, problems } = changedValues(decls, doc.values, drafts);
-  // The provider model.default's list follows: this form's choice, else the one in effect.
-  const provider = drafts[PROVIDER_KEY] || String(effective?.values[PROVIDER_KEY]?.value ?? decls.find((d) => d.key === PROVIDER_KEY)?.default ?? "litellm");
+  // The provider model.default's list follows: this form's choice, else the one in effect. When
+  // the form clears this level's own provider, the value in effect is that one about to go, so the
+  // schema's default stands in for whatever is inherited.
+  const providerDefault = String(decls.find((d) => d.key === PROVIDER_KEY)?.default ?? "litellm");
+  const providerInEffect = effective?.values[PROVIDER_KEY];
+  const clearingOwn = drafts[PROVIDER_KEY] === "" && doc.values[PROVIDER_KEY] !== undefined;
+  const provider = drafts[PROVIDER_KEY] || (clearingOwn || !providerInEffect ? providerDefault : String(providerInEffect.value));
   const dirty = Object.keys(values).length > 0;
 
   async function save(e: React.FormEvent) {

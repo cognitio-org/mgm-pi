@@ -38,11 +38,13 @@ export function parseIdList(text: unknown): string[] {
   return [...new Set(text.split(",").map((s) => s.trim()).filter(Boolean))];
 }
 
-/** The curated OpenRouter list for one resolution (GET /api/config's `values`). */
-export function curatedOpenRouter(values: Record<string, ResolvedValue | undefined>, base: readonly string[] = DEFAULT_OPENROUTER_MODELS): string[] {
+/** The curated OpenRouter list for one resolution (GET /api/config's `values`). `accountOnly`
+ * leaves the profile's adds and removes out: an account-wide value applies under every profile. */
+export function curatedOpenRouter(values: Record<string, ResolvedValue | undefined>, base: readonly string[] = DEFAULT_OPENROUTER_MODELS, accountOnly = false): string[] {
   const out = new Set(base);
   const list = (key: string) => parseIdList(values[key]?.value);
   for (const [add, remove] of CURATION_LEVELS) {
+    if (accountOnly && add === "openrouter.models.profileAdd") continue;
     if (remove) for (const id of list(remove)) out.delete(id);
     for (const id of list(add)) out.add(id);
   }
@@ -66,15 +68,19 @@ export interface ModelOptions {
   providers: ProviderModels[];
 }
 
-/** The answer of GET /api/config/models from the router's rows and the person's resolution. */
-export function modelOptions(routerRows: readonly ModelRow[], values: Record<string, ResolvedValue | undefined>): ModelOptions {
+/** The answer of GET /api/config/models from the router's rows (and whether the router itself
+ * answered, ModelsService.routerAnswered) and the person's resolution. */
+export function modelOptions(
+  routerRows: readonly ModelRow[],
+  values: Record<string, ResolvedValue | undefined>,
+  opts: { routerAnswered?: boolean; accountOnly?: boolean } = {},
+): ModelOptions {
   const router = [...new Set(routerRows.map((r) => r.id.replace(/^litellm\//, "")))].sort((a, b) => a.localeCompare(b));
-  // Only this deployment's LOCAL_MODELS came back: the router itself didn't answer.
-  const routerAnswered = routerRows.some((r) => !r.local);
+  const routerAnswered = opts.routerAnswered ?? routerRows.length > 0;
   return {
     providers: [
       { id: "litellm", label: "Router", models: router, ...(routerAnswered ? {} : { note: "The router's model list couldn't be read just now." }) },
-      { id: "openrouter", label: "OpenRouter", models: curatedOpenRouter(values) },
+      { id: "openrouter", label: "OpenRouter", models: curatedOpenRouter(values, DEFAULT_OPENROUTER_MODELS, opts.accountOnly) },
       { id: "lmstudio", label: "Local server", models: [], note: "A local server's models are only known on that computer: use Kernal's /admin there, or type the id." },
     ],
   };

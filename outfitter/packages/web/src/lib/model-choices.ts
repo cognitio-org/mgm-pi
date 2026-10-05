@@ -21,6 +21,9 @@ export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   lmstudio: "Local server (LM Studio)",
 };
 
+/** compaction.summaryModel's "self": summarize with the working model (`/compaction model self`). */
+export const SUMMARIZE_WITH_SELF: ModelChoice = { value: "self", group: "The working model" };
+
 export function isModelSetting(key: string): boolean {
   return key in MODEL_SETTINGS;
 }
@@ -50,7 +53,7 @@ export function choicesFor(key: string, provider: string, options: ModelOptions 
     return { choices: p.models.map((m) => ({ value: m, group: p.label })), ...(p.note ? { note: p.note } : {}) };
   }
   const ordered = [...options.providers].sort((a, b) => Number(b.id === provider) - Number(a.id === provider));
-  return { choices: ordered.flatMap((p) => p.models.map((m) => ({ value: `${p.id}/${m}`, group: p.label }))) };
+  return { choices: [SUMMARIZE_WITH_SELF, ...ordered.flatMap((p) => p.models.map((m) => ({ value: `${p.id}/${m}`, group: p.label })))] };
 }
 
 /** Case-insensitive substring search over the values, capped so a large router list stays a

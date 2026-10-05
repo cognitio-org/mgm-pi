@@ -83,6 +83,8 @@ export interface ModelsServiceDeps {
 }
 
 const DEFAULT_CACHE_MS = 5 * 60_000;
+/** A fetch that got no router models (no key, down, refused) is retried sooner (#458). */
+const FAILED_CACHE_MS = 30_000;
 
 /** GET /api/models' backing service: fetches LiteLLM's chat models once, caches the result in
  * memory for cacheMs, and merges in config.localModels. Single-flight like
@@ -92,7 +94,7 @@ const DEFAULT_CACHE_MS = 5 * 60_000;
  * accepts free text either way. */
 export class ModelsService {
   private readonly deps: ModelsServiceDeps;
-  private cache: { at: number; rows: ModelRow[] } | undefined;
+  private cache: { at: number; rows: ModelRow[]; routerOk: boolean } | undefined;
   private inFlight: Promise<ModelRow[]> | undefined;
 
   constructor(deps: ModelsServiceDeps) {
@@ -100,7 +102,8 @@ export class ModelsService {
   }
 
   async list(): Promise<ModelRow[]> {
-    const cacheMs = this.deps.cacheMs ?? DEFAULT_CACHE_MS;
+    const full = this.deps.cacheMs ?? DEFAULT_CACHE_MS;
+    const cacheMs = this.cache?.routerOk ? full : Math.min(full, FAILED_CACHE_MS);
     if (this.cache && Date.now() - this.cache.at < cacheMs) return this.cache.rows;
     this.inFlight ??= this.fetchAndMerge().finally(() => {
       this.inFlight = undefined;
@@ -111,8 +114,13 @@ export class ModelsService {
   private async fetchAndMerge(): Promise<ModelRow[]> {
     const litellmRows = await this.fetchLitellmRows();
     const rows = mergeLocalModels(litellmRows, this.deps.localModels);
-    this.cache = { at: Date.now(), rows };
+    this.cache = { at: Date.now(), rows, routerOk: litellmRows.length > 0 };
     return rows;
+  }
+
+  /** Whether the last fetch got any models from the router itself (not just config.localModels). */
+  routerAnswered(): boolean {
+    return this.cache?.routerOk ?? false;
   }
 
   private async fetchLitellmRows(): Promise<ModelRow[]> {

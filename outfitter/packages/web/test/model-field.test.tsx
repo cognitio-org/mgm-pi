@@ -118,7 +118,8 @@ describe("model-choices", () => {
     expect(choicesFor("model.default", "openrouter", OPTIONS)!.choices.map((c) => c.value)).toEqual(["anthropic/claude-sonnet-5", "openai/gpt-5.5"]);
     expect(choicesFor("model.default", "lmstudio", OPTIONS)!.note).toMatch(/only known on that computer/);
     const summary = choicesFor("compaction.summaryModel", "openrouter", OPTIONS)!.choices.map((c) => c.value);
-    expect(summary[0]).toBe("openrouter/anthropic/claude-sonnet-5");
+    // "self" (summarize with the working model) first, then the selected provider's.
+    expect(summary.slice(0, 2)).toEqual(["self", "openrouter/anthropic/claude-sonnet-5"]);
     expect(summary).toContain("litellm/gpt-5.4-nano");
     expect(choicesFor("model.default", "litellm", null)).toBeNull();
   });
@@ -139,6 +140,12 @@ describe("SettingsEditor model dropdowns", () => {
     const calls = stub();
     await render({ profile: "work" });
     expect(calls.filter((c) => c.startsWith("/api/config/models"))).toEqual(["/api/config/models?profile=work"]);
+    act(() => root?.unmount());
+    container?.remove();
+    // The account-wide editor asks for the account's own list, without the default profile's adds.
+    const again = stub();
+    await render();
+    expect(again.filter((c) => c.startsWith("/api/config/models"))).toEqual(["/api/config/models?scope=account"]);
     expect(field("model.default").getAttribute("role")).toBe("combobox");
     // model.provider is a select with the providers named.
     expect([...(field("model.provider") as HTMLSelectElement).options].map((o) => o.textContent)).toContain("openrouter: OpenRouter");
@@ -182,6 +189,46 @@ describe("SettingsEditor model dropdowns", () => {
     await key(input, "ArrowDown");
     await key(input, "Escape");
     expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("leaving the box keeps what was typed: a listed model in its own case, else the text as typed", async () => {
+    stub();
+    const { onSave } = await render();
+    const input = () => field("model.default") as HTMLInputElement;
+    await openMenu("model.default");
+    await act(async () => setValue(input(), "GPT-5.4-NANO"));
+    await act(async () => input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(input().value).toBe("gpt-5.4-nano");
+    expect(input().getAttribute("role")).toBe("combobox");
+    await openMenu("model.default");
+    await act(async () => setValue(input(), "typed-then-tabbed"));
+    await act(async () => input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(input().value).toBe("typed-then-tabbed");
+    expect(input().getAttribute("role")).toBeNull();
+    await save();
+    expect(onSave).toHaveBeenCalledWith({ "model.default": "typed-then-tabbed" }, 1);
+  });
+
+  it("typing over an unlisted stored value makes Enter pick the first listed match", async () => {
+    stub();
+    const { onSave } = await render({ values: { "model.default": "claude-auto-llm-old" } });
+    const input = field("model.default") as HTMLInputElement;
+    await openMenu("model.default");
+    await act(async () => setValue(input, "claude-auto"));
+    expect(options()[0]).toContain("claude-auto-llm-old");
+    await key(input, "Enter");
+    expect(input.value).toBe("claude-auto-llm");
+    await save();
+    expect(onSave).toHaveBeenCalledWith({ "model.default": "claude-auto-llm" }, 1);
+  });
+
+  it("clearing this level's own provider lists the default provider's models, not the one going away", async () => {
+    stub();
+    await render({ values: { "model.provider": "openrouter" } });
+    await act(async () => setValue(field("model.provider"), ""));
+    await openMenu("model.default");
+    expect(options()).toContain("claude-auto-llm");
+    expect(options()).not.toContain("anthropic/claude-sonnet-5");
   });
 
   it("shows a stored value that isn't in the list, marked, and keeps it", async () => {
@@ -237,6 +284,7 @@ describe("SettingsEditor model dropdowns", () => {
     await render();
     await openMenu("compaction.summaryModel");
     expect(options()).toContain("litellm/gpt-5.4-nano");
+    expect(options()).toContain("self");
     expect(options()).toContain("openrouter/openai/gpt-5.5");
     expect(container!.querySelector('[role="listbox"]')?.textContent).toContain("OpenRouter");
   });

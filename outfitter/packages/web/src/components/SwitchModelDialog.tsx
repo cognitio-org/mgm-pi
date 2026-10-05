@@ -9,9 +9,9 @@ interface Props {
   sessionId: string;
   /** What pi is on now, from the transcript (deriveSessionHeader); absent before the first reply. */
   current?: string;
-  /** The floppy's own choice, if it has one (SessionDetail.modelOverride). */
+  /** The floppy's own model (SessionDetail.modelOverride): the tape's when it was made, then switched. */
   modelOverride?: string;
-  /** The tape's model, which the floppy runs on without an override. */
+  /** The tape's model now; a floppy only takes it when made, or with "Use tape's model". */
   guruModel?: string;
   models: ModelRow[];
   /** A Drive is going, so the switch takes effect now rather than on the next run. */
@@ -26,7 +26,8 @@ const MODEL_ID = /^[^\s/]+\/\S+$/;
 const THINKING_SUFFIX = /:(off|minimal|low|medium|high|xhigh)$/;
 
 /** Switch the floppy's model (PUT /api/sessions/:id/model). The choice stays with the floppy, and a
- * running Drive moves to it before its next reply; "Use tape's model" drops the floppy's choice. */
+ * running Drive moves to it before its next reply. "Use tape's model" copies the tape's current
+ * model; editing the tape later still doesn't move the floppy. */
 export function SwitchModelDialog({ sessionId, current, modelOverride, guruModel, models, live, onSwitched, onCancel, onError }: Props) {
   const [value, setValue] = useState(modelOverride ?? current ?? guruModel ?? "");
   const [busy, setBusy] = useState<"switch" | "reset" | null>(null);
@@ -91,7 +92,7 @@ export function SwitchModelDialog({ sessionId, current, modelOverride, guruModel
             <button type="submit" className="btn btn-primary" disabled={!valid || busy !== null}>
               {busy === "switch" ? <Working label="Switching" /> : "Switch"}
             </button>
-            {modelOverride && (
+            {guruModel && guruModel !== modelOverride && (
               <button type="button" className="btn" onClick={() => void save(null)} disabled={busy !== null}>
                 {busy === "reset" ? <Working label="Switching" /> : "Use tape's model"}
               </button>

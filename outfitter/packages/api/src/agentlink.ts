@@ -24,6 +24,7 @@ import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
+import { floppyModel } from "./session-model.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
@@ -1220,9 +1221,12 @@ export class AgentLink {
         throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
       }
     }
+    // The floppy's own model (session-model.ts): pinned at creation, then whatever was switched to.
+    // A floppy from before the pin restores on its transcript's last model, not the tape's current
+    // one; only that case reads the transcript here (a reconnect loads no entries below).
+    const wanted = floppyModel(session, guru, session.modelOverride ? [] : (await this.store.entries.listForSession(session.id)).map((e) => e.entry));
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
-    const wanted = session.modelOverride ?? guru.model;
     const online = await this.laptopProbe.isOnline();
     const resolved = resolveRunModel({
       wanted,

@@ -1,12 +1,13 @@
-// Switching a floppy's model (PUT /api/sessions/:id/model). The choice is stored on the session as
-// `modelOverride`, which every later run.spec already prefers over the tape's model (agentlink.ts's
+// A floppy's model. The tape only seeds it: createSession pins the tape's model on the new floppy
+// as `modelOverride`, and from then on the floppy keeps its own (a later tape edit doesn't move
+// it). PUT /api/sessions/:id/model switches it, and every later run.spec uses it (agentlink.ts's
 // buildRunSpec). A Drive that is already going gets it too: pi's own `set_model` RPC, through the
 // `rpc` down-frame agentd hands straight to pi (queued until pi is up). pi then writes a
 // `model_change` entry, which the session header reads, and which the next run's restore sees, so
 // that run doesn't pass `--model` again (agentd's Bug 8 check).
 
 import type { RouteContext } from "./routes/context.ts";
-import type { Guru, Run, Session } from "./store/types.ts";
+import type { Guru, PiEntry, Run, Session } from "./store/types.ts";
 import { resolveRunModel } from "./laptop.ts";
 
 export const MODEL_ID_MAX = 200;
@@ -28,6 +29,26 @@ export function setModelCommand(model: string): { type: "set_model"; provider: s
   return { type: "set_model", provider: model.slice(0, slash), modelId: model.slice(slash + 1) };
 }
 
+/** The last model a transcript records (pi's `model_change` entries, `provider/modelId`), for a
+ * floppy from before models were pinned: it restores on what it last ran, not the tape's current
+ * model. Mirrors agentd's lastKnownModelState. */
+export function transcriptModel(entries: readonly PiEntry[]): string | undefined {
+  let model: string | undefined;
+  for (const entry of entries) {
+    if (entry.type !== "model_change") continue;
+    if (typeof entry.provider === "string" && typeof entry.modelId === "string" && entry.provider && entry.modelId) {
+      model = `${entry.provider}/${entry.modelId}`;
+    }
+  }
+  return model;
+}
+
+/** What a run of this floppy starts on, before the laptop preflight: its own model, else (an older
+ * floppy) its transcript's last, else the tape's. */
+export function floppyModel(session: Session, guru: Pick<Guru, "model">, entries: readonly PiEntry[]): string {
+  return session.modelOverride ?? transcriptModel(entries) ?? guru.model;
+}
+
 /** A run whose pi will take a `set_model` now or once it is up. A stopping run is checkpointing on
  * its way out; the next run starts on the new model from its spec. */
 function takesLiveSwitch(run: Run | null): run is Run {
@@ -35,7 +56,7 @@ function takesLiveSwitch(run: Run | null): run is Run {
 }
 
 export interface ModelSwitch {
-  /** What the floppy now asks for; null means the tape's model. */
+  /** What the floppy now has; null only when its tape names no model (central settings decide). */
   modelOverride: string | null;
   /** The model pi was told to use: the laptop preflight may have swapped a laptop model out. */
   model: string;
@@ -44,18 +65,20 @@ export interface ModelSwitch {
   modelFallback?: { wanted: string; used: string };
 }
 
-/** Stores the floppy's model and, when a Drive is going, switches its pi over. `model` null goes
- * back to the tape's own. `guru` is null when the floppy's tape has been deleted. */
+/** Stores the floppy's model and, when a Drive is going, switches its pi over. `model` null copies
+ * the tape's model as it is now (a copy, like at creation: later tape edits still don't follow).
+ * `guru` is null when the floppy's tape has been deleted. */
 export async function switchSessionModel(ctx: RouteContext, session: Session, guru: Guru | null, model: string | null): Promise<ModelSwitch> {
-  await ctx.store.sessions.setModelOverride(session.id, model, new Date().toISOString());
+  const stored = model ?? (guru?.model || null);
+  await ctx.store.sessions.setModelOverride(session.id, stored, new Date().toISOString());
   const run = await ctx.store.runs.findActiveForSession(session.id);
-  if (!takesLiveSwitch(run)) return { modelOverride: model, model: model ?? guru?.model ?? "", applied: "next-run" };
+  if (!takesLiveSwitch(run)) return { modelOverride: stored, model: stored ?? "", applied: "next-run" };
   const laptopOnline = await ctx.laptopProbe.isOnline();
   // Two switches at once: whichever sends last must send what is stored now, or pi would stay on
   // the older one while the floppy says the newer. So read the floppy again right before sending.
   const current = (await ctx.store.sessions.findById(session.id))?.modelOverride ?? null;
-  const wanted = current ?? guru?.model ?? "";
-  // A tape with no model leaves it to the owner's central settings, which only agentd applies.
+  // Null: the tape names no model, which leaves it to the owner's central settings (agentd's).
+  const wanted = current ?? "";
   if (!wanted) return { modelOverride: current, model: wanted, applied: "next-run" };
   const resolved = resolveRunModel({
     wanted,

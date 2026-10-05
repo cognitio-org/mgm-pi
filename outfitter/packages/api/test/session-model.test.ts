@@ -32,7 +32,7 @@ describe("session model helpers", () => {
 });
 
 describe("PUT /api/sessions/:id/model", () => {
-  test("with no Drive going, stores the floppy's model for the next run, and null goes back to the tape's", async () => {
+  test("with no Drive going, stores the floppy's model for the next run, and null copies the tape's", async () => {
     const app = await buildTestApp();
     await seedGuru(app.store, { model: "litellm/claude-auto-llm" });
     const session = await seedStoppedSession(app);
@@ -44,10 +44,43 @@ describe("PUT /api/sessions/:id/model", () => {
     assert.equal(detail.modelOverride, "litellm/gpt-5-mini");
     assert.equal(detail.guruModel, "litellm/claude-auto-llm");
 
-    const cleared = await putModel(app, session.id, null);
-    assert.deepEqual(cleared.json(), { modelOverride: null, model: "litellm/claude-auto-llm", applied: "next-run" });
-    const stored = await app.store.sessions.findById(session.id);
-    assert.equal("modelOverride" in stored!, false, "cleared, not set to null");
+    const copied = await putModel(app, session.id, null);
+    assert.deepEqual(copied.json(), { modelOverride: "litellm/claude-auto-llm", model: "litellm/claude-auto-llm", applied: "next-run" });
+    assert.equal((await app.store.sessions.findById(session.id))?.modelOverride, "litellm/claude-auto-llm", "a copy, not a link to the tape");
+    await app.fastify.close();
+  });
+
+  test("a new floppy pins the tape's model; a later tape edit doesn't move it", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { model: "litellm/claude-auto-llm" });
+    const created = await app.fastify.inject({ method: "POST", url: "/api/sessions", payload: { guruId: "test-guru", prompt: "hi" } });
+    const { session, run } = created.json();
+    assert.equal(session.modelOverride, "litellm/claude-auto-llm");
+    await app.store.gurus.update("test-guru", { model: "litellm/gpt-5-mini" });
+
+    const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
+    assert.equal((await agent.nextMessage()).guru.model, "litellm/claude-auto-llm");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a floppy from before the pin restores on its transcript's last model, not the tape's", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { model: "litellm/gpt-5-mini" });
+    const session = await seedStoppedSession(app); // no modelOverride
+    await app.store.entries.insertIfNew(session.id, 1, { id: "m1", type: "model_change", provider: "litellm", modelId: "claude-auto-llm" });
+    await app.store.entries.insertIfNew(session.id, 2, { id: "m2", type: "model_change", provider: "litellm", modelId: "qwen3-coder" });
+
+    const run = await app.runs.wake(session.id);
+    const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
+    assert.equal((await agent.nextMessage()).guru.model, "litellm/qwen3-coder");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
     await app.fastify.close();
   });
 

@@ -75,9 +75,10 @@ export interface SessionDetail {
   baseBranch?: string;
   branch?: string;
   prompt?: string;
-  /** The floppy's own model choice (PUT /api/sessions/:id/model); absent means the tape's. */
+  /** The floppy's model: the tape's when it was made, then whatever PUT /api/sessions/:id/model set.
+   * Absent on older floppies, which keep their transcript's last model. */
   modelOverride?: string;
-  /** The tape's model, which the floppy runs on without an override. */
+  /** The tape's model now. A tape edit doesn't move existing floppies. */
   guruModel?: string;
   parentId?: string;
   status: "open" | "closed";
@@ -768,7 +769,7 @@ export const api = {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
   },
 
-  /** Switches the floppy's model, live when a Drive is going; null goes back to the tape's. */
+  /** Switches the floppy's model, live when a Drive is going; null copies the tape's current model. */
   setSessionModel(id: string, model: string | null): Promise<ModelSwitch> {
     return request(`/api/sessions/${id}/model`, { method: "PUT", body: JSON.stringify({ model }) });
   },

@@ -476,15 +476,11 @@ export function SessionPage() {
   const cluster = githubCluster(session);
   const looseRepo = looseRepoClause(session);
   const modelProviderKind = header.model?.split("/")[0];
-  // What the floppy will run on, when pi isn't on it yet: its own choice, or the tape's once the
-  // transcript shows something else (a floppy with no replies yet just reads "model unknown yet").
-  const pendingModel = session?.modelOverride
-    ? session.modelOverride !== header.model
-      ? session.modelOverride
-      : undefined
-    : header.model && session?.guruModel && session.guruModel !== header.model
-      ? session.guruModel
-      : undefined;
+  // The floppy's own model (pinned from the tape when it was made, then switched), when pi isn't on
+  // it yet. Before the first reply the header shows the floppy's model itself instead.
+  const pendingModel =
+    header.model && session?.modelOverride && session.modelOverride !== header.model ? session.modelOverride : undefined;
+  const shownModel = header.model ?? session?.modelOverride;
   const driveGoing = runState === "queued" || runState === "provisioning" || runState === "running" || runState === "idle";
   const modelProviderDown = modelProviderKind
     ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
@@ -671,7 +667,7 @@ export function SessionPage() {
                 disabled={archived || !session}
                 title={archived ? "Restore the floppy to switch its model" : "Switch model"}
               >
-                {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
+                {shownModel ? <span className="mono">{shownModel}</span> : "model unknown yet"}
               </button>
               {/* Chosen but not in use yet: no Drive is going, or pi hasn't taken it. */}
               {pendingModel ? (
@@ -813,7 +809,7 @@ export function SessionPage() {
       {modelOpen && session && (
         <SwitchModelDialog
           sessionId={sessionId}
-          current={header.model}
+          current={shownModel}
           modelOverride={session.modelOverride}
           guruModel={session.guruModel}
           models={models}

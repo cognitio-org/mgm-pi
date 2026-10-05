@@ -34,7 +34,11 @@ export interface Session {
   /** Absent for a repo-less session; agentd then works out of a scratch /workspace instead. */
   branch?: string;
   prompt?: string;
-  /** Per-session model override, taking priority over the guru's own `model` (E2.8 laptop preflight). */
+  /** The floppy's model: the tape's `model` when it was created (or the one asked for), then
+   * whatever PUT /api/sessions/:id/model last set. A later edit of the tape doesn't change it.
+   * Absent on floppies from before the pin (and when the tape named none): those keep the last
+   * model their transcript records (session-model.ts's transcriptModel), else the tape's. The
+   * laptop preflight (E2.8) still applies at each run start. */
   modelOverride?: string;
   parentId?: string;
   status: "open" | "closed";
@@ -815,7 +819,7 @@ export interface SessionsCollection {
   /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it
    * doesn't exist -- or, when clearing, if it is being formatted (formattingAt). */
   setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
-  /** Sets the floppy's modelOverride, or clears it (back to the tape's model) for `null`.
+  /** Sets the floppy's modelOverride, or clears it for `null`.
    * Returns the updated session, or null if it doesn't exist. */
   setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null>;
   /** #208: atomically sets formattingAt on an archived session that isn't already being formatted.

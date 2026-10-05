@@ -48,7 +48,7 @@ describe("RunKeys.keyForRun", () => {
     await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
     const [gen] = fake.callsTo("/key/generate");
     assert.equal(gen!.body.max_budget, 4);
-    assert.deepEqual(gen!.body.models, ["claude-auto-llm"]);
+    assert.deepEqual(gen!.body.models, ["claude-auto-llm", "local-hosts"]);
     assert.ok(!("rpm_limit" in gen!.body), "device-only limits stay off run keys");
     const record = await store.routerKeys.findByAlias("outfitter-run-r1");
     assert.equal(record?.maxBudget, 4);

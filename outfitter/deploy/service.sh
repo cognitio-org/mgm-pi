@@ -82,6 +82,14 @@ if [[ "${ROLE}" == "web" ]]; then
   VOICE_SECRET="$(existing_secrets DEEPGRAM_API_KEY=outfitter-deepgram-key:latest)"
   [[ -n "${VOICE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${VOICE_SECRET}"
 fi
+# #384 Local Host router entries (docs/specs/local-host.md §3.5): a separate /model/*-only key
+# (KEY=local-hosts ./litellm-admin.sh), link role only, where heartbeats and the tick run router
+# sync. Never on web: unlike LITELLM_ADMIN_KEY it can rewrite router deployments. Mounted once the
+# secret exists; without it the api registers no router listener.
+if [[ "${ROLE}" == "link" ]]; then
+  ROUTER_SECRET="$(existing_secrets LOCAL_HOST_ROUTER_KEY=outfitter-litellm-admin-key:latest)"
+  [[ -n "${ROUTER_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${ROUTER_SECRET}"
+fi
 # E9 Agent Engine (config.env): link role only, where the admin socket's memory and ae ops run. Each
 # service account secret is mounted only when its project id is set and the secret exists.
 if [[ "${ROLE}" == "link" ]]; then

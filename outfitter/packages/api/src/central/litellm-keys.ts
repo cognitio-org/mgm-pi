@@ -21,6 +21,7 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { LOCAL_HOST_ACCESS_GROUP } from "../local-hosts/contract.ts";
 import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
 import type { Store } from "../store/types.ts";
@@ -146,7 +147,11 @@ export function parseModelList(value: unknown): string[] | undefined {
  * and `router.runKey.maxBudgetUsd` (fleet level only, locked; defaults in settings-schema.ts). */
 export function routerKeyLimits(fleet: FleetSettings): RouterKeyLimits {
   const values = fleetLevelValues(fleet);
-  const models = parseModelList(fleetSetting(values, "router.keys.models"));
+  const listed = parseModelList(fleetSetting(values, "router.keys.models"));
+  // #384 (local-host.md §3.6): everyone signed in may use shared laptop models, Drives too. A fleet
+  // list that restricts keys gets the `local-hosts` model access group, which LiteLLM resolves to
+  // every deployment carrying model_info.access_groups ["local-hosts"].
+  const models = listed && !listed.includes(LOCAL_HOST_ACCESS_GROUP) ? [...listed, LOCAL_HOST_ACCESS_GROUP] : listed;
   return {
     device: {
       duration: `${numberSetting(values, "router.deviceKey.durationDays", DEVICE_KEY_DURATION_DAYS)}d`,

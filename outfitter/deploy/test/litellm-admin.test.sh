@@ -2,7 +2,9 @@
 # litellm-admin.sh against a fake router (node http) and a fake gcloud that keeps secrets in files.
 # Checks: first run creates the user, mints one scoped key and stores it; a rerun does nothing;
 # ROTATE=1 stores a new key, disables the old version and deletes the old key; no key value ever
-# reaches stdout/stderr; the key's allowed routes are exactly the ones the api calls. No network, no GCP.
+# reaches stdout/stderr; each key's allowed routes are exactly the ones the api calls with it: the
+# admin key's (litellm-keys.ts, providers-status.ts, models.ts) and KEY=local-hosts's
+# (local-hosts/router-sync.ts, /model/* only, its own secret and alias). No network, no GCP.
 #   bash outfitter/deploy/test/litellm-admin.test.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,6 +73,15 @@ unset GITHUB_ACTIONS DRY_RUN ROTATE
 fail() { echo "FAIL: $*" >&2; exit 1; }
 run() { bash "${SCRIPT}" >"${WORK}/out" 2>&1 || { cat "${WORK}/out"; fail "script exited non-zero"; }
   ! grep -q 'sk-' "${WORK}/out" || { cat "${WORK}/out"; fail "a key value reached the output"; }; }
+# routes_called FILE... -- the LiteLLM routes those api files call, sorted.
+API_SRC="${HERE}/../../packages/api/src"
+routes_called() { grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' "$@" | grep -oE '/[a-z/_]+' | sort -u; }
+# routes_allowed ALIAS_PREFIX -- the allowed_routes of the first key minted under that alias, sorted.
+routes_allowed() { grep -m1 "^POST /key/generate .*\"key_alias\":\"$1-" "${ROUTER_LOG}" | sed 's/^POST \/key\/generate //' \
+  | node -e 'let b="";process.stdin.on("data",(c)=>(b+=c)).on("end",()=>console.log(JSON.parse(b).allowed_routes.join("\n")))' \
+  | sort -u; }
+same_routes() { [[ "$1" == "$2" ]] || fail "$3: allowed_routes != routes the api calls:
+$(diff <(echo "$1") <(echo "$2") | grep '^[<>]' | sed 's/^</  called, not allowed:/; s/^>/  allowed, not called:/')"; }
 
 # DRY_RUN touches nothing.
 DRY_RUN=1 run
@@ -86,27 +97,37 @@ grep -q '/key/regenerate' "${ROUTER_LOG}" && fail "regenerate must not be allowe
 # (routes kept on purpose without a caller; none today). Either side having a route the other
 # lacks fails: a missing route breaks the api, an extra one widens a key the link service holds.
 EXTRA_ROUTES=""
-API_SRC="${HERE}/../../packages/api/src"
-called="$( { grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' \
-  "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts" | grep -oE '/[a-z/_]+'
+called="$( { routes_called "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts"
   for r in ${EXTRA_ROUTES}; do echo "${r}"; done; } | sort -u)"
 [[ "$(wc -l <<<"${called}")" -ge 10 ]] || fail "found too few api routes: ${called}"
-allowed="$(grep -m1 '^POST /key/generate ' "${ROUTER_LOG}" | sed 's/^POST \/key\/generate //' \
-  | node -e 'let b="";process.stdin.on("data",(c)=>(b+=c)).on("end",()=>console.log(JSON.parse(b).allowed_routes.join("\n")))' \
-  | sort -u)"
-[[ "${allowed}" == "${called}" ]] || fail "allowed_routes != routes the api calls (+EXTRA_ROUTES):
-$(diff <(echo "${called}") <(echo "${allowed}") | grep '^[<>]' | sed 's/^</  called, not allowed:/; s/^>/  allowed, not called:/')"
+same_routes "${called}" "$(routes_allowed outfitter-admin)" "admin key (+EXTRA_ROUTES)"
+grep -qE '^/model/(new|update|delete)$' <<<"$(routes_allowed outfitter-admin)" && fail "the admin key must not write models"
 
 # Rerun is a no-op.
 run
 grep -q "Nothing to do" "${WORK}/out" || fail "rerun was not a no-op"
 [[ "$(grep -c '/key/generate' "${ROUTER_LOG}")" == 1 ]] || fail "rerun minted"
 
-# Rotation.
+# KEY=local-hosts: its own secret and alias, /model/* only, exactly what router-sync.ts calls.
+KEY=local-hosts run
+[[ "$(cat "${STATE}/secrets/outfitter-litellm-admin-key.1")" == "sk-admin-2" ]] || fail "local-hosts key not stored in outfitter-litellm-admin-key"
+[[ ! -e "${STATE}/secrets/outfitter-litellm-admin.2" ]] || fail "local-hosts key went into the admin secret"
+local_called="$(routes_called "${API_SRC}/local-hosts/router-sync.ts")"
+[[ "$(wc -l <<<"${local_called}")" -ge 4 ]] || fail "found too few router-sync routes: ${local_called}"
+same_routes "${local_called}" "$(routes_allowed outfitter-localhosts)" "local-hosts key"
+grep -vqE '^/model/' <<<"$(routes_allowed outfitter-localhosts)" && fail "the local-hosts key must only carry /model/* routes"
+grep -q '"purpose":"local host model entries' "${ROUTER_LOG}" || fail "local-hosts key purpose missing"
+KEY=local-hosts run
+grep -q "Nothing to do" "${WORK}/out" || fail "local-hosts rerun was not a no-op"
+KEY=bogus bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "an unknown KEY must fail"
+
+# Rotation of the admin key leaves the local-hosts key alone.
 sleep 1  # the alias carries a seconds timestamp
 ROTATE=1 run
-[[ "$(cat "${STATE}/secrets/outfitter-litellm-admin.2")" == "sk-admin-2" ]] || fail "key 2 not stored"
+[[ "$(cat "${STATE}/secrets/outfitter-litellm-admin.2")" == "sk-admin-3" ]] || fail "key 3 not stored"
 [[ -f "${STATE}/secrets/outfitter-litellm-admin.1.disabled" ]] || fail "old version not disabled"
 grep -q '"key_aliases":\["outfitter-admin-' "${ROUTER_LOG}" || fail "old key not deleted"
+grep '^POST /key/delete ' "${ROUTER_LOG}" | grep -q 'outfitter-localhosts' && fail "admin rotation deleted the local-hosts key"
+[[ -f "${STATE}/secrets/outfitter-litellm-admin-key.1" ]] || fail "admin rotation touched the local-hosts secret"
 
 echo "litellm-admin.test.sh: ok"

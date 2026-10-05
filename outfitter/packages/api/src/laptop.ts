@@ -27,6 +27,9 @@ export interface LaptopProbeConfig {
   /** #382 (docs/specs/local-host.md §1.8): the host registry, for `local/<prefix>/<model>` names
    * (isOnlineFor). */
   localHosts?: LocalHostsCollection;
+  /** Injectable for tests: the clock isOnlineFor judges a host's status by. Defaults to the system
+   * clock. */
+  now?: () => Date;
 }
 
 export class LaptopProbe {
@@ -38,6 +41,7 @@ export class LaptopProbe {
   private cachedOnline: boolean | undefined;
   private cachedAt: number | undefined;
   private readonly localHosts: LocalHostsCollection | undefined;
+  private readonly now: () => Date;
   /** Host records by router prefix (null: no such host), each trusted for `cacheMs`. */
   private readonly hostCache = new Map<string, { at: number; host: LocalHost | null }>();
 
@@ -48,6 +52,7 @@ export class LaptopProbe {
     this.cacheMs = config.cacheMs ?? DEFAULT_CACHE_MS;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.localHosts = config.localHosts;
+    this.now = config.now ?? (() => new Date());
   }
 
   /**
@@ -60,7 +65,7 @@ export class LaptopProbe {
     const parsed = parseRouterModelName(model);
     if (!parsed) return this.isOnline();
     if (!this.localHosts) return false;
-    const now = Date.now();
+    const now = this.now().getTime();
     let entry = this.hostCache.get(parsed.routerPrefix);
     if (!entry || now - entry.at >= this.cacheMs) {
       try {

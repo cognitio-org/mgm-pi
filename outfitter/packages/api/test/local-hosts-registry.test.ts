@@ -436,6 +436,7 @@ describe("LaptopProbe.isOnlineFor and resolveRunModel (§1.8)", () => {
       tunnelDomain: "legacy.ngrok.app",
       token: "t",
       localHosts: h.store.localHosts,
+      now: () => h.clock.now,
       fetchImpl: (async () => { probes++; return new Response("{}", { status: 200 }); }) as typeof fetch,
     });
     return { h, probe, probes: () => probes };

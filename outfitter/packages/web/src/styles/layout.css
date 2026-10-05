@@ -1066,42 +1066,34 @@ h4.voice-menu-heading {
 }
 
 .beat {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  column-gap: 0.35rem;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   min-width: 0;
-}
-
-.beat.tools-only {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .beat > .entry {
-  height: 100%;
   min-width: 0;
 }
 
+/* One place for the model's work: a row of labelled chips (thinking, then each tool call) under
+ * the message they belong to (lib/beats.ts decides which), or on its own when no message has
+ * claimed them yet. Wraps onto more lines when a step runs many tools. */
 .rail {
-  align-self: start;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-}
-
-.beat.tools-only .rail {
-  flex-direction: row;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* #285: while a thought is on screen, an assistant beat keeps the rail in its right column,
- * which is where that bubble shrinks to. A tools-only beat's rail already rests as a row at
- * the start, so the bubble sits under it and shrinks upward -- forcing the glyph into the
- * right column made it jump back left when the bubble unmounted. Settled beats do not get
- * this class, so a finished reply stays a direct .entry stretched to the rail. */
+.rail:empty {
+  display: none;
+}
+
+/* #285: while a thought is on screen it sits in the beat's flow (above the message, or under a
+ * tools-only row), then shrinks upward into its chip when the round ends. */
 .beat-copy {
   display: flex;
   flex-direction: column;
@@ -1109,25 +1101,11 @@ h4.voice-menu-heading {
   min-width: 0;
 }
 
-.beat.has-thought-bubble {
-  grid-template-columns: minmax(0, 1fr) 30px;
-}
-
-.beat.tools-only.has-thought-bubble {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.beat.tools-only.has-thought-bubble .rail {
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.beat.tools-only .thought-bubble {
+.beat .thought-bubble {
   transform-origin: left top;
 }
 
-.beat.tools-only .thought-bubble-slot.is-collapsing .thought-bubble {
+.beat .thought-bubble-slot.is-collapsing .thought-bubble {
   transform: translateY(-12px) scale(0.2);
 }
 
@@ -1175,16 +1153,9 @@ h4.voice-menu-heading {
   font-weight: 400;
 }
 
-/* Tools-only rows (TranscriptRail's `labelled`): the glyph grows into a chip that says what ran,
- * "bash  rg -n onSubmit src/...", so the conversation reads without hovering every icon. A
- * reply's own rail (`is-labelled-phone`) only has that width on a phone, where it's a row above
- * the text (mobile.css); beside the text on a desktop it stays a column of icons. */
-.rail.is-labelled {
-  gap: 0.3rem;
-  max-width: 100%;
-}
-
-.rail.is-labelled .rail-glyph {
+/* Each glyph is a chip that says what ran ("bash  rg -n onSubmit src/..."), so the conversation
+ * reads without hovering every icon. Click or hover still opens the full input and output. */
+.rail .rail-glyph {
   width: auto;
   max-width: 100%;
   min-width: 0;
@@ -1196,7 +1167,7 @@ h4.voice-menu-heading {
   background: var(--bg-inset);
 }
 
-.rail.is-labelled-phone .rail-glyph-label {
+.rail-glyph-label {
   display: none;
 }
 
@@ -1271,20 +1242,6 @@ h4.voice-menu-heading {
 .rail-glyph.is-error[aria-pressed="true"] {
   color: var(--danger);
   border-color: var(--danger);
-}
-
-.rail-badge {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1;
-  padding: 1px 2px;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  pointer-events: none;
 }
 
 .rail-led {

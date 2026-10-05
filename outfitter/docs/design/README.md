@@ -120,11 +120,19 @@ conversation first:
   a tall editor (`min(22rem, 40vh)` up to 70vh; on phones 34svh up to 55svh). The choice is
   remembered per browser under `outfitter.composer.tall`. The status row above the editor only
   shows while there's a send status.
-- **Tool steps say what ran.** A row of tool calls with no text around it shows each call as a
-  chip: the tool name plus a short hint (the command, path or query, never raw JSON), e.g.
-  `bash  npm test -- login`. A reply's own tools stay as icons in the narrow column beside its
-  text on a desktop. On a phone they become a row above the text, so they get the same chips.
-  Hover or click still opens the full input and output.
+- **Tool steps say what ran, in one place.** The model's work shows as one row of chips under
+  the message it belongs to, on desktop and phone alike. There's no separate right-hand rail. Each
+  chip names what ran: the tool name plus a short hint (the command, path or query, never raw
+  JSON), e.g. `bash  npm test -- login`, or `thinking`. Hover or click opens the full input and
+  output in a card just below the chip. More than four finished calls fold into one `N tools`
+  chip.
+
+  Which message a chip belongs to (`lib/beats.ts`):
+  - A tool called after a message belongs to that message, because the message announced it ("I'll
+    run the tests").
+  - Thinking starts a new group and goes with the message that follows it.
+  - Tools with no message to attach to (the start of a turn, or right after a thought) form their
+    own row until a message claims them.
 - **Turns.** Each of your messages gets a little extra space above it, so the transcript reads
   as exchanges rather than one long column.
 - **Syntax colours.** Fenced code with a language tag is coloured by `lib/rehype-code-colour.ts`

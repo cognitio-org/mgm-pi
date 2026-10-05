@@ -1,4 +1,11 @@
 // Groups a transcript (already passed through groupThinkingBlocks) into beats.
+// A beat is one message and the work around it, shown as one row of chips under the text:
+// - thinking starts a new beat: it is what the model did before writing, so it goes with the
+//   message that follows it (and so do tools called after that thought, before any text);
+// - a tool called after a message, with no thinking in between, belongs to that message: the
+//   message announced it ("I'll run the tests") and the chip sits right under those words;
+// - tools with no message to attach to (the start of a turn, or after a thought) form a
+//   tools-only beat until a message arrives and claims them.
 // A tool call and the result that share a toolCallId are one rail item, including when an
 // assistant-text closed the run between them: the result fills the call in place and does not
 // start a second item. A call with no result is running only while its turn still is: the next
@@ -125,6 +132,11 @@ export function collapseRail(items: RailItem[]): RailGlyph[] {
 export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boolean }): Beat[] {
   const beats: Beat[] = [];
   let rail: RailItem[] = [];
+  // The message that later tools attach to: the latest prose of this turn, until a thought or
+  // anything that isn't the model's own work comes between.
+  let lastProse: AssistantBeat | null = null;
+  // Where a new tool item goes: under the latest message, or onto the open tools-only rail.
+  const toolRail = (): RailItem[] => (rail.length === 0 && lastProse ? lastProse.rail : rail);
   // The unpaired half of a tool (a running call, or a result that arrived first).
   const pending = new Map<string, RailTool>();
   // Calls whose turn already ended. A result that shows up later still fills the same item.
@@ -149,6 +161,7 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
       case "user":
         finishOpenCalls();
         flushTools();
+        lastProse = null;
         beats.push({ kind: "user", id: view.id, view });
         break;
       case "system":
@@ -162,9 +175,11 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
       case "session-info":
       case "unknown":
         flushTools();
+        lastProse = null;
         beats.push({ kind: "passthrough", id: view.id, view });
         break;
       case "thinking-group":
+        lastProse = null;
         rail.push({ kind: "thinking", id: view.id, blocks: view.blocks });
         break;
       case "tool-call": {
@@ -187,7 +202,7 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
           running: !view.interrupted,
           ...(view.interrupted ? { interrupted: true } : {}),
         };
-        rail.push(item);
+        toolRail().push(item);
         if (!view.interrupted) pending.set(view.toolCallId, item);
         break;
       }
@@ -211,14 +226,17 @@ export function groupBeats(views: GroupedEntry[], options?: { runSettled?: boole
           isError: view.isError,
           running: false,
         };
-        rail.push(item);
+        toolRail().push(item);
         pending.set(view.toolCallId, item);
         break;
       }
-      case "assistant-text":
-        beats.push({ kind: "assistant", id: rail[0]?.id ?? view.id, proseId: view.id, prose: view.text, rail });
+      case "assistant-text": {
+        const beat: AssistantBeat = { kind: "assistant", id: rail[0]?.id ?? view.id, proseId: view.id, prose: view.text, rail };
+        beats.push(beat);
+        lastProse = beat;
         rail = [];
         break;
+      }
       default: {
         const unreachable: never = view;
         throw new Error(`unexpected view ${(unreachable as { kind: string }).kind}`);

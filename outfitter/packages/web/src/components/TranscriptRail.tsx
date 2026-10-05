@@ -157,16 +157,16 @@ function placeCard(anchor: HTMLElement, card: HTMLElement) {
     card.style.top = `${top}px`;
     return;
   }
+  // Desktop: the chip row sits under its message, so the card opens just below the chip (above it
+  // when there's no room), starting at the chip's left edge and kept inside the window.
   card.style.maxWidth = "400px";
   card.style.width = "min(400px, calc(100vw - 16px))";
   const width = card.offsetWidth;
   const height = card.offsetHeight;
   const glyph = anchor.getBoundingClientRect();
-  let left = glyph.left - width - 10;
-  if (left < margin) left = Math.min(glyph.right + 10, window.innerWidth - width - margin);
-  let top = glyph.top;
-  if (top + height > window.innerHeight - margin) top = window.innerHeight - height - margin;
-  if (top < margin) top = margin;
+  const left = Math.max(margin, Math.min(glyph.left, window.innerWidth - width - margin));
+  let top = glyph.bottom + 6;
+  if (top + height > window.innerHeight - margin) top = Math.max(margin, glyph.top - height - 6);
   card.style.left = `${left}px`;
   card.style.top = `${top}px`;
 }
@@ -209,13 +209,9 @@ export function TranscriptRail({
   items,
   defaultThinkingExpanded = false,
   collapsingThinkingId,
-  labelled = "never",
 }: {
   items: RailItem[];
   defaultThinkingExpanded?: boolean;
-  /** Where a glyph also shows its tool name and a hint: "always" in a tools-only row, which has the
-   * width; "phone" beside prose, where the rail is a row above the text only on a phone. */
-  labelled?: "always" | "phone" | "never";
   /** The thinking glyph the live bubble is shrinking into. */
   collapsingThinkingId?: string;
 }) {
@@ -414,7 +410,7 @@ export function TranscriptRail({
 
   return (
     <>
-      <div className={`rail${labelled === "always" ? " is-labelled" : labelled === "phone" ? " is-labelled-phone" : ""}`} ref={rootRef}>
+      <div className="rail" ref={rootRef}>
         {glyphs.map((glyph) => {
           const id = glyphIdOf(glyph);
           const thinkingItem = glyph.kind === "single" && glyph.item.kind === "thinking" ? glyph.item : undefined;
@@ -463,8 +459,7 @@ export function TranscriptRail({
             >
               {thinkingItem ? <ThinkingIcon size={16} /> : <ToolboxIcon size={16} />}
               {toolItem?.running ? <span className="rail-led" aria-hidden="true" /> : null}
-              {glyph.kind === "batch" && labelled !== "always" ? <span className="rail-badge">×{glyph.tools.length}</span> : null}
-              {labelled !== "never" ? <GlyphLabel glyph={glyph} /> : null}
+              <GlyphLabel glyph={glyph} />
             </button>
           );
         })}
@@ -625,14 +620,13 @@ export function BeatView({
   const vscode = beatOpensVsCode(beat) ? <VsCodeCard live={vscodeLive} /> : null;
   const bubbleNode = bubble ? <ThoughtBubble item={bubble.item} collapsing={bubble.collapsing} /> : null;
   const collapsingThinkingId = bubble?.collapsing ? bubble.item.id : undefined;
-  // The wrapper exists only while the bubble does, so a settled reply stays a direct .entry
-  // (that is what stretches to the rail). The bubble is the conversation column; the glyph stays.
+  // The beat stacks top to bottom: (a live thought,) the message, then its chip row. The bubble
+  // wrapper exists only while the thought is on screen.
   const rail = (
     <TranscriptRail
       items={beat.rail}
       defaultThinkingExpanded={defaultThinkingExpanded}
       collapsingThinkingId={collapsingThinkingId}
-      labelled={beat.kind === "tools-only" ? "always" : "phone"}
     />
   );
   if (beat.kind === "tools-only") {

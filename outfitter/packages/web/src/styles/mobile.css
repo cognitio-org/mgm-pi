@@ -399,66 +399,8 @@ select {
     padding: 0.9rem 0.45rem 0.5rem;
   }
 
-  .beat {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 0.8rem;
-  }
-
-  .beat .rail {
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    order: -1;
-  }
-
-  .beat .rail:empty {
-    display: none;
-  }
-
-  /* The reply's rail is a row above its text here, so its glyphs get words too (layout.css). */
-  .rail.is-labelled-phone {
-    gap: 0.3rem;
-  }
-
-  .rail.is-labelled-phone .rail-glyph {
-    width: auto;
-    max-width: 100%;
-    min-width: 0;
-    padding: 0 0.5rem 0 0.35rem;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    border: 1px solid var(--border);
-    background: var(--bg-inset);
-  }
-
-  .rail.is-labelled-phone .rail-glyph-label {
-    display: inline-flex;
-  }
-
-  .rail.is-labelled-phone .rail-badge {
-    display: none;
-  }
-
   .rail-glyph-hint {
     max-width: 24ch;
-  }
-
-  /* The rail sits above the paragraph on a phone, so the bubble collapses upward into it. */
-  .beat.has-thought-bubble {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .beat.tools-only.has-thought-bubble .rail {
-    flex-direction: row;
-  }
-
-  .thought-bubble {
-    transform-origin: center top;
-  }
-
-  .thought-bubble-slot.is-collapsing .thought-bubble {
-    transform: translateY(-12px) scale(0.2);
   }
 
   .composer {

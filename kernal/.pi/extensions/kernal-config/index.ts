@@ -32,7 +32,7 @@ import { inSandbox } from "../_shared/env.ts";
 import { busRequest } from "../connect/lib.ts";
 import {
   KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, adoptKeychainLogin, describeSource, displayValue, providerKey, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue,
-  resolve, startBackgroundRefresh, webOrigin, type ResolvedConfig,
+  providerKeySource, resolve, startBackgroundRefresh, takeShellWarnings, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
 import { applyModelAtSessionStart, applyVoiceSettings, describeChanges, snapshot } from "../_shared/central-apply.ts";
 import { pendingDefaults, registerDefaultSync, type SyncResult } from "../_shared/default-sync.ts";
@@ -53,6 +53,8 @@ export type Deps = {
   /** Tests: each run of the default sync (a Ctrl+S default to the account), and its settle time. */
   onDefaultsSynced?: (r: SyncResult) => void;
   defaultsSettleMs?: number;
+  /** Tests: where a warning goes without a UI (default stderr). */
+  stderr?: (line: string) => void;
 };
 
 /** The device's router key in use, or undefined when a local key (or none) is. */
@@ -85,6 +87,14 @@ export function renderConfig(r: ResolvedConfig): string {
     const lock = !v.locked ? "" : v.source === "default" ? ", locked" : ", locked: set by your Sysop";
     lines.push(`  ${decl.key} = ${displayValue(decl.key, v.value)}  (${describeSource(v)}${lock})`);
   }
+  if (r.account) {
+    // #432: the provider keys in force and where each comes from (a shell one wins over the account's).
+    const keys = Object.entries(PROVIDER_ENV).flatMap(([p, name]) => {
+      const k = providerKeySource(p);
+      return k ? [`  ${name} = ${k.value.length > 8 ? `…${k.value.slice(-4)}` : "…"}  (${k.source})`] : [];
+    });
+    if (keys.length) lines.push("Provider keys:", ...keys);
+  }
   if (r.api) lines.push(`Change them at ${webOrigin(r.api)}/account, or with /admin.`);
   lines.push(WHEN_NOTE);
   return lines.join("\n");
@@ -99,6 +109,19 @@ export function renderProfile(r: ResolvedConfig, requested = activeProfile()): s
 }
 
 export default function (pi: ExtensionAPI, deps: Deps = {}) {
+  // #432: a key variable from the shell that overrides this device's router key or the account's
+  // provider key, once per process: at session_start (the router key is known then), and after the
+  // background refresh brings the account's provider keys. A UI shows it; otherwise one stderr line.
+  let sessionCtx: any;
+  let started = false;
+  const giveShellWarnings = (ctx: any) => {
+    for (const line of takeShellWarnings()) {
+      try {
+        if (ctx?.hasUI) ctx.ui.notify(line, "warning");
+        else (deps.stderr ?? ((l: string) => console.error(l)))(line);
+      } catch {}
+    }
+  };
   if (!inSandbox()) {
     const bus = (pi as any).events;
     const reloadConnect = () => busRequest(bus, "kernal:connect", { op: "reload" }).catch(() => undefined);
@@ -124,6 +147,7 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       const changes = describeChanges(settingsBefore, resolve());
       if (changes.length) applyVoiceSettings(resolve());
       if (delivered().some((v, i) => v !== before[i])) await reloadConnect();
+      if (started) giveShellWarnings(sessionCtx);
       // connect's start-up key check found the device's key refused.
       const backends = await busRequest<{ id: string; rejected?: string }[]>(bus, "kernal:connect", { op: "state" }).catch(() => undefined);
       const refused = deviceRouterKey();
@@ -146,6 +170,9 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
   // #437: a new, empty session starts on the default model and thinking level the account (or
   // this machine) sets; pi chose its own from settings.json just before.
   pi.on("session_start", async (event: any, ctx: any) => {
+    started = true;
+    sessionCtx = ctx;
+    giveShellWarnings(ctx);
     // A default set just before the last quit (Ctrl+S, then exit) goes to the account first, so the
     // new session does not start on the account's older one. Only when one is pending.
     if (defaults && pendingDefaults()) await defaults.run(ctx);

@@ -165,6 +165,44 @@ export const PROVIDER_ENV: Readonly<Record<string, string>> = {
   gemini: "GEMINI_API_KEY",
 };
 
+/**
+ * The key variables whose origin matters when signed in (#432): a shell-exported one wins over this
+ * device's router key or the account's provider key (connect's loadEnv puts the process environment
+ * on top; layerCentralEnv only fills what is unset).
+ */
+export const ROUTER_KEY_ENV: readonly string[] = ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"];
+export const SHELL_WATCHED: readonly string[] = [...ROUTER_KEY_ENV, ...Object.values(PROVIDER_ENV)];
+
+/**
+ * bin/kernal's marker: the SHELL_WATCHED names already set in the environment it was started from,
+ * before it sources the .env files with `set -a` (space-separated, possibly empty). Present, a name
+ * missing from it came from a .env file bin/kernal read, even one connect doesn't (the bundle's
+ * parent directory). Absent (pi started some other way), the values are compared with the .env files
+ * alone.
+ */
+export const SHELL_KEYS_MARKER = "KERNAL_SHELL_KEYS";
+
+/**
+ * True when `name`'s value in `env` came from the shell rather than a .env file Kernal reads: it is
+ * set, bin/kernal's marker (when present) names it, and it differs from the .env files' value (one
+ * equal to it is the .env one, which bin/kernal exported; signed in that already has its own
+ * deprecation warning). Only the SHELL_WATCHED names are judged by the marker.
+ */
+export function fromShell(name: string, env: NodeJS.ProcessEnv, dotenv: Record<string, string>): boolean {
+  const v = env[name];
+  if (v === undefined || v === "" || v === dotenv[name]) return false;
+  const marker = env[SHELL_KEYS_MARKER];
+  if (marker !== undefined && SHELL_WATCHED.includes(name) && !marker.split(/[\s,]+/).includes(name)) return false;
+  return true;
+}
+
+/** True when bin/kernal's marker shows `name` came from a .env file bin/kernal sourced but connect
+ * doesn't read (the bundle's parent directory): set, not in the marker, in none of `dotenv`. */
+function fromKernalDotenv(name: string, env: NodeJS.ProcessEnv, dotenv: Record<string, string>): boolean {
+  const marker = env[SHELL_KEYS_MARKER];
+  return marker !== undefined && SHELL_WATCHED.includes(name) && !!env[name] && dotenv[name] === undefined && !marker.split(/[\s,]+/).includes(name);
+}
+
 const CENTRAL_SOURCES: ReadonlySet<ConfigSource> = new Set(["fleet", "group", "user", "profile", "device"]);
 const LOCAL_SOURCES: ReadonlySet<ConfigSource> = new Set(["local", "dotenv", "env"]);
 
@@ -302,6 +340,9 @@ export interface CentralConfigDeps {
   now: () => number;
   /** One-line warnings (default: stderr). */
   warn: (line: string) => void;
+  /** The process environment as it was before Kernal changed it (#432; default: the snapshot taken
+   * when this module was first loaded, or `env` when a test replaced that). */
+  startEnv: () => NodeJS.ProcessEnv;
 }
 
 interface State {
@@ -313,6 +354,9 @@ interface State {
   /** The login the resolution was made for (#443): adoptKeychainLogin tells a re-login as another
    * account (the resolution and the provider keys were theirs) from a new device of the same one. */
   login?: { api: string; email: string; deviceId: string };
+  /** The key variables (SHELL_WATCHED) and bin/kernal's marker as the process started with them,
+   * before connect writes OPENROUTER_API_KEY or /setup and /admin write theirs (#432). */
+  startEnv: Record<string, string>;
 }
 
 /**
@@ -323,8 +367,20 @@ interface State {
 const SLOT = Symbol.for("kernal.centralConfig");
 function state(): State {
   const g = globalThis as { [SLOT]?: State };
-  return (g[SLOT] ??= { resolved: new Map(), inflight: new Map(), providerKeys: new Map(), warned: new Set(), deps: {} });
+  return (g[SLOT] ??= { resolved: new Map(), inflight: new Map(), providerKeys: new Map(), warned: new Set(), deps: {}, startEnv: snapshotStartEnv() });
 }
+
+function snapshotStartEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of [...SHELL_WATCHED, SHELL_KEYS_MARKER]) {
+    const v = process.env[name];
+    if (v !== undefined) out[name] = v;
+  }
+  return out;
+}
+// At load, before any extension runs: connect imports this module before its first registration
+// writes OPENROUTER_API_KEY into process.env, so the snapshot is the environment Kernal started with.
+state();
 
 /** The .env files connect's loadEnv reads (connect/index.ts), nearest last. Not imported from
  * there: connect/index.ts pulls in pi's TUI and imports this module. */
@@ -376,6 +432,7 @@ function deps(): CentralConfigDeps {
     fetch: d.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a)),
     now: d.now ?? Date.now,
     warn: d.warn ?? ((line) => console.error(line)),
+    startEnv: d.startEnv ?? d.env ?? (() => state().startEnv),
   };
 }
 
@@ -644,9 +701,9 @@ function localLayers(decl: KnownSetting, overrides: Record<string, unknown>, set
     }
     return undefined;
   };
-  const dot = fromVars((n) => dotenv[n], "dotenv");
+  const dot = fromVars((n) => dotenv[n] ?? (fromKernalDotenv(n, shell, dotenv) ? shell[n] : undefined), "dotenv");
   if (dot) out.push(dot);
-  const sh = fromVars((n) => (shell[n] !== undefined && shell[n] !== dotenv[n] ? shell[n] : undefined), "env");
+  const sh = fromVars((n) => (fromShell(n, shell, dotenv) ? shell[n] : undefined), "env");
   if (sh) out.push(sh);
   return out;
 }
@@ -1129,6 +1186,86 @@ export function layerCentralEnv(env: Record<string, string>): Record<string, str
     // Central settings never break the local ones.
   }
   return out;
+}
+
+// ---------- a shell key over the login (#432) ----------
+
+const PROVIDER_LABEL: Readonly<Record<string, string>> = { openrouter: "OpenRouter", deepgram: "Deepgram", openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini" };
+
+function safeDotenv(): Record<string, string> {
+  try { return deps().dotenv(); } catch { return {}; }
+}
+
+/** The shell's value of `name` when it came from the shell (fromShell, judged on the environment
+ * the process started with) and is still in force (the same value in the process now: connect's own
+ * OPENROUTER_API_KEY write, or /setup's, never counts). Undefined otherwise. */
+export function shellValue(name: string, dotenv: Record<string, string> = safeDotenv()): string | undefined {
+  const d = deps();
+  const start = d.startEnv();
+  if (!fromShell(name, start, dotenv)) return undefined;
+  return d.env()[name] === start[name] ? start[name] : undefined;
+}
+
+export type ShellOverride = { name: string; message: string };
+
+/**
+ * The key variables from the shell that win over what this login has (#432): LITELLM_AGENT_KEY or
+ * LITELLM_API_KEY over this device's router key, a provider's variable over the account's key for
+ * it. Only when the device or account really has a different value; signed out, none. The account's
+ * provider keys arrive with the background refresh, so a call before it can only see the router key.
+ */
+export function shellOverrides(): ShellOverride[] {
+  try {
+    const account = signedInAccount();
+    if (!account) return [];
+    const dotenv = safeDotenv();
+    const out: ShellOverride[] = [];
+    const device = safe(() => deps().session.getRouterKey({ api: account.api, email: account.email }))?.key;
+    if (device) {
+      for (const name of ROUTER_KEY_ENV) {
+        const v = shellValue(name, dotenv);
+        if (v && v !== device) out.push({ name, message: `${name} from your shell overrides this device's own router key (spend isn't attributed to you). Unset it, or open a new terminal.` });
+      }
+    }
+    for (const [provider, name] of Object.entries(PROVIDER_ENV)) {
+      const mine = providerKey(provider);
+      const v = mine ? shellValue(name, dotenv) : undefined;
+      if (v && v !== mine) out.push({ name, message: `${name} from your shell overrides your account's ${PROVIDER_LABEL[provider] ?? provider} key. Unset it, or open a new terminal.` });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** shellOverrides' messages not given yet in this process; each is given once (kernal-config shows
+ * them at session_start and again after the background refresh brings the account's keys). */
+export function takeShellWarnings(): string[] {
+  const st = state();
+  const out: string[] = [];
+  for (const o of shellOverrides()) {
+    const key = `shell:${o.name}`;
+    if (st.warned.has(key)) continue;
+    st.warned.add(key);
+    out.push(o.message);
+  }
+  return out;
+}
+
+/** Where a provider key in force comes from, as /config and /admin show it: the shell, a .env file,
+ * or the account. Undefined when none is set. A local copy wins over the account's (layerCentralEnv). */
+export function providerKeySource(provider: string): { value: string; source: string } | undefined {
+  const name = PROVIDER_ENV[provider];
+  if (!name) return undefined;
+  const d = deps();
+  const dotenv = safeDotenv();
+  const sh = shellValue(name, dotenv);
+  if (sh) return { value: sh, source: describeSource({ source: "env", sourceName: name }) };
+  const live = d.env()[name];
+  const fromFile = dotenv[name] || (live && fromKernalDotenv(name, d.env(), dotenv) ? live : undefined);
+  if (fromFile) return { value: fromFile, source: describeSource({ source: "dotenv", sourceName: name }) };
+  const mine = providerKey(provider);
+  return mine ? { value: mine, source: describeSource({ source: "user" }) } : undefined;
 }
 
 // ---------- for /config and /admin ----------

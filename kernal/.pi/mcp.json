@@ -3,7 +3,7 @@
     "litellm": {
       "url": "https://router.kernal.one/mcp/",
       "headers": {
-        "x-litellm-api-key": "Bearer ${LITELLM_AGENT_KEY}",
+        "x-litellm-api-key": "![ -n \"$KERNAL_ROUTER_KEY\" ] || exit 1; printf 'Bearer %s' \"$KERNAL_ROUTER_KEY\"",
         "x-mcp-servers": "ce_knowledge_base,headroom"
       }
     },

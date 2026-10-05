@@ -7,7 +7,7 @@
  */
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makePi, tmpAgentDir, stubFetch } from "./harness.ts";
@@ -79,7 +79,7 @@ beforeEach(() => {
   process.env.KERNAL_VOICE_SETTINGS = join(process.env.KERNAL_HOME_DIR, "pi-listen.json");
   tmpAgentDir();
   process.env.KERNAL_NO_DISCOVERY = "1";
-  for (const v of ["LITELLM_AGENT_KEY", "LITELLM_API_KEY", "LITELLM_BASE_URL", "OPENROUTER_API_KEY", "LMSTUDIO_BASE_URL", "KERNAL_SANDBOX"]) delete process.env[v];
+  for (const v of ["LITELLM_AGENT_KEY", "LITELLM_API_KEY", "LITELLM_BASE_URL", "OPENROUTER_API_KEY", "LMSTUDIO_BASE_URL", "KERNAL_SANDBOX", "KERNAL_ROUTER_KEY"]) delete process.env[v];
   routerKey = { key: "sk-old", baseUrl: "https://router.kernal.one/v1", alias: "kernal-device-x", expiresAt: new Date(Date.now() + 30 * DAY).toISOString() };
   calls = [];
   providerKeys = {};
@@ -133,13 +133,16 @@ describe("router key re-mint", () => {
     const { key } = await start();
     assert.equal(calls.filter((c) => c === "/api/device/router-key").length, 1);
     assert.equal(key("litellm"), "sk-new");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-new", "the router MCP server gets the re-minted key");
   });
 
   test("a 401 from the router re-mints once per process and registers the new key", async () => {
     const { key, refused } = await start();
     assert.equal(key("litellm"), "sk-old");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-old", "the router MCP server uses the device key too (#447)");
     await refused();
     assert.equal(key("litellm"), "sk-new");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-new", "and follows it when it is re-minted");
     await refused();
     assert.equal(calls.filter((c) => c === "/api/device/router-key").length, 1);
   });
@@ -266,6 +269,7 @@ describe("#443: the real session store, another process signs in again", () => {
     await signIn();   // another terminal: kernal login again (revokes dev_1, stores kda_2 and sk-login-2)
     await refused();
     assert.equal(key("litellm"), "sk-login-2", "the newer login's key is adopted");
+    assert.equal(process.env.KERNAL_ROUTER_KEY, "sk-login-2", "and the router MCP server moves to it too");
     assert.ok(!calls.includes("/api/device/router-key"), "nothing minted");
 
     // The settings and the provider keys are fetched with the newer login's access token.
@@ -273,5 +277,46 @@ describe("#443: the real session store, another process signs in again", () => {
     assert.equal(bearers["/api/config"].at(-1), "Bearer kda_2");
     await refreshProviderKeys({ fetch: net });
     assert.equal(bearers["/api/device/provider-keys"].at(-1), "Bearer kda_2");
+  });
+});
+
+describe("#447: the router MCP server's key", () => {
+  // pi-mcp-adapter resolves a header value that starts with "!" by running it once per connection
+  // (utils.ts resolveCommandSecret); a failing command stops the connection before any request.
+  const header = JSON.parse(readFileSync(join(import.meta.dirname, "..", ".pi", "mcp.json"), "utf8")).mcpServers.litellm.headers["x-litellm-api-key"];
+  const adapterUtils = join(import.meta.dirname, "..", ".pi", "npm", "node_modules", "pi-mcp-adapter", "utils.ts");
+  const jitiPath = join(import.meta.dirname, "..", ".pi", "npm", "node_modules", "jiti", "lib", "jiti.mjs");
+  const resolveWith = async (key: string | undefined) => {
+    const { createJiti } = await import(jitiPath);
+    const { resolveCommandSecret } = await createJiti(import.meta.url).import(adapterUtils);
+    const saved = process.env.KERNAL_ROUTER_KEY;
+    if (key === undefined) delete process.env.KERNAL_ROUTER_KEY; else process.env.KERNAL_ROUTER_KEY = key;
+    try { return resolveCommandSecret(header, "litellm header x-litellm-api-key"); }
+    finally { if (saved === undefined) delete process.env.KERNAL_ROUTER_KEY; else process.env.KERNAL_ROUTER_KEY = saved; }
+  };
+  const skip = !existsSync(adapterUtils) && "pi-mcp-adapter is not installed in .pi/npm";
+
+  test("the adapter sends the key connect is using, never written into mcp.json", { skip }, async () => {
+    assert.ok(header.startsWith("!") && !header.includes("${"), "a command marker, no ${VAR} for the adapter to substitute");
+    assert.equal(await resolveWith("sk-device-1234"), "Bearer sk-device-1234");
+  });
+
+  test("no router key: the adapter refuses to connect, so nothing reaches the router (CI, signed out)", { skip }, async () => {
+    await assert.rejects(resolveWith(undefined), /command exited with code 1/);
+    await assert.rejects(resolveWith(""), /command exited with code 1/);
+  });
+
+  test("a key the router refused at start-up is withdrawn from the MCP server too", async () => {
+    delete process.env.KERNAL_NO_DISCOVERY;
+    const restore = stubFetch({
+      "localhost:1234": () => ({ data: [] }),
+      "router.kernal.one/v1/models": () => ({ __status: 401, body: { error: { message: "invalid key" } } }),
+      "/api/device/router-key": () => ({ __status: 500, body: {} }),
+    });
+    try {
+      process.env.KERNAL_ROUTER_KEY = "sk-stale";
+      await start();
+      assert.equal(process.env.KERNAL_ROUTER_KEY, undefined);
+    } finally { restore(); }
   });
 });

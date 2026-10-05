@@ -13,7 +13,7 @@
   display: flex;
   align-items: center;
   gap: 1.1rem;
-  padding: 0.55rem 1rem;
+  padding: 0.4rem 1rem;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   background: var(--bg-elevated);
@@ -125,10 +125,12 @@
   display: flex;
 }
 
+/* Wide enough that a 1280-1440px screen isn't mostly margin; the transcript caps its own prose
+ * measure (.entry .md below), so lines stay readable however wide the window gets. */
 .app-main {
   flex: 1;
-  padding: 1.25rem;
-  max-width: 1100px;
+  padding: 1rem 1.25rem;
+  max-width: 1320px;
   width: 100%;
   margin: 0 auto;
 }
@@ -164,8 +166,8 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    padding-top: 0.6rem;
-    padding-bottom: 0.55rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
   }
 
   .session-view {
@@ -414,13 +416,13 @@
 .transcript {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 0.7rem;
   min-height: 200px;
-  padding: 1.15rem 0.85rem 0.85rem;
+  padding: 0.95rem 0.75rem 0.75rem;
 }
 
 .entry {
-  padding: 0.55rem 0.75rem;
+  padding: 0.45rem 0.7rem;
   font-size: 0.88rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -440,9 +442,9 @@
   background: var(--mark-bg);
   border: 1px solid var(--accent);
   align-self: flex-end;
-  max-width: 85%;
+  max-width: min(85%, 52rem);
   position: relative;
-  padding-top: 1rem;
+  padding-top: 0.7rem;
 }
 
 .entry.assistant-text {
@@ -450,7 +452,7 @@
   background: var(--bg);
   border: 1px solid var(--border);
   position: relative;
-  padding-top: 1rem;
+  padding-top: 0.7rem;
 }
 
 .entry.assistant-thinking {
@@ -477,7 +479,7 @@
   gap: 0.4rem;
   list-style: none;
   cursor: pointer;
-  padding: 0.5rem 0.7rem;
+  padding: 0.35rem 0.7rem;
   font-size: 0.8rem;
 }
 
@@ -609,7 +611,7 @@
 }
 
 .transcript > .entry.boot-line + .entry.boot-line {
-  margin-top: -0.9rem;
+  margin-top: -0.7rem;
 }
 
 .entry.boot-line .md {
@@ -663,15 +665,117 @@
   color: var(--text);
 }
 
+/* One grid, two arrangements. Desktop: the editor spans the full width and Send closes the
+ * controls row in the bottom-right corner (where the eye ends up after writing), so nothing sits
+ * beside the editor and no space is trapped next to a tall draft. Phones (mobile.css) put Send
+ * beside the editor instead, since their controls row has no room left. */
 .composer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "status status"
+    "editor editor"
+    "controls send"
+    "note note";
+  gap: 0.35rem 0.5rem;
+}
+
+.composer > .composer-status-row {
+  grid-area: status;
+}
+
+.composer > .md-editor-wrap {
+  grid-area: editor;
+  min-width: 0;
+}
+
+.composer > .composer-controls {
+  grid-area: controls;
+  min-width: 0;
+}
+
+.composer > .send-wrap {
+  grid-area: send;
+  align-self: center;
+}
+
+.composer > .voice-note {
+  grid-area: note;
 }
 
 .composer-row {
   display: flex;
   gap: 0.5rem;
+}
+
+/* Aa, send mode, voice and Send share one row under the editor; the row above the editor only
+ * exists while there is a send status to show. */
+.composer-controls {
+  align-items: center;
+}
+
+.composer-status-row:not(:has(> .composer-status:not(:empty))) {
+  display: none;
+}
+
+/* In the controls row the toggles stand as tall as their neighbours, not as 1.3rem tool chips. */
+.composer-controls .md-tools-toggle,
+.composer-size-toggle {
+  height: auto;
+  align-self: stretch;
+  min-width: 2.4rem;
+  font-size: 0.82rem;
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+.composer-size-toggle {
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.composer-size-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Larger than the rest of the controls: Send is the one button you hit every time. */
+.send-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  min-width: 7rem;
+  padding: 0.4rem 1.1rem;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.send-glyph {
+  font-size: 0.75em;
+  line-height: 1;
+}
+
+/* An empty draft dims Send without washing it out: the label stays readable. */
+.send-button[aria-disabled="true"] {
+  opacity: 1;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+/* Three lines to start with; it grows as you type (MarkdownEditor's fitBox) up to its cap. */
+.composer .md-editor .md-editor-input {
+  min-height: 4.75rem;
+  max-height: min(26rem, 50vh);
+}
+
+/* Tall mode (the composer's size toggle, remembered per browser): room to write a long message. */
+.composer.is-tall .md-editor .md-editor-input,
+.composer.is-tall .md-preview {
+  min-height: min(22rem, 40vh);
+  max-height: min(44rem, 70vh);
 }
 
 .composer textarea {
@@ -962,42 +1066,34 @@ h4.voice-menu-heading {
 }
 
 .beat {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  column-gap: 0.4rem;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   min-width: 0;
-}
-
-.beat.tools-only {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .beat > .entry {
-  height: 100%;
   min-width: 0;
 }
 
+/* One place for the model's work: a row of labelled chips (thinking, then each tool call) under
+ * the message they belong to (lib/beats.ts decides which), or on its own when no message has
+ * claimed them yet. Wraps onto more lines when a step runs many tools. */
 .rail {
-  align-self: start;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.beat.tools-only .rail {
-  flex-direction: row;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* #285: while a thought is on screen, an assistant beat keeps the rail in its right column,
- * which is where that bubble shrinks to. A tools-only beat's rail already rests as a row at
- * the start, so the bubble sits under it and shrinks upward -- forcing the glyph into the
- * right column made it jump back left when the bubble unmounted. Settled beats do not get
- * this class, so a finished reply stays a direct .entry stretched to the rail. */
+.rail:empty {
+  display: none;
+}
+
+/* #285: while a thought is on screen it sits in the beat's flow (above the message, or under a
+ * tools-only row), then shrinks upward into its chip when the round ends. */
 .beat-copy {
   display: flex;
   flex-direction: column;
@@ -1005,33 +1101,19 @@ h4.voice-menu-heading {
   min-width: 0;
 }
 
-.beat.has-thought-bubble {
-  grid-template-columns: minmax(0, 1fr) 36px;
-}
-
-.beat.tools-only.has-thought-bubble {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.beat.tools-only.has-thought-bubble .rail {
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.beat.tools-only .thought-bubble {
+.beat .thought-bubble {
   transform-origin: left top;
 }
 
-.beat.tools-only .thought-bubble-slot.is-collapsing .thought-bubble {
+.beat .thought-bubble-slot.is-collapsing .thought-bubble {
   transform: translateY(-12px) scale(0.2);
 }
 
 .who {
   position: absolute;
-  top: -11px;
-  width: 22px;
-  height: 22px;
+  top: -10px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   background: var(--mark-bg, var(--bg-elevated));
@@ -1057,10 +1139,10 @@ h4.voice-menu-heading {
 .rail-glyph {
   --glyph-inset: var(--bg-elevated);
   position: relative;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -1069,6 +1151,59 @@ h4.voice-menu-heading {
   background: transparent;
   box-shadow: none;
   font-weight: 400;
+}
+
+/* Each glyph is a chip that says what ran ("bash  rg -n onSubmit src/..."), so the conversation
+ * reads without hovering every icon. Click or hover still opens the full input and output. */
+.rail .rail-glyph {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 0.5rem 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.rail-glyph-label {
+  display: none;
+}
+
+.rail-glyph-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+  line-height: 1.2;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.rail-glyph-name {
+  flex: none;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.rail-glyph-hint {
+  min-width: 0;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+.rail-glyph.is-error .rail-glyph-name {
+  color: var(--danger);
+}
+
+/* A new turn starts where you spoke: a little more air above each of your messages than between
+ * the steps of one reply, so the conversation reads as exchanges rather than one long column. */
+.transcript > .entry.user:not(:first-child) {
+  margin-top: 0.55rem;
 }
 
 .rail-glyph:hover,
@@ -1107,20 +1242,6 @@ h4.voice-menu-heading {
 .rail-glyph.is-error[aria-pressed="true"] {
   color: var(--danger);
   border-color: var(--danger);
-}
-
-.rail-badge {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1;
-  padding: 1px 2px;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  pointer-events: none;
 }
 
 .rail-led {
@@ -1534,7 +1655,7 @@ h4.voice-menu-heading {
   }
 
   .app-main {
-    padding: 0.65rem;
+    padding: 0.5rem;
   }
 
   table.data-table,

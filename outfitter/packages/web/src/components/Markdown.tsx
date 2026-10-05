@@ -1,8 +1,8 @@
-import { isValidElement, useState } from "react";
+import { isValidElement, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { isLongDocument, readingOpening } from "../lib/reading.ts";
+import { isLongDocument } from "../lib/reading.ts";
 import { HtmlFence } from "./HtmlFence.tsx";
 import { ImageViewer } from "./ImageViewer.tsx";
 import { MermaidDiagram } from "./MermaidDiagram.tsx";
@@ -12,12 +12,48 @@ import { codeChildrenToSource, fenceLanguage, isMermaidFence } from "../lib/merm
 
 // Transcript text is model and tool output: untrusted. react-markdown never renders raw HTML (it
 // shows it as text). javascript: URLs stay dropped. http(s) images are not loaded — only a data:
-// image renders, and it opens in ImageViewer. A long message shows an opening plus Read.
+// image renders, and it opens in ImageViewer. A long message scrolls in place, with a pop-out.
 //
 // A ```mermaid fence is drawn as a diagram, and a ```html fence stays source with a Render
 // button that opens a sandboxed preview (HtmlFence.tsx). `pre` skips its usual wrapper for
 // both, because those components draw their own box. See MermaidDiagram.tsx for the diagram
 // pipeline and its security notes.
+
+// Fenced code with a known language tag is syntax-coloured (lib/rehype-code-colour.ts). The
+// highlighter is its own chunk, fetched the first time a message has a tagged fence: code renders
+// plain until it arrives, then colours in. A failed fetch just leaves it plain.
+type CodeColour = typeof import("../lib/rehype-code-colour.ts").rehypeCodeColour;
+let codeColour: CodeColour | null = null;
+let codeColourLoad: Promise<CodeColour | null> | null = null;
+
+function loadCodeColour(): Promise<CodeColour | null> {
+  codeColourLoad ??= import("../lib/rehype-code-colour.ts")
+    .then((m) => (codeColour = m.rehypeCodeColour))
+    .catch(() => {
+      codeColourLoad = null; // try again on a later message
+      return null;
+    });
+  return codeColourLoad;
+}
+
+const TAGGED_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*[\w+#.-]/m;
+const NO_PLUGINS: never[] = [];
+
+function useCodeColour(text: string): CodeColour[] {
+  const wanted = TAGGED_FENCE.test(text);
+  const [plugin, setPlugin] = useState<CodeColour | null>(() => codeColour);
+  useEffect(() => {
+    if (!wanted || plugin) return;
+    let live = true;
+    void loadCodeColour().then((p) => {
+      if (live && p) setPlugin(() => p);
+    });
+    return () => {
+      live = false;
+    };
+  }, [wanted, plugin]);
+  return wanted && plugin ? [plugin] : NO_PLUGINS;
+}
 
 // defaultUrlTransform strips every data: URL. Allow it on img src only, so a data: link still dies.
 const markdownUrlTransform: UrlTransform = (url, key, node) => {
@@ -95,24 +131,53 @@ const components: Components = {
   img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
 };
 
+/** Pixel "pop out" glyph for the reading view: a window with an arrow leaving its corner. */
+function PopOutGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" shapeRendering="crispEdges" aria-hidden="true">
+      <g fill="currentColor">
+        <rect x="1" y="4" width="2" height="11" />
+        <rect x="1" y="13" width="11" height="2" />
+        <rect x="10" y="10" width="2" height="5" />
+        <rect x="1" y="4" width="6" height="2" />
+        <rect x="9" y="1" width="6" height="2" />
+        <rect x="13" y="1" width="2" height="6" />
+        <rect x="11" y="3" width="2" height="2" />
+        <rect x="9" y="5" width="2" height="2" />
+        <rect x="7" y="7" width="2" height="2" />
+      </g>
+    </svg>
+  );
+}
+
 export function Markdown({ text, reading = true }: { text: string; reading?: boolean }) {
   const [open, setOpen] = useState(false);
+  const rehypePlugins = useCodeColour(text);
+  const body = (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrlTransform}>
+      {text}
+    </ReactMarkdown>
+  );
+  // A long message renders in full, formatted, inside a height-capped scroll box; a small corner
+  // button opens the same text in ReadingDialog for a long read.
   if (reading && isLongDocument(text)) {
     return (
-      <div className="md">
-        <p className="md-opening">{readingOpening(text)}</p>
-        <button type="button" className="btn mermaid-toolbar-btn md-read" onClick={() => setOpen(true)}>
-          Read
+      <div className="md-long">
+        <button
+          type="button"
+          className="md-read"
+          aria-label="Open in reading view"
+          title="Open in reading view"
+          onClick={() => setOpen(true)}
+        >
+          <PopOutGlyph />
         </button>
+        <div className="md md-scroll" tabIndex={0} role="region" aria-label="Long message">
+          {body}
+        </div>
         {open ? <ReadingDialog text={text} onClose={() => setOpen(false)} /> : null}
       </div>
     );
   }
-  return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={markdownUrlTransform}>
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
+  return <div className="md">{body}</div>;
 }

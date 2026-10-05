@@ -4,7 +4,10 @@ import {
   defaultEnterMode,
   ENTER_MODE_STORAGE_KEY,
   loadEnterMode,
+  loadTallEditor,
   saveEnterMode,
+  saveTallEditor,
+  TALL_EDITOR_STORAGE_KEY,
 } from "../src/lib/composer-keys.ts";
 
 describe("composerKeyAction", () => {
@@ -75,5 +78,36 @@ describe("enter mode persistence", () => {
     const saved = new Map<string, string>();
     saveEnterMode("newline", { setItem: (k, v) => void saved.set(k, v) });
     expect(saved.get(ENTER_MODE_STORAGE_KEY)).toBe("newline");
+  });
+});
+
+describe("tall editor preference", () => {
+  it("is off unless saved on, and survives storage that throws", () => {
+    expect(loadTallEditor({ getItem: () => null })).toBe(false);
+    expect(loadTallEditor({ getItem: (k) => (k === TALL_EDITOR_STORAGE_KEY ? "1" : null) })).toBe(true);
+    expect(loadTallEditor({ getItem: () => "0" })).toBe(false);
+    expect(
+      loadTallEditor({
+        getItem: () => {
+          throw new Error("blocked");
+        },
+      }),
+    ).toBe(false);
+    expect(loadTallEditor(undefined)).toBe(false);
+  });
+
+  it("saves 1/0 and swallows a storage error", () => {
+    const saved = new Map<string, string>();
+    saveTallEditor(true, { setItem: (k, v) => void saved.set(k, v) });
+    expect(saved.get(TALL_EDITOR_STORAGE_KEY)).toBe("1");
+    saveTallEditor(false, { setItem: (k, v) => void saved.set(k, v) });
+    expect(saved.get(TALL_EDITOR_STORAGE_KEY)).toBe("0");
+    expect(() =>
+      saveTallEditor(true, {
+        setItem: () => {
+          throw new Error("quota");
+        },
+      }),
+    ).not.toThrow();
   });
 });

@@ -7,6 +7,8 @@
 // optional push path (POST /api/hooks/ngrok, routes/hooks.ts) flip the cached value instantly
 // instead of waiting out the cache window.
 
+import type { LocalHostsCollection } from "./store/local-hosts.ts";
+
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_CACHE_MS = 60_000;
 
@@ -21,6 +23,9 @@ export interface LaptopProbeConfig {
   cacheMs?: number;
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** #382 (docs/specs/local-host.md §1.8): the host registry, for `local/...` models. Task A
+   * reads it; until then it is unused. */
+  localHosts?: LocalHostsCollection;
 }
 
 export class LaptopProbe {

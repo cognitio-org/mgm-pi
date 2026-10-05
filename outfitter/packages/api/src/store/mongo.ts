@@ -81,6 +81,7 @@ import { MongoProviderKeys, MongoRouterKeys, ensureKeyIndexes, type ProviderKeyD
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
 import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import { MongoLocalHosts, ensureLocalHostIndexes, type LocalHostDoc, type LocalHostsCollection } from "./local-hosts.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -1798,6 +1799,7 @@ export class MongoStore implements Store {
   readonly settings: SettingsCollection;
   readonly routerKeys: RouterKeysCollection;
   readonly providerKeys: ProviderKeysCollection;
+  readonly localHosts: LocalHostsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1836,6 +1838,7 @@ export class MongoStore implements Store {
     this.settings = new MongoSettings(db.collection<SettingsDocMongo>("settings"));
     this.routerKeys = new MongoRouterKeys(db.collection<RouterKeyDoc>("routerKeys"));
     this.providerKeys = new MongoProviderKeys(db.collection<ProviderKeyDoc>("providerKeys"));
+    this.localHosts = new MongoLocalHosts(db.collection<LocalHostDoc>("localHosts"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1898,6 +1901,7 @@ export class MongoStore implements Store {
       ensureDeviceIndexes(db),
       ensureSettingsIndexes(db),
       ensureKeyIndexes(db),
+      ensureLocalHostIndexes(db),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

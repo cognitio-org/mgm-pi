@@ -114,6 +114,12 @@ export interface Config {
    * credential's metadata, so the sweep only ever removes this deployment's own, not another
    * environment's sharing the ngrok account and PREVIEW_DOMAIN. */
   previewEnv: string;
+  /** LOCAL_HOST_DOMAIN (unset or empty: PREVIEW_DOMAIN; both unset: provisioning off): the domain
+   * Local Host cloud endpoints are made on, `https://lh-<random>.<domain>` (#383,
+   * docs/specs/local-host.md §2.1). Per-host tunnel credentials are provisioned when this and
+   * NGROK_API_KEY are both set. Endpoints carry purpose outfitter-local-host in their metadata, so
+   * the preview sweep never touches them. */
+  localHostDomain: string;
   /** Browser IDE (#241, docs/specs/browser-ide.md §2): the code-server release IDE Drives download,
    * and its SHA-256 per architecture (the release publishes none; we compute them when we bump the
    * pin). IDE_CODE_SERVER_VERSION / IDE_CODE_SERVER_SHA256_AMD64 / IDE_CODE_SERVER_SHA256_ARM64
@@ -156,6 +162,13 @@ export interface Config {
    * login still works without a router key). Its allowed routes are litellm-admin.sh's
    * ALLOWED_ROUTES. */
   litellmAdminKey: string;
+  /** LOCAL_HOST_ROUTER_KEY (Secret Manager outfitter-litellm-admin-key, minted by
+   * `KEY=local-hosts deploy/litellm-admin.sh`, mounted on the link role only): a separate LiteLLM
+   * key whose allowed routes are only /model/info, /model/new, /model/update and /model/delete.
+   * Local Host router reconciliation (#384, docs/specs/local-host.md §3.5) writes the `local/...`
+   * deployments with it, and runs only on a role that has it (link, or "all" in dev). Unset: no
+   * router entries; heartbeats still answer `routerModels`. */
+  localHostRouterKey: string;
   /** PROVIDER_POLL_MS: the maximum age of provider status before a read of GET /api/providers
    * re-polls every probe (in the request; there is no background poller). Default 5 minutes. */
   providerPollMs: number;
@@ -524,6 +537,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     previewShareTtlSeconds: envInt("PREVIEW_SHARE_TTL_SECONDS", 24 * 60 * 60, env),
     previewShareMaxSeconds: envInt("PREVIEW_SHARE_MAX_SECONDS", 7 * 24 * 60 * 60, env),
     previewEnv: (env.PREVIEW_ENV || env.GCP_PROJECT || "local").trim(),
+    localHostDomain: (env.LOCAL_HOST_DOMAIN?.trim() || env.PREVIEW_DOMAIN || "").trim().toLowerCase().replace(/^\.+|\.+$/g, ""),
     ideCodeServer: {
       version: (env.IDE_CODE_SERVER_VERSION || IDE_CODE_SERVER_PIN.version).trim(),
       artifacts: {
@@ -542,6 +556,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(envGoogleOauth(env.NGROK_GOOGLE_OAUTH) ? { ngrokGoogleOauth: envGoogleOauth(env.NGROK_GOOGLE_OAUTH) } : {}),
     litellmBaseUrl: env.LITELLM_BASE_URL ?? "https://router.kernal.one/v1",
     litellmAdminKey: (env.LITELLM_ADMIN_KEY ?? "").trim(),
+    localHostRouterKey: (env.LOCAL_HOST_ROUTER_KEY ?? "").trim(),
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
     operators: envOperators("OUTFITTER_OPERATORS", env),

@@ -1,0 +1,33 @@
+outfitter/docs/protocol.md
+  s_8059725af2cc76::t_7c8009ca85d937 777-779,787-789,791-793
+outfitter/packages/api/src/local-hosts/registry.ts
+  s_8059725af2cc76::t_82c3516f791ba1 15,49-51,70,120,255-259,267,294-295,297-300,354-356,360,362,364-365,372-374,376,379-387,401-407,412-424
+outfitter/packages/api/src/local-hosts/tunnel-credentials.ts
+  s_8059725af2cc76::t_943c951eb6993f 146-166,190-193,198-216,231-233,238,245,286-296,326,347-354,356-359,365,396-398
+outfitter/packages/api/src/routes/local-hosts.ts
+  s_8059725af2cc76::t_87c849ec8f17ff 22,64-80,106-110,123-124,130,135-140,146,164-165
+outfitter/packages/api/src/store/local-hosts.ts
+  s_8059725af2cc76::t_f52e98a4ad7094 10,66-90,108-109,113-123,226-230,298-311,319,321
+outfitter/packages/api/test/local-hosts-credentials.test.ts
+  s_8059725af2cc76::t_61e5ddd1f88fbf 16,253,291,323-384
+outfitter/packages/api/test/local-hosts-registry.test.ts
+  s_8059725af2cc76::t_5cb393df0597fd 134-136,378,392-397,416,539-597
+outfitter/packages/api/test/local-hosts-routes.test.ts
+  s_8059725af2cc76::t_eb582058751869 171,174-188,237,260-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "368dc7434c8bcda3c34bacbc395916f4ddcda277",
+  "prompts": {},
+  "sessions": {
+    "s_8059725af2cc76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb12699c-4940-41c3-a0ff-fc0496b89fc2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

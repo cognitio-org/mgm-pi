@@ -5,7 +5,7 @@
 # reach those servers (google_admin, augment_admin) failed on every start after two network probes
 # -- and the adapter holds the first prompt until its start-up connections settle
 # (docs/reports/startup-trim.md). Servers that authenticate with a header (litellm, keyed by the
-# run's own router key, which connect passes to its request-headers command) are kept. Same technique as render-settings.sh: filtered from the real
+# run's own router key, which connect exports for the header's command) are kept. Same technique as render-settings.sh: filtered from the real
 # file at build time, so the laptop install is untouched and the two cannot drift apart.
 #
 # Usage: render-mcp.sh <src mcp.json> <dest mcp.json>

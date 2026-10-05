@@ -60,6 +60,26 @@ export function saveEnterMode(mode: EnterMode, storage: Pick<Storage, "setItem">
   }
 }
 
+// The composer's "tall editor" preference: a roomier box for writing long messages, remembered per
+// browser. Off by default so the conversation keeps the space until someone asks for it.
+export const TALL_EDITOR_STORAGE_KEY = "outfitter.composer.tall";
+
+export function loadTallEditor(storage: Pick<Storage, "getItem"> | undefined = safeLocalStorage()): boolean {
+  try {
+    return storage?.getItem(TALL_EDITOR_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveTallEditor(tall: boolean, storage: Pick<Storage, "setItem"> | undefined = safeLocalStorage()): void {
+  try {
+    storage?.setItem(TALL_EDITOR_STORAGE_KEY, tall ? "1" : "0");
+  } catch {
+    // not persisted; the choice still holds for this page
+  }
+}
+
 function safeLocalStorage(): Storage | undefined {
   try {
     return typeof window === "undefined" ? undefined : window.localStorage;

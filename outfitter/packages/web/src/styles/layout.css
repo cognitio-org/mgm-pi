@@ -686,13 +686,77 @@
   display: none;
 }
 
-/* In the controls row the toggle stands as tall as its neighbours, not as a 1.3rem tool chip. */
-.composer-controls .md-tools-toggle {
+/* In the controls row the toggles stand as tall as their neighbours, not as 1.3rem tool chips. */
+.composer-controls .md-tools-toggle,
+.composer-size-toggle {
   height: auto;
   align-self: stretch;
   min-width: 2.4rem;
   font-size: 0.82rem;
   box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border);
+}
+
+.composer-size-toggle {
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.composer-size-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* The editor and Send side by side, Send pinned to the bottom edge so it stays next to where
+ * you're typing however tall the box grows. */
+.composer-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.composer-input-row > .md-editor-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Taller than the rest of the controls by default: Send is the one button you hit every time. */
+.send-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 48px;
+  min-width: 6.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.send-glyph {
+  font-size: 0.75em;
+  line-height: 1;
+}
+
+/* An empty draft dims Send without washing it out: the label stays readable. */
+.send-button[aria-disabled="true"] {
+  opacity: 1;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+/* Three lines to start with; it grows as you type (MarkdownEditor's fitBox) up to its cap. */
+.composer .md-editor .md-editor-input {
+  min-height: 4.75rem;
+  max-height: min(26rem, 50vh);
+}
+
+/* Tall mode (the composer's size toggle, remembered per browser): room to write a long message. */
+.composer.is-tall .md-editor .md-editor-input,
+.composer.is-tall .md-preview {
+  min-height: min(22rem, 40vh);
+  max-height: min(44rem, 70vh);
 }
 
 .composer textarea {
@@ -1090,6 +1154,66 @@ h4.voice-menu-heading {
   background: transparent;
   box-shadow: none;
   font-weight: 400;
+}
+
+/* Tools-only rows (TranscriptRail's `labelled`): the glyph grows into a chip that says what ran,
+ * "bash  rg -n onSubmit src/...", so the conversation reads without hovering every icon. A
+ * reply's own rail (`is-labelled-phone`) only has that width on a phone, where it's a row above
+ * the text (mobile.css); beside the text on a desktop it stays a column of icons. */
+.rail.is-labelled {
+  gap: 0.3rem;
+  max-width: 100%;
+}
+
+.rail.is-labelled .rail-glyph {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 0.5rem 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.rail.is-labelled-phone .rail-glyph-label {
+  display: none;
+}
+
+.rail-glyph-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+  line-height: 1.2;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.rail-glyph-name {
+  flex: none;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.rail-glyph-hint {
+  min-width: 0;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+.rail-glyph.is-error .rail-glyph-name {
+  color: var(--danger);
+}
+
+/* A new turn starts where you spoke: a little more air above each of your messages than between
+ * the steps of one reply, so the conversation reads as exchanges rather than one long column. */
+.transcript > .entry.user:not(:first-child) {
+  margin-top: 0.55rem;
 }
 
 .rail-glyph:hover,

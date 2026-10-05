@@ -3,7 +3,7 @@ import { Working } from "./Working.tsx";
 import { MarkdownEditor } from "./MarkdownEditor.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
-import { loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
+import { loadEnterMode, loadTallEditor, saveEnterMode, saveTallEditor, type EnterMode } from "../lib/composer-keys.ts";
 import { useVoice, type VoiceEngines } from "../hooks/useVoice.ts";
 import { useSpeaker, type SpeechStarter } from "../hooks/useSpeaker.ts";
 import type { PiEntry } from "../api/client.ts";
@@ -116,6 +116,13 @@ export function Composer({
   const [enterMenu, setEnterMenu] = useState(false);
   // The formatting toolbar stays folded behind "Aa" until asked. It is rarely used.
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [tall, setTall] = useState(() => loadTallEditor());
+  function toggleTall() {
+    setTall((t) => {
+      saveTallEditor(!t);
+      return !t;
+    });
+  }
   const toolbarId = useId();
   const sendWrapRef = useRef<HTMLSpanElement>(null);
   const enterMenuRef = useRef<HTMLDivElement>(null);
@@ -205,21 +212,75 @@ export function Composer({
   const sendKeyHint = enterMode === "send" ? "Enter to send, Shift+Enter for a new line" : "Shift+Enter or ⌘/Ctrl+Enter to send";
 
   return (
-    <div className="composer">
+    <div className={`composer${tall ? " is-tall" : ""}`}>
       <div className="composer-row composer-status-row">
         <div className="composer-status">{status}</div>
       </div>
-      <MarkdownEditor
-        value={text}
-        onChange={setText}
-        onSend={() => void send()}
-        enterMode={enterMode}
-        placeholder={placeholderOverride ?? (touch ? "Message…" : `Message... (${sendKeyHint})`)}
-        disabled={disabled}
-        readOnly={voiceBusy}
-        toolsOpen={toolsOpen}
-        toolbarId={toolbarId}
-      />
+      <div className="composer-input-row">
+        <MarkdownEditor
+          value={text}
+          onChange={setText}
+          onSend={() => void send()}
+          enterMode={enterMode}
+          placeholder={placeholderOverride ?? (touch ? "Message…" : `Message... (${sendKeyHint})`)}
+          disabled={disabled}
+          readOnly={voiceBusy}
+          toolsOpen={toolsOpen}
+          toolbarId={toolbarId}
+        />
+        <span
+          className="send-wrap"
+          data-enter-mode={enterMode}
+          title={`Send (${sendKeyHint}). Right-click to set whether Enter sends.`}
+          onContextMenu={openEnterMenu}
+          onPointerDown={armHold}
+          onPointerUp={clearHold}
+          onPointerCancel={cancelHold}
+          onPointerLeave={clearHold}
+        >
+          <button
+            type="button"
+            className="btn btn-primary send-button"
+            aria-haspopup="menu"
+            aria-expanded={enterMenu}
+            aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
+            onClick={(event) => {
+              if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
+                ignoreClick.current = false;
+                return;
+              }
+              setEnterMenu(false);
+              void send();
+            }}
+          >
+            {sending ? (
+              <Working label="Sending" />
+            ) : (
+              <>
+                <span className="send-label">Send</span>
+                <span className="send-glyph" aria-hidden="true">
+                  ▶
+                </span>
+              </>
+            )}
+          </button>
+          {enterMenu && (
+            <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
+              <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
+                Enter sends
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={enterMode === "newline"}
+                onClick={() => chooseEnterMode("newline")}
+              >
+                Enter is a new line
+              </button>
+            </div>
+          )}
+        </span>
+      </div>
       <div className="composer-row composer-controls">
         <button
           type="button"
@@ -231,6 +292,16 @@ export function Composer({
           onClick={() => setToolsOpen((o) => !o)}
         >
           <span aria-hidden="true">Aa</span>
+        </button>
+        <button
+          type="button"
+          className="composer-size-toggle"
+          aria-pressed={tall}
+          aria-label="Tall editor"
+          title={tall ? "Shrink the editor" : "Make the editor taller for long messages"}
+          onClick={toggleTall}
+        >
+          <span aria-hidden="true">{tall ? "⇣" : "⇡"}</span>
         </button>
         <select
           className="composer-mode-select"
@@ -261,49 +332,6 @@ export function Composer({
           ))}
         </div>
         <VoiceControl voice={voice} speaker={speaker} />
-        <span
-          className="send-wrap"
-          data-enter-mode={enterMode}
-          title="Right-click to set whether Enter sends"
-          onContextMenu={openEnterMenu}
-          onPointerDown={armHold}
-          onPointerUp={clearHold}
-          onPointerCancel={cancelHold}
-          onPointerLeave={clearHold}
-        >
-          <button
-            type="button"
-            className="btn btn-primary"
-            aria-haspopup="menu"
-            aria-expanded={enterMenu}
-            aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
-            onClick={(event) => {
-              if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
-                ignoreClick.current = false;
-                return;
-              }
-              setEnterMenu(false);
-              void send();
-            }}
-          >
-            {sending ? <Working label="Sending" /> : "Send"}
-          </button>
-          {enterMenu && (
-            <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
-              <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
-                Enter sends
-              </button>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={enterMode === "newline"}
-                onClick={() => chooseEnterMode("newline")}
-              >
-                Enter is a new line
-              </button>
-            </div>
-          )}
-        </span>
       </div>
       {(voice.note || speaker.note) && (
         <div className="voice-note" role="status">

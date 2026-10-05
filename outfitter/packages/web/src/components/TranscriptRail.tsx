@@ -50,6 +50,50 @@ function inputPreview(input: unknown): string {
   return one.length > 80 ? `${one.slice(0, 80).trimEnd()}…` : one;
 }
 
+const HINT_KEYS = ["command", "cmd", "path", "file_path", "filePath", "pattern", "query", "url", "name"];
+
+/** A short, readable hint of what a tool call was about, for its visible label: the command, path
+ * or query when the input has one (not the raw JSON), clipped to one line. */
+export function toolHint(input: unknown): string {
+  let text = "";
+  if (typeof input === "string") text = input;
+  else if (input && typeof input === "object") {
+    const record = input as Record<string, unknown>;
+    const key = HINT_KEYS.find((k) => typeof record[k] === "string" && (record[k] as string).trim());
+    const value = key ? record[key] : Object.values(record).find((v) => typeof v === "string" && v.trim());
+    text = typeof value === "string" ? value : "";
+  }
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > 60 ? `${one.slice(0, 60).trimEnd()}…` : one;
+}
+
+function GlyphLabel({ glyph }: { glyph: RailGlyph }) {
+  if (glyph.kind === "batch") {
+    const names = [...new Set(glyph.tools.map((tool) => tool.toolName))].join(", ");
+    return (
+      <span className="rail-glyph-label" aria-hidden="true">
+        <span className="rail-glyph-name">{glyph.tools.length} tools</span>
+        <span className="rail-glyph-hint">{names}</span>
+      </span>
+    );
+  }
+  if (glyph.item.kind === "thinking") {
+    return (
+      <span className="rail-glyph-label" aria-hidden="true">
+        <span className="rail-glyph-name">thinking</span>
+      </span>
+    );
+  }
+  const tool = glyph.item;
+  const hint = toolHint(tool.input);
+  return (
+    <span className="rail-glyph-label" aria-hidden="true">
+      <span className="rail-glyph-name">{tool.toolName}</span>
+      {hint ? <span className="rail-glyph-hint">{hint}</span> : null}
+    </span>
+  );
+}
+
 function glyphIdOf(glyph: RailGlyph): string {
   return glyph.kind === "batch" ? glyph.id : glyph.item.id;
 }
@@ -165,9 +209,13 @@ export function TranscriptRail({
   items,
   defaultThinkingExpanded = false,
   collapsingThinkingId,
+  labelled = "never",
 }: {
   items: RailItem[];
   defaultThinkingExpanded?: boolean;
+  /** Where a glyph also shows its tool name and a hint: "always" in a tools-only row, which has the
+   * width; "phone" beside prose, where the rail is a row above the text only on a phone. */
+  labelled?: "always" | "phone" | "never";
   /** The thinking glyph the live bubble is shrinking into. */
   collapsingThinkingId?: string;
 }) {
@@ -366,7 +414,7 @@ export function TranscriptRail({
 
   return (
     <>
-      <div className="rail" ref={rootRef}>
+      <div className={`rail${labelled === "always" ? " is-labelled" : labelled === "phone" ? " is-labelled-phone" : ""}`} ref={rootRef}>
         {glyphs.map((glyph) => {
           const id = glyphIdOf(glyph);
           const thinkingItem = glyph.kind === "single" && glyph.item.kind === "thinking" ? glyph.item : undefined;
@@ -415,7 +463,8 @@ export function TranscriptRail({
             >
               {thinkingItem ? <ThinkingIcon size={16} /> : <ToolboxIcon size={16} />}
               {toolItem?.running ? <span className="rail-led" aria-hidden="true" /> : null}
-              {glyph.kind === "batch" ? <span className="rail-badge">×{glyph.tools.length}</span> : null}
+              {glyph.kind === "batch" && labelled !== "always" ? <span className="rail-badge">×{glyph.tools.length}</span> : null}
+              {labelled !== "never" ? <GlyphLabel glyph={glyph} /> : null}
             </button>
           );
         })}
@@ -583,6 +632,7 @@ export function BeatView({
       items={beat.rail}
       defaultThinkingExpanded={defaultThinkingExpanded}
       collapsingThinkingId={collapsingThinkingId}
+      labelled={beat.kind === "tools-only" ? "always" : "phone"}
     />
   );
   if (beat.kind === "tools-only") {

@@ -1,4 +1,4 @@
-import { isValidElement, useState } from "react";
+import { isValidElement, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,6 +18,42 @@ import { codeChildrenToSource, fenceLanguage, isMermaidFence } from "../lib/merm
 // button that opens a sandboxed preview (HtmlFence.tsx). `pre` skips its usual wrapper for
 // both, because those components draw their own box. See MermaidDiagram.tsx for the diagram
 // pipeline and its security notes.
+
+// Fenced code with a known language tag is syntax-coloured (lib/rehype-code-colour.ts). The
+// highlighter is its own chunk, fetched the first time a message has a tagged fence: code renders
+// plain until it arrives, then colours in. A failed fetch just leaves it plain.
+type CodeColour = typeof import("../lib/rehype-code-colour.ts").rehypeCodeColour;
+let codeColour: CodeColour | null = null;
+let codeColourLoad: Promise<CodeColour | null> | null = null;
+
+function loadCodeColour(): Promise<CodeColour | null> {
+  codeColourLoad ??= import("../lib/rehype-code-colour.ts")
+    .then((m) => (codeColour = m.rehypeCodeColour))
+    .catch(() => {
+      codeColourLoad = null; // try again on a later message
+      return null;
+    });
+  return codeColourLoad;
+}
+
+const TAGGED_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*[\w+#.-]/m;
+const NO_PLUGINS: never[] = [];
+
+function useCodeColour(text: string): CodeColour[] {
+  const wanted = TAGGED_FENCE.test(text);
+  const [plugin, setPlugin] = useState<CodeColour | null>(() => codeColour);
+  useEffect(() => {
+    if (!wanted || plugin) return;
+    let live = true;
+    void loadCodeColour().then((p) => {
+      if (live && p) setPlugin(() => p);
+    });
+    return () => {
+      live = false;
+    };
+  }, [wanted, plugin]);
+  return wanted && plugin ? [plugin] : NO_PLUGINS;
+}
 
 // defaultUrlTransform strips every data: URL. Allow it on img src only, so a data: link still dies.
 const markdownUrlTransform: UrlTransform = (url, key, node) => {
@@ -116,8 +152,9 @@ function PopOutGlyph() {
 
 export function Markdown({ text, reading = true }: { text: string; reading?: boolean }) {
   const [open, setOpen] = useState(false);
+  const rehypePlugins = useCodeColour(text);
   const body = (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={markdownUrlTransform}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins} components={components} urlTransform={markdownUrlTransform}>
       {text}
     </ReactMarkdown>
   );

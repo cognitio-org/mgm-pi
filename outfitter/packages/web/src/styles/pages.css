@@ -521,6 +521,45 @@ button.danger {
   background: var(--accent);
 }
 
+/* Syntax colours (Markdown.tsx's rehype-highlight). Colour plus, for keywords and comments, a
+ * weight or slant, so structure doesn't rest on colour alone. Tokens live in theme.css. */
+.md .hljs-keyword,
+.md .hljs-selector-tag,
+.md .hljs-literal,
+.md .hljs-doctag,
+.md .hljs-section { color: var(--syn-keyword); font-weight: 500; }
+.md .hljs-string,
+.md .hljs-regexp,
+.md .hljs-template-tag,
+.md .hljs-template-variable,
+.md .hljs-addition { color: var(--syn-string); }
+.md .hljs-number,
+.md .hljs-symbol,
+.md .hljs-bullet,
+.md .hljs-link { color: var(--syn-number); }
+.md .hljs-comment,
+.md .hljs-quote { color: var(--syn-comment); font-style: italic; }
+.md .hljs-title,
+.md .hljs-title.function_,
+.md .hljs-function .hljs-title { color: var(--syn-title); }
+.md .hljs-type,
+.md .hljs-built_in,
+.md .hljs-title.class_,
+.md .hljs-class .hljs-title { color: var(--syn-type); }
+.md .hljs-attr,
+.md .hljs-attribute,
+.md .hljs-property,
+.md .hljs-variable,
+.md .hljs-params,
+.md .hljs-selector-class,
+.md .hljs-selector-id,
+.md .hljs-name { color: var(--syn-attr); }
+.md .hljs-meta,
+.md .hljs-deletion,
+.md .hljs-subst { color: var(--syn-meta); }
+.md .hljs-emphasis { font-style: italic; }
+.md .hljs-strong { font-weight: 600; }
+
 .md blockquote {
   padding: 0.2rem 0.75rem;
   border-left: 3px solid var(--accent);

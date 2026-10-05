@@ -417,6 +417,35 @@ select {
     display: none;
   }
 
+  /* The reply's rail is a row above its text here, so its glyphs get words too (layout.css). */
+  .rail.is-labelled-phone {
+    gap: 0.3rem;
+  }
+
+  .rail.is-labelled-phone .rail-glyph {
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0 0.5rem 0 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+  }
+
+  .rail.is-labelled-phone .rail-glyph-label {
+    display: inline-flex;
+  }
+
+  .rail.is-labelled-phone .rail-badge {
+    display: none;
+  }
+
+  .rail-glyph-hint {
+    max-width: 24ch;
+  }
+
   /* The rail sits above the paragraph on a phone, so the bubble collapses upward into it. */
   .beat.has-thought-bubble {
     grid-template-columns: minmax(0, 1fr);
@@ -445,8 +474,8 @@ select {
     overscroll-behavior: contain;
   }
 
-  /* Aa joins the send-mode row, which is already full at 390px: tighter gaps and segment padding
-   * make the room, and Send keeps its full label. */
+  /* Aa, the size toggle, send mode and voice share the row under the editor: tighter gaps and
+   * segment padding keep "Follow-up" whole at 390px. */
   .composer-controls {
     gap: 0.25rem;
   }
@@ -456,6 +485,25 @@ select {
     padding-right: 0.32rem;
     font-size: 0.75rem;
     white-space: nowrap;
+  }
+
+  /* On a phone the editor starts at two lines (the keyboard takes half the screen already) and
+   * tall mode takes about a third of it. Send stays big. */
+  .composer .md-editor .md-editor-input {
+    min-height: 3.4rem;
+    max-height: 38svh;
+  }
+
+  .composer.is-tall .md-editor .md-editor-input,
+  .composer.is-tall .md-preview {
+    min-height: 34svh;
+    max-height: 55svh;
+  }
+
+  .send-button {
+    min-width: 4.75rem;
+    min-height: 48px;
+    padding: 0.5rem 0.75rem;
   }
 
   /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --
@@ -581,5 +629,17 @@ select {
   .app-main {
     max-width: 100%;
     padding: 1rem;
+  }
+}
+
+/* Small Android phones (360px): a few more pixels out of the composer's control row. */
+@media (max-width: 374px) {
+  .composer-controls {
+    gap: 0.2rem;
+  }
+
+  .composer-controls .composer-mode-buttons button {
+    padding-left: 0.22rem;
+    padding-right: 0.22rem;
   }
 }

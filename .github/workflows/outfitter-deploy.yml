@@ -107,12 +107,33 @@ jobs:
           FORCE_ALL: ${{ inputs.force_all && '1' || '' }}
           USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
         run: ./release.sh
-      # #421: the Sentry release named after the tag (what OUTFITTER_RELEASE makes the api, link,
-      # Drives and web app report), its commits linked from the checkout above (fetch-depth 0),
-      # finalized, and a production deploy recorded. A redeploy or rollback of an existing tag just
-      # records another deploy on that release. Skipped until the SENTRY_ORG / SENTRY_PROJECT
-      # variables and the SENTRY_AUTH_TOKEN secret are set (deploy/README.md "Sentry releases"); a
-      # Sentry failure never fails a deploy that already happened.
+
+  # #219: Playwright against what just shipped, signed in through IAP as outfitter-e2e. A separate
+  # workflow file with its own Workload Identity pool: this workflow's deploy credentials never
+  # reach it, and its token can't deploy. Skipped until e2e-identity.sh has set its variables.
+  live:
+    needs: deploy
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/outfitter-live.yml
+
+  # #421: the Sentry release named after the tag (what OUTFITTER_RELEASE makes the api, link,
+  # Drives and web app report), its commits linked from a full checkout of the commit the deploy
+  # shipped, finalized, and a production deploy recorded. A redeploy or rollback of an existing tag
+  # just records another deploy on that release. Its own job, never the deploy's: there
+  # google-github-actions/auth leaves the deployer's credentials file in the workspace and
+  # GOOGLE_APPLICATION_CREDENTIALS in the environment, and getsentry/action-release runs a docker
+  # image pulled by tag (ghcr.io/getsentry/action-release-image), which the action's SHA pin
+  # doesn't cover. No id-token, no GCP auth here. Runs beside `live`, gating nothing. Skipped until the
+  # SENTRY_ORG / SENTRY_PROJECT variables and the SENTRY_AUTH_TOKEN secret are set (deploy/README.md
+  # "Sentry releases"); a Sentry failure never fails a deploy that already happened.
+  sentry-release:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
       - name: Check whether Sentry releases are configured
         id: sentry
         env:
@@ -125,6 +146,11 @@ jobs:
           else
             echo "::notice::SENTRY_ORG, SENTRY_PROJECT or SENTRY_AUTH_TOKEN not set; Sentry release skipped"
           fi
+      - uses: actions/checkout@v5
+        if: steps.sentry.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Sentry release
         if: steps.sentry.outputs.enabled == 'true'
         continue-on-error: true
@@ -142,13 +168,3 @@ jobs:
           ignore_empty: true
           finalize: true
           disable_telemetry: true
-
-  # #219: Playwright against what just shipped, signed in through IAP as outfitter-e2e. A separate
-  # workflow file with its own Workload Identity pool: this workflow's deploy credentials never
-  # reach it, and its token can't deploy. Skipped until e2e-identity.sh has set its variables.
-  live:
-    needs: deploy
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/outfitter-live.yml

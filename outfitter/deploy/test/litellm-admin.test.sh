@@ -88,7 +88,8 @@ grep -q '/key/regenerate' "${ROUTER_LOG}" && fail "regenerate must not be allowe
 EXTRA_ROUTES=""
 API_SRC="${HERE}/../../packages/api/src"
 called="$( { grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' \
-  "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts" | grep -oE '/[a-z/_]+'
+  "${API_SRC}/central/litellm-keys.ts" "${API_SRC}/providers-status.ts" "${API_SRC}/models.ts" \
+  "${API_SRC}/local-hosts/router-sync.ts" | grep -oE '/[a-z/_]+'
   for r in ${EXTRA_ROUTES}; do echo "${r}"; done; } | sort -u)"
 [[ "$(wc -l <<<"${called}")" -ge 10 ]] || fail "found too few api routes: ${called}"
 allowed="$(grep -m1 '^POST /key/generate ' "${ROUTER_LOG}" | sed 's/^POST \/key\/generate //' \

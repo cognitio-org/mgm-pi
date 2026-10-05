@@ -32,16 +32,18 @@ ALIAS_PREFIX="outfitter-admin"
 DRY_RUN="${DRY_RUN:-0}"
 ROTATE="${ROTATE:-0}"
 
-# Exactly the routes the api calls with this key (litellm-keys.ts, providers-status.ts, models.ts);
-# test/litellm-admin.test.sh fails if the two drift apart in either direction. The key is mounted on
-# both roles, the public link service included, so nothing beyond these: no /key/update, /key/list,
-# /key/block or /model/new|update|delete. #384's model reconciliation adds its routes with its code.
+# Exactly the routes the api calls with this key (litellm-keys.ts, providers-status.ts, models.ts,
+# local-hosts/router-sync.ts); test/litellm-admin.test.sh fails if the two drift apart in either
+# direction. The key is mounted on both roles, the public link service included, so nothing beyond
+# these: no /key/update, /key/list or /key/block. The /model/new|update|delete routes are #384's
+# Local Host router entries (local/<user>-<host>/<model>); router-sync.ts only ever touches entries
+# whose model_info.metadata it wrote itself.
 ALLOWED_ROUTES='[
   "/key/generate", "/key/delete", "/key/info",
   "/user/new", "/user/info", "/user/list",
   "/team/new", "/team/list",
   "/spend/logs",
-  "/model/info",
+  "/model/info", "/model/new", "/model/update", "/model/delete",
   "/health/liveliness"
 ]'
 

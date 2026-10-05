@@ -1226,7 +1226,7 @@ export class AgentLink {
     const wanted = await floppyModel(this.store, session, guru);
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
-    const online = await this.laptopProbe.isOnline();
+    const online = await this.laptopProbe.isOnlineFor(wanted);
     const resolved = resolveRunModel({
       wanted,
       guruFallbackModel: guru.fallbackModel,

@@ -63,6 +63,9 @@ export interface LocalHost {
   lastSeenAt: string;
   /** Set when the device that owned it was revoked; the next accepted heartbeat (a newer login) clears it. */
   revokedAt?: string;
+  /** The bearerVersion of a bearer that was retired with `managed` (device revoked, §2.5), so the
+   * next one minted is that + 1 and the router entries see a new version. Task A's (additive). */
+  retiredBearerVersion?: number;
 }
 
 export interface LocalHostsCollection {
@@ -203,6 +206,19 @@ function fromDoc(doc: LocalHostDoc | null): LocalHost | null {
 
 const isDuplicateKey = (err: unknown) => (err as { code?: number })?.code === 11000;
 
+/** A copy without undefined fields, at any depth. The MongoClient has no `ignoreUndefined`, so an
+ * undefined field would be stored as null (and `revokedAt: null` would read as revoked to a filter
+ * that only checks existence). */
+function withoutUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutUndefined) as T;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, v]) => v !== undefined).map(([k, v]) => [k, withoutUndefined(v)]),
+    ) as T;
+  }
+  return value;
+}
+
 export class MongoLocalHosts implements LocalHostsCollection {
   private readonly col: MongoCollection<LocalHostDoc>;
   constructor(col: MongoCollection<LocalHostDoc>) {
@@ -221,7 +237,9 @@ export class MongoLocalHosts implements LocalHostsCollection {
     return (await this.col.find({ deviceId }).sort({ lastSeenAt: -1 }).toArray()).map((d) => fromDoc(d)!);
   }
   async listSharing(): Promise<LocalHost[]> {
-    return (await this.col.find({ shareModels: true, revokedAt: { $exists: false } }).sort({ lastSeenAt: -1 }).toArray()).map((d) => fromDoc(d)!);
+    // A stored null (an older write's leftover) counts as not revoked, like a missing field.
+    const notRevoked = { $or: [{ revokedAt: { $exists: false } }, { revokedAt: { $type: "null" as const } }] };
+    return (await this.col.find({ shareModels: true, ...notRevoked }).sort({ lastSeenAt: -1 }).toArray()).map((d) => fromDoc(d)!);
   }
   async listAll(limit: number): Promise<LocalHost[]> {
     return (await this.col.find({}).sort({ lastSeenAt: -1 }).limit(limit).toArray()).map((d) => fromDoc(d)!);
@@ -229,7 +247,8 @@ export class MongoLocalHosts implements LocalHostsCollection {
   async upsert(host: LocalHost): Promise<void> {
     const { id, ...rest } = host;
     try {
-      await this.col.replaceOne({ _id: id }, rest, { upsert: true });
+      // A replace: a field left out (or undefined, stripped here) is gone from the stored document.
+      await this.col.replaceOne({ _id: id }, withoutUndefined(rest), { upsert: true });
     } catch (err) {
       if (isDuplicateKey(err)) throw new LocalHostPrefixTakenError(host.routerPrefix);
       throw err;
@@ -241,7 +260,7 @@ export class MongoLocalHosts implements LocalHostsCollection {
     for (const [field, value] of Object.entries(patch)) {
       if (field === "id") continue;
       if (value === undefined) unset[field] = "";
-      else set[field] = value;
+      else set[field] = withoutUndefined(value);
     }
     if (!Object.keys(set).length && !Object.keys(unset).length) return this.findById(id);
     const doc = await this.col.findOneAndUpdate(

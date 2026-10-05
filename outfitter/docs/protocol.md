@@ -752,6 +752,52 @@ they expire or are revoked. Kernal no longer sends one.
 Cloud Run appends) so the approve page can warn when the code was requested from elsewhere. Every
 per-IP check uses that same hop.
 
+## Local hosts (#382, #383)
+
+A signed-in Kernal can share its machine's local models (LM Studio, Ollama, llama.cpp, mlx-lm,
+vLLM) with everyone signed in. The contract is `docs/specs/local-host.md`; the code is
+`packages/api/src/local-hosts/registry.ts` (heartbeat, listing, delete, device hook),
+`local-hosts/tunnel-credentials.ts` (credentials, traffic policies, sweep), `routes/local-hosts.ts`
+(HTTP) and `store/local-hosts.ts` (collection `localHosts`, one record per person per machine,
+`_id` `lh_` + 24 hex).
+
+- `POST /api/local-hosts/heartbeat` (link, all; device token only) with the discovery snapshot,
+  `shareModels` and the tunnel's state → `{ accepted, id, status, nextHeartbeatSeconds: 300,
+  credentials, routerPrefix, routerModels, problems }`. Sent on a change (at most every 10 s), every
+  300 s while sharing, and on start and stop. `status`: `online`, `offline` (tunnel not up, or its
+  server not answering), `not-sharing`, `stale` (no heartbeat for 960 s) or `revoked`.
+  `credentials`: `current`, `fetch` (call the next route), `none` (stop the tunnel) or `unavailable`
+  (this deployment provisions none; use interim `.env` credentials). A body that fails validation is
+  `400 { error: "invalid_heartbeat", field }`; over 256 KiB, 413. Server URLs are stored, never
+  fetched.
+- `POST /api/local-hosts/tunnel-credentials { hostId }` (link, all; device token only) → an ngrok
+  authtoken whose ACL binds only `https://lh<hex>.internal`, the internal endpoint's traffic policy,
+  the per-host bearer (`lhb_…`), the public URL `https://lh-<random>.<LOCAL_HOST_DOMAIN>`, allowed
+  paths, rate limit, `issuedAt`/`expiresAt` (advisory, 7 days). `Cache-Control: no-store`; Kernal
+  keeps it in memory only. Every call mints a new credential (and deletes the previous one); the
+  bearer and the cloud endpoint stay. Errors: `404 host_unknown` (heartbeat first), `409
+  sharing_off`, `403 host_revoked`, `503 local_host_tunnels_off` (no `NGROK_API_KEY` or
+  `LOCAL_HOST_DOMAIN`, which defaults to `PREVIEW_DOMAIN`), `502 ngrok_failed`.
+- The cloud endpoint's policy, written only by the api: rate limit 120 per 60 s per client IP, `401`
+  without `Authorization: Bearer <bearer>`, `404` JSON outside `/v1/chat/completions`,
+  `/v1/completions`, `/v1/embeddings`, `/v1/models`, then `forward-internal` to the host's internal
+  endpoint. The internal policy (applied by the laptop) and Kernal's guard proxy check the bearer and
+  paths again. The bearer lives in Secret Manager `outfitter-localhost-<hex>`; Mongo has its sha256.
+- `GET /api/local-hosts` (every role; a person, or a device token) → `{ hosts }`: the caller's own
+  hosts (any status), then everyone else's sharing hosts that are online, offline or stale. No
+  credential, endpoint, bearer, internal URL, device or user id.
+- `DELETE /api/local-hosts/:id` (the owner, or an operator on web; anyone else 404) → 204: deletes
+  the ngrok endpoint and credential, disables the bearer, removes the record.
+- A Dongle or personal API token gets `403 device_token_required` on all four; a machine token `403
+  machine_token`.
+- Revoking a device deletes its hosts' ngrok resources and bearer and marks them `revoked` until a
+  heartbeat from a newer login on that machine. Sharing turned off deletes the cloud endpoint (the
+  credential stays). The tick's sweep deletes the endpoint of a host stale for over 24 h, and any
+  ngrok endpoint or credential stamped `purpose: "outfitter-local-host"` with this `PREVIEW_ENV` that
+  no record references (after a 5-minute grace).
+- The E2.8 preflight treats a `local/<prefix>/<model>` name (with or without `litellm/`) as a laptop
+  model: it is online while its host is `online` and the model is on the tunnel's server.
+
 ## A2A server (E9 §5, PR5)
 
 `docs/specs/atlas-agent-engine-and-a2a.md` §5 is the design; this is what the link role (and

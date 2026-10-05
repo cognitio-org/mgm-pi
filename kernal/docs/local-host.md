@@ -63,7 +63,7 @@ Exit codes: 0 done, 1 failed, 2 usage.
 | Variable (in `.env` or the environment) | Meaning |
 |---|---|
 | `KERNAL_LOCAL_HOST_SERVER` | The model server to share, as a root URL (`http://localhost:11434`). Default: the first that answers of LM Studio, Ollama, llama.cpp, mlx-lm, vLLM. |
-| `KERNAL_LOCAL_TUNNEL` | `auto` (default), `ngrok` or `cloudflare`. Outfitter provisions ngrok only for now. |
+| `KERNAL_LOCAL_TUNNEL` | `auto` (default), `ngrok` or `cloudflare`, for interim `.env` credentials. Outfitter's credentials are ngrok's, so a signed-in tunnel is always ngrok; `cloudflare` stays local-only (no router entries) until #386. |
 | `KERNAL_LOCAL_NODE` | The Node binary to run the service with (recorded by `enable`). |
 
 ## Runtime

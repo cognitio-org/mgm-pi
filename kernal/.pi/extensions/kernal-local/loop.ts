@@ -26,6 +26,8 @@ export const MIN_HEARTBEAT_GAP_MS = 10_000;
 export const CONFIG_REFRESH_MS = 10 * 60_000;
 export const STOP_HEARTBEAT_TIMEOUT_MS = 3_000;
 export const REQUEST_TIMEOUT_MS = 15_000;
+/** A heartbeat may wait for the api's listeners (LISTENER_TIMEOUT_MS, 20 s) before it answers (§1.4). */
+export const HEARTBEAT_TIMEOUT_MS = 30_000;
 /** After a 403/404 from §1.1 (or a token refused twice): try again this much later. */
 export const BLOCKED_RETRY_MS = 15 * 60_000;
 export const BACKOFF_START_MS = 5_000;
@@ -85,6 +87,8 @@ export interface LoopDeps {
   log: Logger;
   saveState: (s: ServiceState) => void;
   pollMs?: number;
+  /** The abort signal for one request (default AbortSignal.timeout); tests record the limits. */
+  timeoutSignal?: (ms: number) => AbortSignal;
 }
 
 type Fields = Pick<HeartbeatRequest, "discoveryKey" | "shareModels"> & Pick<HeartbeatTunnel, "state" | "url" | "server" | "credentialId">;
@@ -121,6 +125,7 @@ export class LocalHostLoop {
   private readonly pollMs: number;
   private readonly startedAt: number;
   private kickFn: () => void = () => {};
+  private choiceOverrideLogged = false;
 
   private lastTickAt: number | undefined;
   private account: Account | undefined;
@@ -308,7 +313,13 @@ export class LocalHostLoop {
     if (now < this.tunnelRetryAt) return;
     if (r) await this.closeTunnel();
 
-    const choice = parseTunnelChoice(this.d.env.KERNAL_LOCAL_TUNNEL);
+    // Outfitter provisions ngrok only in wave 2: managed credentials always mean ngrok (§4.6).
+    const wanted = parseTunnelChoice(this.d.env.KERNAL_LOCAL_TUNNEL);
+    const choice = managed ? "ngrok" : wanted;
+    if (managed && wanted === "cloudflare" && !this.choiceOverrideLogged) {
+      this.choiceOverrideLogged = true;
+      this.d.log("info", "KERNAL_LOCAL_TUNNEL=cloudflare applies to interim credentials only; Outfitter's credentials are ngrok's");
+    }
     const allowPaths = managed && this.creds!.allowPaths.length ? this.creds!.allowPaths : DEFAULT_ALLOW_PATHS;
     const rateLimit = managed ? this.creds!.rateLimit : DEFAULT_RATE_LIMIT;
     const provider: TunnelProvider = choice === "cloudflare" ? "cloudflare" : "ngrok";
@@ -382,7 +393,7 @@ export class LocalHostLoop {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: (this.d.timeoutSignal ?? AbortSignal.timeout)(timeoutMs),
     });
     const token = await this.d.session.token(account);
     if (!token) return undefined;
@@ -490,7 +501,7 @@ export class LocalHostLoop {
     this.hb.lastSentAt = now;
     let res: Response | undefined;
     try {
-      res = await this.send("/api/local-hosts/heartbeat", this.request(reason, tunnel), REQUEST_TIMEOUT_MS);
+      res = await this.send("/api/local-hosts/heartbeat", this.request(reason, tunnel), HEARTBEAT_TIMEOUT_MS);
     } catch (e) {
       return this.heartbeatFailed(now, errText(e));
     }

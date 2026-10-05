@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import type { DiscoverySnapshot, LocalModel, ServerSnapshot } from "../.pi/extensions/_shared/local-discovery.ts";
 import { TunnelError, type LocalHostTunnel, type OpenTunnelOptions, type TunnelHealth } from "../.pi/extensions/_shared/tunnel/tunnel.ts";
 import {
-  BLOCKED_RETRY_MS, LocalHostLoop, backoffMs, pickServer, serve,
+  BLOCKED_RETRY_MS, HEARTBEAT_TIMEOUT_MS, LocalHostLoop, backoffMs, pickServer, serve,
   type Account, type LoopDeps, type SignalName,
 } from "../.pi/extensions/kernal-local/loop.ts";
 import type { HeartbeatRequest } from "../.pi/extensions/kernal-local/protocol.ts";
@@ -186,6 +186,35 @@ describe("signed out (§4.8)", () => {
 });
 
 describe("managed credentials and the heartbeat cadence (§1.4)", () => {
+  test("managed credentials always open ngrok, whatever KERNAL_LOCAL_TUNNEL says (logged once); interim keeps the choice", async () => {
+    const { w, at } = world({ env: { KERNAL_LOCAL_TUNNEL: "cloudflare", NGROK_AUTHTOKEN: "interim_tok" } });
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("current") }];
+    await at(0);
+    assert.equal(w.opened[0].choice, "ngrok");
+    assert.equal(w.logs.filter((l) => /applies to interim credentials only/.test(l)).length, 1);
+    const signedOut = world({ signedIn: false, env: { KERNAL_LOCAL_TUNNEL: "cloudflare", NGROK_AUTHTOKEN: "interim_tok" } });
+    await signedOut.at(0);
+    assert.equal(signedOut.w.opened[0].choice, "cloudflare");
+  });
+
+  test("each heartbeat waits up to 30 s; credentials 15 s; the stop heartbeat 3 s (§1.4)", async () => {
+    const { w, deps, loop, at } = world();
+    const limits: string[] = [];
+    let path = "";
+    const real = deps.fetch;
+    deps.fetch = (async (url: string, init: RequestInit) => { path = new URL(url).pathname; return real(url, init); }) as unknown as typeof fetch;
+    deps.timeoutSignal = (ms) => { queueMicrotask(() => limits.push(`${path} ${ms}`)); return new AbortController().signal; };
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("fetch") }, { status: 200, body: hbAnswer("current") }];
+    await at(0);
+    await loop.stop();
+    assert.deepEqual(limits, [
+      `/api/local-hosts/heartbeat ${HEARTBEAT_TIMEOUT_MS}`,
+      "/api/local-hosts/tunnel-credentials 15000",
+      "/api/local-hosts/heartbeat 3000",
+    ]);
+    assert.equal(HEARTBEAT_TIMEOUT_MS, 30_000);
+  });
+
   test("after a restart the api answers current, but nothing is cached: credentials are fetched anyway", async () => {
     const { w, at, last } = world();
     w.replies.heartbeat = [{ status: 200, body: hbAnswer("current") }];
@@ -223,7 +252,7 @@ describe("managed credentials and the heartbeat cadence (§1.4)", () => {
     assert.deepEqual(o.credentials, [{ provider: "ngrok", authtoken: `${AUTHTOKEN}1`, url: "https://lh8d0b7c6a5e4f3a2b1c0d9e8f.internal", trafficPolicy: '{"on_http_request":[]}', bearerToken: BEARER }]);
     assert.deepEqual(o.allowPaths, ["/v1/chat/completions", "/v1/models"]);
     assert.deepEqual(o.rateLimit, { requests: 100, windowSeconds: 60 });
-    assert.equal(o.choice, "auto");
+    assert.equal(o.choice, "ngrok", "managed credentials always mean ngrok (§4.6)");
 
     // The state change goes out on the next poll (the 10 s window).
     await at(15);

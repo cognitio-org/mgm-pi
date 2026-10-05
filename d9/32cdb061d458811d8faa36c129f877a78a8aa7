@@ -1,0 +1,43 @@
+kernal/.pi/extensions/_shared/tunnel/types.ts
+  s_38ec74cfb7fa1d::t_c7fbe5251b5152 1-123
+kernal/.pi/extensions/_shared/tunnel/cloudflare.ts
+  s_38ec74cfb7fa1d::t_f40fc0c5628a58 1-20
+kernal/tests/fixtures/fake-ngrok.mjs
+  s_38ec74cfb7fa1d::t_dfd641bb15ca87 1-60
+kernal/.pi/extensions/_shared/tunnel/policy.ts
+  s_38ec74cfb7fa1d::t_94ecc722f196d4 1-69
+kernal/tests/tunnel.test.ts
+  s_38ec74cfb7fa1d::t_f09f9edc56a47e 1-12,14-411,415,419-435,438-546
+  s_38ec74cfb7fa1d::t_2fa0eed3ce1754 13,412-414,416-418,436-437
+kernal/.pi/extensions/_shared/tunnel/ngrok.ts
+  s_38ec74cfb7fa1d::t_fc566fdb0e0d33 1-32,34-171,173-223,225-275,277-308,310-357
+  s_c67f9150e24079::t_4f94b33c66adbb 33,172,224,276,309
+kernal/.pi/extensions/_shared/tunnel/proxy.ts
+  s_38ec74cfb7fa1d::t_3b5fed641bf358 1-202
+kernal/.pi/extensions/_shared/tunnel/tunnel.ts
+  s_38ec74cfb7fa1d::t_1a8169538be7f1 1-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d932cdb061d458811d8faa36c129f877a78a8aa7",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

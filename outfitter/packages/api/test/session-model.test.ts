@@ -78,9 +78,60 @@ describe("PUT /api/sessions/:id/model", () => {
     const agent = await openAgentSocket(app, run.id);
     sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
     assert.equal((await agent.nextMessage()).guru.model, "litellm/qwen3-coder");
+    assert.equal((await app.store.sessions.findById(session.id))?.modelOverride, "litellm/qwen3-coder", "pinned once, so later runs skip the transcript");
     agent.send({ t: "bye", reason: "stop" });
     await agent.nextClose();
     app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("an old floppy last run on the laptop fallback is pinned on the laptop model it wanted", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { model: "litellm/local-qwen-mlx", fallbackModel: "litellm/gpt-5-mini" });
+    const session = await seedStoppedSession(app);
+    const now = new Date().toISOString();
+    await app.store.runs.insert({
+      id: "r-old", sessionId: session.id, state: "stopped", lastAckedSeq: 0, pending: [], createdAt: now, updatedAt: now,
+      modelFallback: { wanted: "litellm/local-qwen-mlx", used: "litellm/gpt-5-mini" },
+    });
+    await app.store.entries.insertIfNew(session.id, 1, { id: "m1", type: "model_change", provider: "litellm", modelId: "gpt-5-mini" });
+    app.laptopProbe.setOnline(true);
+
+    const run = await app.runs.wake(session.id);
+    const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
+    assert.equal((await agent.nextMessage()).guru.model, "litellm/local-qwen-mlx");
+    assert.equal((await app.store.sessions.findById(session.id))?.modelOverride, "litellm/local-qwen-mlx");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a tape's :thinking suffix: the floppy pins the bare model, the spec keeps the tape's level", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store, { model: "litellm/gpt-5:high" });
+    const { session, run } = (await app.fastify.inject({ method: "POST", url: "/api/sessions", payload: { guruId: "test-guru", prompt: "hi" } })).json();
+    assert.equal(session.modelOverride, "litellm/gpt-5");
+    const agent = await openAgentSocket(app, run.id);
+    sendHello(agent, run.id, session.id, runTokenFor(app, run.id));
+    const spec = await agent.nextMessage();
+    assert.equal(spec.guru.model, "litellm/gpt-5");
+    assert.equal(spec.guru.thinking, "high");
+    assert.equal((await putModel(app, session.id, null)).json().modelOverride, "litellm/gpt-5");
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("POST /api/sessions refuses a malformed model", async () => {
+    const app = await buildTestApp();
+    await seedGuru(app.store);
+    for (const model of ["", "nope", "litellm/x:high"]) {
+      const res = await app.fastify.inject({ method: "POST", url: "/api/sessions", payload: { guruId: "test-guru", prompt: "hi", model } });
+      assert.equal(res.statusCode, 400, model);
+    }
     await app.fastify.close();
   });
 

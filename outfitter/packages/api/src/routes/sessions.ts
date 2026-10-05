@@ -436,6 +436,9 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       return reply.code(400).send({ error: "guruId and prompt are required" });
     }
     if (body.prompt.length > MAIL_MAX_TEXT) return reply.code(413).send({ error: `prompt is over ${MAIL_MAX_TEXT} characters` });
+    if (body.model !== undefined && !isModelId(body.model)) {
+      return reply.code(400).send({ error: `model must be provider/id (at most ${MODEL_ID_MAX} characters, no :thinking suffix)` });
+    }
     const guru = await ctx.store.gurus.findById(body.guruId);
     if (!guru) return reply.code(400).send({ error: `unknown guruId: ${body.guruId}` });
 

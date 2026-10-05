@@ -24,7 +24,7 @@ import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
-import { floppyModel } from "./session-model.ts";
+import { floppyModel, tapeThinking } from "./session-model.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
@@ -1222,9 +1222,8 @@ export class AgentLink {
       }
     }
     // The floppy's own model (session-model.ts): pinned at creation, then whatever was switched to.
-    // A floppy from before the pin restores on its transcript's last model, not the tape's current
-    // one; only that case reads the transcript here (a reconnect loads no entries below).
-    const wanted = floppyModel(session, guru, session.modelOverride ? [] : (await this.store.entries.listForSession(session.id)).map((e) => e.entry));
+    // A floppy from before the pin is pinned on its first spec here, from its transcript.
+    const wanted = await floppyModel(this.store, session, guru);
     // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
     // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
     const online = await this.laptopProbe.isOnline();
@@ -1369,7 +1368,8 @@ export class AgentLink {
         systemPrompt: guru.systemPrompt,
         appendSystemPrompt: guru.appendSystemPrompt,
         model: resolved.model,
-        thinking: guru.thinking,
+        // A tape's `:level` model suffix is its thinking level; the floppy's model is bare.
+        thinking: tapeThinking(guru),
         tools: guru.tools,
         excludeTools: guru.excludeTools,
         packages: guru.packages,

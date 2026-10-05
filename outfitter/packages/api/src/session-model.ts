@@ -7,7 +7,7 @@
 // that run doesn't pass `--model` again (agentd's Bug 8 check).
 
 import type { RouteContext } from "./routes/context.ts";
-import type { Guru, PiEntry, Run, Session } from "./store/types.ts";
+import type { Guru, PiEntry, Run, Session, Store } from "./store/types.ts";
 import { resolveRunModel } from "./laptop.ts";
 
 export const MODEL_ID_MAX = 200;
@@ -20,6 +20,22 @@ const THINKING_SUFFIX = /:(off|minimal|low|medium|high|xhigh)$/;
  * tape sets the thinking level, and a suffixed id couldn't switch a running pi. */
 export function isModelId(value: unknown): value is string {
   return typeof value === "string" && value.length <= MODEL_ID_MAX && /^[^\s/]+\/\S+$/.test(value) && !THINKING_SUFFIX.test(value);
+}
+
+/** A tape may name `provider/id:high` (pi's `--model` syntax). A floppy keeps the bare model; the
+ * level stays the tape's (tapeThinking). */
+export function bareModel(model: string): string {
+  return model.replace(THINKING_SUFFIX, "");
+}
+
+/** The tape's thinking level: its own field, else the suffix on its model. */
+export function tapeThinking(guru: Pick<Guru, "model" | "thinking">): string | undefined {
+  return guru.thinking ?? guru.model?.match(THINKING_SUFFIX)?.[1];
+}
+
+/** The tape's model as a new floppy pins it (bare), or undefined when the tape names none. */
+export function pinnableModel(guru: Pick<Guru, "model"> | null | undefined): string | undefined {
+  return guru?.model ? bareModel(guru.model) : undefined;
 }
 
 /** pi's `set_model` takes the provider and the id apart; the provider is everything before the
@@ -43,10 +59,19 @@ export function transcriptModel(entries: readonly PiEntry[]): string | undefined
   return model;
 }
 
-/** What a run of this floppy starts on, before the laptop preflight: its own model, else (an older
- * floppy) its transcript's last, else the tape's. */
-export function floppyModel(session: Session, guru: Pick<Guru, "model">, entries: readonly PiEntry[]): string {
-  return session.modelOverride ?? transcriptModel(entries) ?? guru.model;
+/** What a run of this floppy starts on, before the laptop preflight. A floppy from before models
+ * were pinned is pinned here, once: on its transcript's last model (or what that run wanted, when
+ * the laptop preflight had swapped in a fallback), else the tape's. From then on it reads like any
+ * other floppy, so the transcript is read once per old floppy, not per run. */
+export async function floppyModel(store: Store, session: Session, guru: Pick<Guru, "model">): Promise<string> {
+  if (session.modelOverride) return session.modelOverride;
+  const last = transcriptModel((await store.entries.listForSession(session.id)).map((e) => e.entry));
+  const swapped = last ? (await store.runs.listForSession(session.id)).find((r) => r.modelFallback?.used === last)?.modelFallback : undefined;
+  const pinned = swapped?.wanted ?? last ?? pinnableModel(guru);
+  // A tape with no model and no transcript yet: central settings decide (agentd); nothing to pin.
+  if (!pinned) return guru.model;
+  await store.sessions.setModelOverride(session.id, pinned, new Date().toISOString());
+  return pinned;
 }
 
 /** A run whose pi will take a `set_model` now or once it is up. A stopping run is checkpointing on
@@ -69,7 +94,7 @@ export interface ModelSwitch {
  * the tape's model as it is now (a copy, like at creation: later tape edits still don't follow).
  * `guru` is null when the floppy's tape has been deleted. */
 export async function switchSessionModel(ctx: RouteContext, session: Session, guru: Guru | null, model: string | null): Promise<ModelSwitch> {
-  const stored = model ?? (guru?.model || null);
+  const stored = model ?? pinnableModel(guru) ?? null;
   await ctx.store.sessions.setModelOverride(session.id, stored, new Date().toISOString());
   const run = await ctx.store.runs.findActiveForSession(session.id);
   if (!takesLiveSwitch(run)) return { modelOverride: stored, model: stored ?? "", applied: "next-run" };

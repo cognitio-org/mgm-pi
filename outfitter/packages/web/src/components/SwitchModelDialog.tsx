@@ -32,6 +32,10 @@ export function SwitchModelDialog({ sessionId, current, modelOverride, guruModel
   const [value, setValue] = useState(modelOverride ?? current ?? guruModel ?? "");
   const [busy, setBusy] = useState<"switch" | "reset" | null>(null);
   const trimmed = value.trim();
+  // What "Use tape's model" would pin (the api drops a tape's :thinking suffix); hidden when the
+  // floppy already has it or is already on it.
+  const tapeModel = guruModel?.replace(THINKING_SUFFIX, "");
+  const offerTape = Boolean(tapeModel) && tapeModel !== modelOverride && tapeModel !== current;
   const valid = MODEL_ID.test(trimmed) && !THINKING_SUFFIX.test(trimmed) && trimmed.length <= 200;
 
   async function save(model: string | null) {
@@ -92,7 +96,7 @@ export function SwitchModelDialog({ sessionId, current, modelOverride, guruModel
             <button type="submit" className="btn btn-primary" disabled={!valid || busy !== null}>
               {busy === "switch" ? <Working label="Switching" /> : "Switch"}
             </button>
-            {guruModel && guruModel !== modelOverride && (
+            {offerTape && (
               <button type="button" className="btn" onClick={() => void save(null)} disabled={busy !== null}>
                 {busy === "reset" ? <Working label="Switching" /> : "Use tape's model"}
               </button>

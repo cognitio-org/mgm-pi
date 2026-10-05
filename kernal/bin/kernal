@@ -407,10 +407,31 @@ while [[ $# -gt 0 ]]; do
 done
 set -- ${_args[@]+"${_args[@]}"}
 
+# `kernal local` (#381, local-host.md §4.3): the Local Host loop and its service units import only
+# node: built-ins and relative .ts files, so they run under Node 22.18+ (type stripping on by default:
+# KERNAL_LOCAL_NODE, recorded by `kernal local enable`, else node on PATH) or, in a release bundle
+# without Node, under the bundled pi binary as Bun.
+exec_local_runtime() {
+  local script="$1" n
+  shift
+  for n in "${KERNAL_LOCAL_NODE:-}" "$(command -v node 2>/dev/null || true)"; do
+    [[ -n "$n" && -x "$n" ]] || continue
+    if "$n" -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' 2>/dev/null; then
+      exec "$n" "$script" "$@"
+    fi
+  done
+  if [[ -x "$ROOT/pi/pi" ]]; then BUN_BE_BUN=1 exec "$ROOT/pi/pi" "$script" "$@"; fi
+  echo "kernal local needs Node 22.18+ or a release bundle" >&2
+  exit 1
+}
+
 case "${1:-}" in
   login|logout|whoami)
     # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, with node.
     exec node "$ROOT/.pi/extensions/kernal-login/cli.ts" "$@" ;;
+  local)
+    shift
+    exec_local_runtime "$ROOT/.pi/extensions/kernal-local/cli.ts" "$@" ;;
   github)
     # The same setup /github runs inside the agent, from a plain terminal.
     if command -v gh >/dev/null 2>&1; then

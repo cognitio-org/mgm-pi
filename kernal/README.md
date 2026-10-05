@@ -681,6 +681,16 @@ seed; re-pick another model, or set `KERNAL_VOICE=off`, to keep a local setup wi
 default model, `KERNAL_VOICE=off` leaves pi-listen's settings alone. Audio capture needs SoX
 (`brew install sox`) or ffmpeg; kernal and the installer say so when neither is found.
 
+## Share local models (`kernal local`)
+
+`kernal local enable` installs a background service (a LaunchAgent on macOS, a systemd user unit
+on Linux) that shares this machine's model server (LM Studio, Ollama, llama.cpp, mlx-lm, vLLM) with
+your Outfitter account through a tunnel, so cloud runs can use those models as
+`local/<you>-<machine>/<model>`. It needs `kernal login` and the `localHost.shareModels` setting
+turned on; `enable` prints that setting and where to change it. `kernal local status` shows the
+tunnel, models and last heartbeat; `kernal local disable` removes the service. It replaces
+`tunnel.sh`; don't run both. Details: [docs/local-host.md](docs/local-host.md).
+
 ## Reporting problems (`/report`)
 
 pi's own `/bug` uploads to the pi developers and is handled by the TUI before extensions see it,

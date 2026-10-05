@@ -1,6 +1,6 @@
 /**
  * Fleet settings: what an Outfitter operator set once for every machine (Settings → Telemetry in the
- * web app; outfitter/packages/api/src/fleet-settings.ts), read with this laptop's Dongle from
+ * web app; outfitter/packages/api/src/fleet-settings.ts), read with this laptop's login from
  * GET /api/fleet-settings. Sentry is the first setting here; more will follow the same path.
  *
  * Start-up never waits for the network. `cachedFleetSettings` returns the last answer at once, from a
@@ -9,7 +9,7 @@
  * in Outfitter is therefore in force on this laptop from its next Kernal start, or later in the
  * session if the refresh lands first and the caller applies it.
  *
- * No Dongle (OUTFITTER_API/OUTFITTER_TOKEN unset) means no fleet settings at all, cached or not:
+ * Signed out (no `kernal login`; Dongles are retired) means no fleet settings at all, cached or not:
  * every setting is at its off/default value. The cache remembers which OUTFITTER_API answered, so
  * pointing Kernal at another Outfitter never applies the previous one's settings.
  */

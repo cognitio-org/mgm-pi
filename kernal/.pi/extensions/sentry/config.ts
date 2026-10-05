@@ -5,7 +5,7 @@
  *
  * Two inputs, and both must say yes:
  *   - Outfitter's fleet settings, which an operator sets once for every machine. They carry the DSN
- *     and the trace sample rate; nothing about Sentry is configured on the laptop. No Dongle, or no
+ *     and the trace sample rate; nothing about Sentry is configured on the laptop. No login, or no
  *     answer from Outfitter yet, means off.
  *   - `telemetry.sentry.enabled` in this machine's config layer (~/.kernal/config.local.json), the
  *     person's own override, changed with `/sentry off|on` or /admin's "Only this machine" (both
@@ -171,7 +171,7 @@ function headline(decision: SentryDecision, live: LiveStatus): string {
     case "laptop":
       return "Sentry: off on this laptop (/sentry on to follow Outfitter's setting again).";
     case "no-dongle":
-      return "Sentry: off. This laptop is not connected to Outfitter (no OUTFITTER_TOKEN), and only Outfitter can turn it on.";
+      return "Sentry: off. This laptop is not connected to Outfitter (run kernal login), and only Outfitter can turn it on.";
     case "fleet":
       return "Sentry: off. Outfitter has it off for everyone (Settings → Telemetry in the web app).";
   }

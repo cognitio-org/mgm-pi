@@ -484,17 +484,23 @@ describe("pi-memory", () => {
         env: { PATH: process.env.PATH ?? "", HOME: "/h", TMPDIR: dir, PI_CODING_AGENT_DIR: dir, ...env },
       }).trim();
     };
+    // Signed in: the login's index exists (bin/kernal checks only that). Dongles are retired (#399).
+    const auth = join(dir, "auth");
+    mkdirSync(auth);
+    writeFileSync(join(auth, "accounts.json"), "{}\n");
+    const SIGNED_IN = { KERNAL_AUTH_DIR: auth };
     try {
-      const on = run({ kernal: {} }, DONGLE);
+      const on = run({ kernal: {} }, SIGNED_IN);
       assert.match(on, /dir=\S*kernal-no-pi-memory\/\S+ sum=0 off=1 src=\/h\/\.pi\/agent\/memory/);
-      assert.equal(run({ subagents: { memory: "off" }, kernal: { memory: "auto" } }, DONGLE).includes("off=1"), true, "only kernal.memory counts");
+      assert.equal(run({ subagents: { memory: "off" }, kernal: { memory: "auto" } }, SIGNED_IN).includes("off=1"), true, "only kernal.memory counts");
       writeFileSync(join(dir, "settings.json"), JSON.stringify({ kernal: { memory: "off" } }));
-      const minified = execFileSync("bash", ["-c", `${fn}\npi_memory_env\necho "off=\${KERNAL_PI_MEMORY_OFF:-}"`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: "/h", TMPDIR: dir, PI_CODING_AGENT_DIR: dir, ...DONGLE } }).trim();
+      const minified = execFileSync("bash", ["-c", `${fn}\npi_memory_env\necho "off=\${KERNAL_PI_MEMORY_OFF:-}"`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: "/h", TMPDIR: dir, PI_CODING_AGENT_DIR: dir, ...SIGNED_IN } }).trim();
       assert.equal(minified, "off=", "one-line JSON is read too");
-      assert.match(run({ kernal: { memory: "tool" } }, { ...DONGLE, PI_MEMORY_DIR: "/mine" }), /sum=0 off=1 src=\/mine$/);
-      assert.equal(run({ kernal: { memory: "off" } }, DONGLE), "dir= sum= off= src=");
-      assert.equal(run({ kernal: {} }, {}), "dir= sum= off= src=", "no Dongle: pi-memory stays");
-      assert.equal(run({ kernal: {} }, { ...DONGLE, OUTFITTER_SESSION_ID: "s1" }), "dir= sum= off= src=", "never in a Drive");
+      assert.match(run({ kernal: { memory: "tool" } }, { ...SIGNED_IN, PI_MEMORY_DIR: "/mine" }), /sum=0 off=1 src=\/mine$/);
+      assert.equal(run({ kernal: { memory: "off" } }, SIGNED_IN), "dir= sum= off= src=");
+      assert.equal(run({ kernal: {} }, {}), "dir= sum= off= src=", "signed out: pi-memory stays");
+      assert.equal(run({ kernal: {} }, DONGLE), "dir= sum= off= src=", "a retired Dongle does not count");
+      assert.equal(run({ kernal: {} }, { ...SIGNED_IN, OUTFITTER_SESSION_ID: "s1" }), "dir= sum= off= src=", "never in a Drive");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -593,27 +599,37 @@ describe("/memory and the import", () => {
   });
 });
 
-describe("the Dongle is shared by every extension's copy of outfitter-env", () => {
-  test("two module instances (pi loads each extension with its own jiti): both get the token", async () => {
-    const saved = { api: process.env.OUTFITTER_API, token: process.env.OUTFITTER_TOKEN };
+describe("every extension's copy of outfitter-env shares one read", () => {
+  test("two module instances (pi loads each extension with its own jiti): one read, one retired-Dongle notice", async () => {
+    const saved = { api: process.env.OUTFITTER_API, token: process.env.OUTFITTER_TOKEN, auth: process.env.KERNAL_AUTH_DIR };
     const slot = Symbol.for("kernal.outfitterCredentials");
+    const warned = Symbol.for("kernal.outfitterDongleWarned");
     const g = globalThis as any;
-    const before = g[slot];
+    const before = { slot: g[slot], warned: g[warned] };
     delete g[slot];
+    delete g[warned];
     process.env.OUTFITTER_API = "https://link.example";
     process.env.OUTFITTER_TOKEN = "outf_shared_test";
+    process.env.KERNAL_AUTH_DIR = mkdtempSync(join(tmpdir(), "kernal-auth-none-"));
+    const lines: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: any) => { lines.push(String(chunk)); return true; }) as any;
     try {
       const url = new URL("../.pi/extensions/_shared/outfitter-env.ts", import.meta.url).href;
       const a = await import(`${url}?instance=a`);
       const b = await import(`${url}?instance=b`);
       assert.notEqual(a, b, "separate module instances");
-      assert.equal(a.outfitterCredentials().token, "outf_shared_test");
+      assert.equal(a.outfitterCredentials().token, undefined, "a Dongle is never read");
       assert.equal(process.env.OUTFITTER_TOKEN, undefined, "scrubbed by the first");
-      assert.equal(b.outfitterCredentials().token, "outf_shared_test", "the second still has it");
+      assert.equal(b.outfitterCredentials(), a.outfitterCredentials(), "the second shares the first's read");
+      assert.deepEqual(lines, ["Dongles are retired; run kernal login\n"], "one notice per process");
     } finally {
-      if (before === undefined) delete g[slot];
-      else g[slot] = before;
-      for (const [k, v] of [["OUTFITTER_API", saved.api], ["OUTFITTER_TOKEN", saved.token]] as const) {
+      process.stderr.write = write;
+      for (const [k, v] of [[slot, before.slot], [warned, before.warned]] as const) {
+        if (v === undefined) delete g[k];
+        else g[k] = v;
+      }
+      for (const [k, v] of [["OUTFITTER_API", saved.api], ["OUTFITTER_TOKEN", saved.token], ["KERNAL_AUTH_DIR", saved.auth]] as const) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }

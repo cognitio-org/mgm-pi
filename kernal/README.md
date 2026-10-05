@@ -48,10 +48,15 @@ from. `--profile <name>` picks one of your account's named profiles for that pro
 the personal keys in Kernal's `.env` (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`; not `DEEPGRAM_API_KEY`, which bundles ship as a shared voice key) to your account and then remove them from `.env`. It also
 offers to remove a shared `LITELLM_AGENT_KEY` (once the device has its own key, which it would
-otherwise override) and a Dongle (`OUTFITTER_TOKEN`). Every answer defaults to no, nothing is asked
+otherwise override) and a leftover Dongle (`OUTFITTER_TOKEN`). Every answer defaults to no, nothing is asked
 without a terminal, and the file is copied to `.env.bak-<time>` before the first change. Only
 `~/localllm/.env` and the `.env` files next to the install are touched, never a project's own. Keys
 left in `.env` keep working, with a deprecation warning.
+
+**Dongles are retired.** `kernal login` is the only way to connect Kernal to Outfitter. Kernal no
+longer reads `OUTFITTER_TOKEN`: one left in the environment or `.env` is ignored, with the one-line
+notice "Dongles are retired; run kernal login". The web app no longer creates Dongles; existing ones
+keep working for other clients until they expire or are revoked. A2A keys are unchanged.
 
 ### Centrally managed settings
 
@@ -678,8 +683,7 @@ notice says where it is.
 
 Off unless Outfitter turns it on. An Outfitter operator switches Sentry on or off for every machine
 at once, under Settings → Telemetry in the web app, and sets the DSN and trace sample rate there too.
-Kernal reads that setting with your login (`kernal login`), or a deprecated Dongle (`OUTFITTER_API` +
-`OUTFITTER_TOKEN`). With neither, nothing is sent. A change reaches the laptop by its next start, or during a session once the
+Kernal reads that setting with your login (`kernal login`). Signed out, nothing is sent. A change reaches the laptop by its next start, or during a session once the
 background check finishes. When on, Kernal sends failed agent runs, uncaught crashes in `-p` mode,
 and a sample of agent-run and tool timings. Tool timings carry the tool name only, never its
 arguments or output, unless the fleet turns on prompts and outputs (below). Every event leaves without your hostname, and with your home directory written
@@ -808,12 +812,10 @@ pushing a laptop-only session id is fine.
 
 **Auth: `kernal login`.** Sent as `Authorization: Bearer <access token>`, refreshed as needed; set
 only `KERNAL_TELEPORT_STORE=outfitter` (and `OUTFITTER_API` for an Outfitter other than
-`https://link.kernal.one`). A Dongle (`OUTFITTER_TOKEN`, from the web UI's Tokens page) still works
-when this machine is not signed in, with a deprecation warning; the paste-a-Dongle flow is being
-retired.
+`https://link.kernal.one`). Dongles (`OUTFITTER_TOKEN`) are retired and no longer read.
 
 Neither token nor anything derived from it is ever written to disk by this module. A 401 from the
-API means the login or Dongle was rejected (signed out, revoked) -- run `kernal login` again. A 403
+API means the login was rejected (signed out, revoked) -- run `kernal login` again. A 403
 means that account isn't allowed to use this Outfitter deployment at all.
 
 An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
@@ -855,7 +857,7 @@ ephemeral `--no-session`) and only notifies on a real failure; it never blocks o
 
 ## Outfitter admin tools
 
-Signed in with `kernal login` (or with a deprecated Dongle, as for the Outfitter store above), Kernal
+Signed in with `kernal login`, Kernal
 can administer Outfitter itself: build and save a tape, manage environments, find and read past
 sessions. In a Drive whose tape has **Admin tools** turned on, the same tools work through agentd.
 The design is in `outfitter/docs/specs/sysop-tools.md`.

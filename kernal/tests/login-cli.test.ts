@@ -210,10 +210,10 @@ describe("bin/kernal pi_memory_env", () => {
     return r.stdout === "1";
   }
 
-  test("a stored login counts like a Dongle; with neither, pi-memory stays on", () => {
+  test("a stored login turns pi-memory off; signed out (a retired Dongle or not), it stays on", () => {
     const HOME = mkdtempSync(join(tmpdir(), "kernal-home-"));
     assert.equal(piMemoryOff({ HOME }), false);
-    assert.equal(piMemoryOff({ HOME, OUTFITTER_API: API, OUTFITTER_TOKEN: "outf_x" }), true);
+    assert.equal(piMemoryOff({ HOME, OUTFITTER_API: API, OUTFITTER_TOKEN: "outf_x" }), false, "Dongles are retired (#399)");
     mkdirSync(join(HOME, ".kernal", "auth"), { recursive: true });
     writeFileSync(join(HOME, ".kernal", "auth", "accounts.json"), "{}");
     assert.equal(piMemoryOff({ HOME }), true);

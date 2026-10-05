@@ -27,13 +27,13 @@ describe("OutfitterStore construction", () => {
     assert.throws(() => new OutfitterStore({ token: "t" }), /OUTFITTER_API/);
   });
 
-  test("requires OUTFITTER_TOKEN -- IAP identity-token mode has been removed", () => {
-    assert.throws(() => new OutfitterStore({ apiBase: "https://api.example.com" }), /OUTFITTER_TOKEN/);
+  test("requires a login -- IAP identity-token mode has been removed, and Dongles are retired", () => {
+    assert.throws(() => new OutfitterStore({ apiBase: "https://api.example.com" }), /requires a login: run kernal login/);
   });
 });
 
 describe("OutfitterStore auth header", () => {
-  test("OUTFITTER_TOKEN is sent as Authorization: Bearer", async () => {
+  test("the token is sent as Authorization: Bearer", async () => {
     const { fn, calls } = fakeFetch(() => ({ status: 200, body: [] }));
     const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "tok-123", fetchFn: fn });
     await store.list();
@@ -42,12 +42,12 @@ describe("OutfitterStore auth header", () => {
 
   // Docs honesty fix (critic review #1, docs/reports/critic-review-pr15.md): IAP identity-token
   // mode never worked against a real deployed API and has been removed entirely, replaced by
-  // personal API tokens on the link service (E4.1b). A 401 now always points at OUTFITTER_TOKEN
-  // and the Tokens page, never at gcloud.
-  test("a 401 response points at OUTFITTER_TOKEN and the Outfitter Tokens page", async () => {
+  // bearer tokens on the link service (E4.1b; a `kernal login` session since #399). A 401 points at
+  // `kernal login`, never at gcloud.
+  test("a 401 response says to run kernal login", async () => {
     const { fn } = fakeFetch(() => ({ status: 401, body: { error: "unauthorized" } }));
     const store = new OutfitterStore({ apiBase: "https://api.example.com", token: "bad", fetchFn: fn });
-    await assert.rejects(() => store.list(), /OUTFITTER_TOKEN was rejected; create a new token on the Outfitter Tokens page/);
+    await assert.rejects(() => store.list(), /login was rejected; run kernal login/);
   });
 });
 

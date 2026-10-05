@@ -4,7 +4,7 @@
 
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp } from "./helpers.ts";
+import { buildTestApp, seedDongle } from "./helpers.ts";
 import { openAgentSocket, makeRunningSession, sendHello } from "./agent-socket.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import {
@@ -32,13 +32,10 @@ function on(dsn = DSN, tracesSampleRate = 0.05): FleetSettings {
   return { telemetry: { sentry: { enabled: true, dsn, tracesSampleRate } } };
 }
 
-/** A Dongle for `ownerEmail`, minted through a throwaway dev-mode app on the same store. */
+/** An existing Dongle for `ownerEmail` (#399: no longer created through the API, still accepted). */
 async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
-  const dev = await buildTestApp({}, { store });
-  const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
-  await store.tokens.update(created.json().record.id, { ownerEmail });
-  await dev.fastify.close();
-  return { authorization: `Bearer ${created.json().token}` };
+  const { token } = await seedDongle(store, ownerEmail, "t");
+  return { authorization: `Bearer ${token}` };
 }
 
 describe("fleet settings document", () => {

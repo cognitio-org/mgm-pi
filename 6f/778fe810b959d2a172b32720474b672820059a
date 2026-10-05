@@ -1,0 +1,30 @@
+kernal/tests/tunnel.test.ts
+  s_38ec74cfb7fa1d::t_4d097ede5d4e55 475-476,481
+  s_38ec74cfb7fa1d::t_109240afb69443 11,13,20,27-28,178-192,277-296,313-319,467-474,477-480,482-547,613-632
+kernal/.pi/extensions/_shared/tunnel/ngrok.ts
+  s_38ec74cfb7fa1d::t_e9e029f5317efe 231-234
+  s_38ec74cfb7fa1d::t_1f547a805adaf3 15-17,32-38,42-43,48,121-122,124-127,236,241-243,246-249,253-322,356-360,362-365,380-381
+.env.example
+  s_38ec74cfb7fa1d::t_e9e029f5317efe 44
+kernal/.pi/extensions/_shared/tunnel/tunnel.ts
+  s_38ec74cfb7fa1d::t_e9e029f5317efe 11-14,17,29-34,63,118-120
+kernal/.pi/extensions/_shared/tunnel/proxy.ts
+  s_38ec74cfb7fa1d::t_e9e029f5317efe 7-9,13-17,125-127
+  s_38ec74cfb7fa1d::t_2235c2f6619dbe 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6f778fe810b959d2a172b32720474b672820059a",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

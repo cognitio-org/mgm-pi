@@ -122,7 +122,18 @@ After `release.sh` succeeds, the deploy workflow creates the Sentry release name
 (`outfitter-vYYYY.MM.DD.N`, the `OUTFITTER_RELEASE` the api, link, Drives and, through
 `GET /api/fleet-settings`, the web app report under), links its commits, finalizes it and records
 a `production` deploy. A manual re-run or rollback of an existing tag records another deploy on
-that release. Kernal's release workflow (`.github/workflows/release.yml`) does the same for
+that release.
+
+The release runs in its own `sentry-release` job after `deploy`, beside the live tests (it gates
+nothing), with `contents: read` only: no `id-token`, no GCP auth. The deploy job is the wrong place
+for it: `google-github-actions/auth` writes the deployer service account's credentials file
+(`gha-creds-*.json`) into that job's workspace and exports `GOOGLE_APPLICATION_CREDENTIALS` to every
+later step, and `getsentry/action-release`, though pinned by commit SHA, runs a Docker image it pulls
+by tag (`ghcr.io/getsentry/action-release-image:3.7.0`), so whoever could move that tag would run
+with production deploy rights. In its own job that image sees only the Sentry token and a fresh
+checkout of the shipped commit.
+
+Kernal's release workflow (`.github/workflows/release.yml`) does the same for
 `kernal@X.Y.Z`, the name a bundle reports, without a deploy marker. A Sentry failure never fails a
 deploy or a Kernal release.
 

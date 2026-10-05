@@ -983,6 +983,36 @@ Outfitter's cloud sandbox image: it skips the local-server probe and the key re-
 fills the budget footer after pi is ready rather than before, and skips teleport's store prefetch
 (see `outfitter/docs/reports/startup-trim.md`). Never set it on a laptop.
 
+### Tests never see your real login (#433)
+
+A signed-in laptop runs `npm test` the same as CI: no manual `HOME=` needed. `tests/resolve-pi.mjs`
+imports `tests/isolate.mjs` first, in every test file's process, which:
+
+- points `HOME` (and `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`) at a
+  fresh temporary directory, removed when the process exits. Everything Kernal derives from the home
+  lands there: `~/.kernal/auth`, `config.local.json`, `config-cache`, `reports`, `bin`,
+  `~/.pi/agent` (pi-listen's voice settings), `~/.config/codebase-index`, `~/.kernal-sessions`,
+  `~/localllm/.env`;
+- drops inherited `KERNAL_*` / `MGM_*`, `PI_*`, `OUTFITTER_*` and `SENTRY_*` variables (except
+  `KERNAL_LIVE*`, `KERNAL_E2E` and `KERNAL_TEST_*`), so overrides like `KERNAL_HOME_DIR`,
+  `KERNAL_AUTH_DIR` or `PI_CODING_AGENT_DIR` from your shell cannot point a test at real state;
+- sets `KERNAL_AUTH_BACKEND=file`, and `KERNAL_TEST_NO_KEYCHAIN=1`, which makes the real
+  `security` / `secret-tool` runner (`_shared/keychain.ts`) fail as if the tool were missing. No
+  test can read or write the `kernal-outfitter` Keychain items; a test of the keychain backends
+  passes a fake runner.
+
+These are only starting values: a test that sets its own `HOME`, `KERNAL_AUTH_DIR`,
+`PI_CODING_AGENT_DIR` and so on still gets them. `tests/home-guard.mjs` runs as the runner's
+`--test-global-setup`: it snapshots the direct entries of the real `~/.kernal` (and its `auth`,
+`config-cache`, `reports`, `bin`), `~/.pi/agent`, `~/.kernal-sessions` and `~/.config/codebase-index`
+before the run and fails it, naming the paths, if any were created, removed or modified (entries a
+Kernal running in another shell touches itself, such as sessions and installed bundles, are not
+watched). `tests/real-home-guard.test.ts` checks the isolation and the snapshot mid-run.
+`npm run test:e2e` (`KERNAL_E2E=1`) opts out, since it uses the real keys in `~/localllm/.env` on
+purpose, and so does a non-test script that borrows the resolver (`scripts/index-eval.mjs`).
+Run a single file with the same flags, e.g.
+`node --test-global-setup=./tests/home-guard.mjs --import ./tests/resolve-pi.mjs --test tests/sentry.test.ts`.
+
 ## Where the rest is
 
 - [docs/architecture.md](docs/architecture.md) — how the connection, budget, compaction, banner, MCP

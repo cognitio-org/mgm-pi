@@ -1,0 +1,27 @@
+kernal/tests/central-delivery.test.ts
+  s_c67f9150e24079::t_c74211e026ce5f 10-11
+  s_c67f9150e24079::t_fd3d1a59ab3b24 83,142,145,281-298
+  s_c67f9150e24079::t_26b49d62af063f 299
+kernal/.pi/extensions/connect/index.ts
+  s_c67f9150e24079::t_b4f32b8a4a9da2 207-210
+kernal/.pi/mcp.json
+  s_c67f9150e24079::t_b4f32b8a4a9da2 7-13
+outfitter/image/render-mcp.sh
+  s_c67f9150e24079::t_c74211e026ce5f 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e9dbc45e274a4abf88b19bb62c7566a25f7d6b8e",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -34,7 +34,16 @@ ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS kernal-builder
 WORKDIR /opt/kernal
 COPY kernal/package.json kernal/package-lock.json ./
-RUN npm ci --omit=dev
+# pi-ai lands nested under pi-coding-agent, and .pi/npm installs no copy of its own
+# (--legacy-peer-deps, below). pi's extension loader maps only a few pi-ai entry points for
+# extensions, so a subpath outside them (pi-web-access imports @earendil-works/pi-ai/utils/transcript
+# to decide which web tools a resumed session starts with) resolved nowhere: the web tools stayed
+# active on every resumed session. Linking pi's own copy beside pi-coding-agent lets the
+# .pi/npm packages find it the way they find pi-coding-agent; it's the same files, not a second copy.
+RUN npm ci --omit=dev \
+  && cd node_modules/@earendil-works \
+  && { [ -e pi-ai ] || ln -s pi-coding-agent/node_modules/@earendil-works/pi-ai pi-ai; } \
+  && test -f pi-ai/dist/utils/transcript.js
 COPY kernal/bin/ ./bin/
 # MCP servers that sign in by interactive OAuth (google_admin, augment_admin) are dropped from the
 # image's mcp.json: nobody can complete a browser sign-in in a sandbox and there is no keychain, so

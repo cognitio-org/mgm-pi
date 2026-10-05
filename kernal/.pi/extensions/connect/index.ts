@@ -24,7 +24,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { env, inSandbox } from "../_shared/env.ts";
 import {
-  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, parseLmStudioModels, parseSpendHeaders, rootUrl, normalizeBaseUrl,
+  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, lmStudioMeta, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed, curateOpenRouter,
 } from "./lib.ts";
 import { canSaveToAccount, changeCuration, curationLists, type CurationTarget } from "./curation.ts";
@@ -32,6 +32,7 @@ import { settingsPath, updateSettings } from "./settings.ts";
 import { noteOwnDefaultsWrite } from "../_shared/default-sync.ts";
 import { clearLocalOverrides, describeSource, layerCentralEnv, reresolve, webOrigin, type ConfigValue } from "../_shared/central-config.ts";
 import { loginState } from "../_shared/outfitter-session.ts";
+import { probeServer } from "../_shared/local-discovery.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
 export function envFilePath(): string {
@@ -148,8 +149,14 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
   }
   if (!b.discover) return b.fallback;
   if (b.id === "lmstudio") {
-    const native = await getJson(`${rootUrl(b.baseUrl)}/api/v0/models`, b.apiKey);
-    if (native) { reachable.add(b.id); for (const [k, v] of parseLmStudioModels(native)) lmstudioMeta.set(k, v); }
+    // The shared local discovery (#379, _shared/local-discovery.ts) reads both of LM Studio's lists:
+    // /api/v0/models for the windows and loaded state, /v1/models for the ids it accepts right now.
+    const { server, models: found } = await probeServer({ kind: "lmstudio", url: b.baseUrl, apiKey: b.apiKey }, { timeoutMs: 4000 });
+    if (!server.ok) return b.fallback;
+    reachable.add(b.id);
+    for (const [k, v] of lmStudioMeta(found)) lmstudioMeta.set(k, v);
+    const ids = found.filter((m) => m.listed).map((m) => m.id).filter(b.filter ?? (() => true));
+    return ids.length ? ids.sort() : b.fallback;
   }
   if (b.id === "litellm") {
     const info = await getJson(`${rootUrl(b.baseUrl)}/model/info`, b.apiKey);
@@ -257,8 +264,8 @@ export default async function (pi: ExtensionAPI) {
       if (useLocal.startsWith("Yes")) {
         const typed = await ask("Local server URL", cur.LMSTUDIO_BASE_URL, "http://localhost:1234/v1"); if (typed === undefined) return;
         const url = normalizeBaseUrl(typed, "http://localhost:1234/v1"); values.LMSTUDIO_BASE_URL = url;
-        const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio");
-        const listed = native ? [...parseLmStudioModels(native).entries()].map(([id, m]) => `${id}${m.loaded ? "  (loaded)" : ""}`) : ((await getJson(`${url}/models`, "lm-studio"))?.data ?? []).map((m: any) => String(m.id));
+        const { server, models: found } = await probeServer({ kind: "lmstudio", url, apiKey: "lm-studio" }, { timeoutMs: 4000 });
+        const listed = server.endpoints.includes("/api/v0/models") ? [...lmStudioMeta(found).entries()].map(([id, m]) => `${id}${m.loaded ? "  (loaded)" : ""}`) : found.filter((m) => m.listed).map((m) => m.id);
         let model: string | undefined;
         if (listed.length) { const pick = await ctx.ui.select("Default local model", [...listed, "type another id"]); if (pick === undefined) return; model = pick === "type another id" ? undefined : pick.split("  ")[0]; }
         if (!model) { model = await ask("Local model id", cur.LMSTUDIO_MODEL); if (model === undefined) return; }

@@ -8,12 +8,13 @@
  * available here. Naming a provider skips the choice but not the checks. Nothing selectable is a
  * result with every provider's reason, never an exception, so the service can show it and retry.
  *
- * Credentials come from Outfitter (#383). Until then interimCredentialsFromEnv() reads today's
- * `.env` names (tunnel.sh's domain and bearer token, plus NGROK_AUTHTOKEN): the caller passes the
- * env it loaded, and nothing here reads a credential file, ngrok's own config included.
+ * Credentials come from Outfitter (#383). Until then interimCredentialsFromEnv() reads `.env`:
+ * tunnel.sh's domain and bearer token, plus NGROK_AUTHTOKEN, a name new with this module (tunnel.sh
+ * users authenticate through ngrok's own config, which Kernal deliberately never reads, so they
+ * add it once). The caller passes the env it loaded; nothing here reads a credential file.
  */
 import { cloudflareProvider } from "./cloudflare.ts";
-import { ngrokProvider } from "./ngrok.ts";
+import { NO_NGROK_CREDENTIALS, ngrokProvider } from "./ngrok.ts";
 import { startGuardProxy, type GuardStats } from "./proxy.ts";
 import {
   DEFAULT_ALLOW_PATHS, TunnelError,
@@ -24,6 +25,12 @@ import {
 export * from "./types.ts";
 
 export const AUTO_ORDER: readonly TunnelProviderId[] = ["ngrok", "cloudflare"];
+
+/** Why a provider whose runtime is fine still cannot be chosen: what to set, so the UI can say so. */
+const MISSING_CREDENTIALS: Readonly<Record<TunnelProviderId, string>> = {
+  ngrok: NO_NGROK_CREDENTIALS,
+  cloudflare: "no cloudflare credentials",
+};
 
 export type ProviderRegistry = Readonly<Record<TunnelProviderId, TunnelProvider>>;
 
@@ -53,7 +60,7 @@ export async function selectProvider(choice: TunnelChoice, credentials: readonly
     } catch (e: any) {
       status = { provider: id, available: false, reason: `status check failed: ${e?.message ?? e}` };
     }
-    if (status.available && !creds) status = { ...status, available: false, reason: `no ${id} credentials` };
+    if (status.available && !creds) status = { ...status, available: false, reason: MISSING_CREDENTIALS[id] };
     statuses.push(status);
     if (status.available && creds) return { ok: true, provider, credentials: creds, status, statuses };
   }
@@ -108,8 +115,9 @@ export async function openTunnel(opts: OpenTunnelOptions): Promise<LocalHostTunn
   };
 }
 
-/** Today's `.env` values as ngrok credentials, until Outfitter provisions them (#383): NGROK_AUTHTOKEN,
- * TUNNEL_DOMAIN_LMSTUDIO (a bare domain, as tunnel.sh takes it) and LOCAL_TUNNEL_TOKEN. */
+/** `.env` values as ngrok credentials, until Outfitter provisions them (#383): NGROK_AUTHTOKEN (new:
+ * see .env.example; undefined without it), TUNNEL_DOMAIN_LMSTUDIO (a bare domain, as tunnel.sh
+ * takes it) and LOCAL_TUNNEL_TOKEN. */
 export function interimCredentialsFromEnv(e: Readonly<Record<string, string | undefined>>): NgrokCredentials | undefined {
   const authtoken = e.NGROK_AUTHTOKEN?.trim();
   if (!authtoken) return undefined;

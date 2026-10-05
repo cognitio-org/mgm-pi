@@ -12,7 +12,9 @@
  * #383) but carries no traffic.
  *
  * Where the program comes from, first match wins:
- *   1. KERNAL_NGROK_BIN, for a person who wants a particular build;
+ *   1. KERNAL_NGROK_BIN, for a person who wants a particular build. When it is set it is the only
+ *      candidate: one that does not run or is too old is the reason, never a silent fall-through to
+ *      another binary;
  *   2. Kernal's own copy in KERNAL_HOME/bin (a source checkout: .pi/bin), installed by
  *      installNgrok(): the pinned NGROK_PINNED release for this platform, its sha256 checked against
  *      the value recorded here before anything is unpacked (as package.sh checks pi's tarball);
@@ -27,16 +29,23 @@
  * (it would expose request bodies on localhost:4040 and collide with tunnel.sh), no remote
  * management and no update checks. It runs in its own process group so stop() takes any helper it
  * spawns with it.
+ *
+ * A host that dies without calling stop() must not leave the agent holding the reserved domain
+ * (the next start would meet ERR_NGROK_334) or its authtoken in $TMPDIR. While a tunnel is live a
+ * process 'exit' hook kills the agent's group and removes the directory; for a death no hook sees
+ * (SIGKILL, a crash in native code), each tunnel directory records its owner and agent pids, and
+ * every start() first sweeps this user's kernal-tunnel-* directories whose owner is gone, killing
+ * a leftover agent (only when its command line still names that directory) before binding.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "../env.ts";
 import { kernalBin } from "../../kernal-github/gh.ts";
-import { ngrokTrafficPolicy } from "./policy.ts";
+import { checkBearerToken, ngrokTrafficPolicy } from "./policy.ts";
 import {
   DEFAULT_ALLOW_PATHS, TunnelError,
   type NgrokCredentials, type ProviderStatus, type Tunnel, type TunnelCredentials, type TunnelHealth, type TunnelProvider, type TunnelStartOptions,
@@ -109,9 +118,13 @@ export async function findNgrok(deps: { exec?: Exec; binDir?: string } = {}): Pr
   const managed = join(deps.binDir ?? kernalBin(), "ngrok");
   const override = env("NGROK_BIN")?.trim();
   const candidates: Array<[string, FoundNgrok["source"]]> = [];
+  // An explicit choice is the only candidate: a typo or a broken pinned build must fail loudly,
+  // not quietly run some other ngrok.
   if (override) candidates.push([override, "env"]);
-  if (existsSync(managed)) candidates.push([managed, "managed"]);
-  candidates.push(["ngrok", "path"]);
+  else {
+    if (existsSync(managed)) candidates.push([managed, "managed"]);
+    candidates.push(["ngrok", "path"]);
+  }
   const problems: string[] = [];
   for (const [path, source] of candidates) {
     const r = await exec(path, ["version"], 10_000).catch((e) => ({ stdout: "", stderr: String(e?.message ?? e), code: 1 }));
@@ -215,17 +228,96 @@ export function ngrokConfig(authtoken: string): string {
   ].join("\n");
 }
 
+/** The reason selection and the UI (#385) show when there are none: what to set, until Outfitter
+ * provisions them (#383). */
+export const NO_NGROK_CREDENTIALS = "no ngrok credentials (set NGROK_AUTHTOKEN in .env; Kernal does not read ngrok's own config)";
+
 function checkCredentials(c: TunnelCredentials | undefined): NgrokCredentials {
-  if (!c || c.provider !== "ngrok") throw new TunnelError("credentials", "no ngrok credentials");
+  if (!c || c.provider !== "ngrok") throw new TunnelError("credentials", NO_NGROK_CREDENTIALS);
   if (!/^[A-Za-z0-9_-]{8,256}$/.test(c.authtoken ?? "")) throw new TunnelError("credentials", "the ngrok authtoken is missing or malformed");
   if (c.url !== undefined) {
     let u: URL | undefined;
     try { u = new URL(c.url); } catch { /* below */ }
-    if (!u || !/^https?:$/.test(u.protocol) || u.pathname !== "/" || u.search || u.username) {
-      throw new TunnelError("credentials", `not an ngrok endpoint URL: ${c.url}`);
+    // https only: a plain-http endpoint would carry the bearer token and every prompt in clear.
+    if (!u || u.protocol !== "https:" || u.port || u.pathname !== "/" || u.search || u.hash || u.username || u.password) {
+      throw new TunnelError("credentials", `not an https ngrok endpoint URL: ${c.url}`);
     }
   }
+  if (c.bearerToken !== undefined) checkBearerToken(c.bearerToken);
+  if (c.trafficPolicy !== undefined && (typeof c.trafficPolicy !== "string" || !c.trafficPolicy.trim())) {
+    throw new TunnelError("credentials", "the traffic policy is empty");
+  }
   return c;
+}
+
+// ---------- leftover agents ----------
+
+const DIR_PREFIX = "kernal-tunnel-";
+const OWNER_FILE = "owner.json";
+/** A directory with no owner record (its host died between mkdtemp and the first write) this old is litter. */
+const ORPHAN_DIR_MS = 10 * 60_000;
+
+const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
+
+/** The live tunnels this process owns, for the 'exit' hook. */
+const live = new Map<string, { pid?: number }>();
+let exitHooked = false;
+function onProcessExit(): void {
+  for (const [dir, t] of live) {
+    if (t.pid !== undefined) signalGroup(t.pid, "SIGKILL");
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+  live.clear();
+}
+function track(dir: string, pid?: number): void {
+  live.set(dir, { pid });
+  if (!exitHooked) { process.once("exit", onProcessExit); exitHooked = true; }
+}
+function untrack(dir: string): void {
+  live.delete(dir);
+  if (live.size === 0 && exitHooked) { process.removeListener("exit", onProcessExit); exitHooked = false; }
+}
+
+/**
+ * Removes this user's kernal-tunnel-* directories whose owning process is gone, first killing the
+ * agent each one records, but only when that pid's command line still names the directory (a pid
+ * the system has since reused is left alone). Never throws.
+ */
+export async function sweepLeftoverTunnels(deps: { exec?: Exec; tmp?: string } = {}): Promise<{ removed: string[]; killed: number[] }> {
+  const exec = deps.exec ?? execShort;
+  const base = deps.tmp ?? tmpdir();
+  const out = { removed: [] as string[], killed: [] as number[] };
+  const uid = process.getuid?.();
+  let names: string[];
+  try { names = await readdir(base); } catch { return out; }
+  for (const name of names) {
+    if (!name.startsWith(DIR_PREFIX)) continue;
+    const dir = join(base, name);
+    if (live.has(dir)) continue;
+    try {
+      const st = await stat(dir);
+      if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) continue;
+      let owner: { owner?: unknown; agent?: unknown } | undefined;
+      try { owner = JSON.parse(await readFile(join(dir, OWNER_FILE), "utf8")); } catch { owner = undefined; }
+      if (!owner) {
+        if (Date.now() - st.mtimeMs > ORPHAN_DIR_MS) { await rm(dir, { recursive: true, force: true }); out.removed.push(dir); }
+        continue;
+      }
+      if (typeof owner.owner === "number" && isAlive(owner.owner)) continue;   // another live host's tunnel
+      const agent = typeof owner.agent === "number" && owner.agent > 1 ? owner.agent : undefined;
+      if (agent !== undefined && isAlive(agent)) {
+        const ps = await exec("ps", ["-o", "command=", "-p", String(agent)], 5_000);
+        if (ps.code === 0 && ps.stdout.includes(dir)) {
+          signalGroup(agent, "SIGKILL");
+          for (let i = 0; i < 50 && isAlive(agent); i++) await new Promise((r) => setTimeout(r, 20));
+          out.killed.push(agent);
+        }
+      }
+      await rm(dir, { recursive: true, force: true });
+      out.removed.push(dir);
+    } catch { /* another sweeper got there first, or it is not ours */ }
+  }
+  return out;
 }
 
 export interface NgrokProviderDeps {
@@ -261,9 +353,16 @@ export function ngrokProvider(deps: NgrokProviderDeps = {}): TunnelProvider {
       if (!r.found) throw new TunnelError("unavailable", r.reason);
       const onLog = opts.onLog ?? (() => {});
 
-      const dir = await mkdtemp(join(tmpdir(), "kernal-tunnel-"));
+      // An agent a dead host left behind still holds the domain: clear it before binding.
+      const swept = await sweepLeftoverTunnels({ exec: deps.exec });
+      for (const pid of swept.killed) onLog(`ngrok: stopped a leftover agent (pid ${pid}) from a host that exited without stopping it`);
+
+      const dir = await mkdtemp(join(tmpdir(), DIR_PREFIX));
       await chmod(dir, 0o700);
-      const cleanup = () => rm(dir, { recursive: true, force: true }).catch(() => {});
+      const ownerFile = join(dir, OWNER_FILE);
+      await writeFile(ownerFile, JSON.stringify({ owner: process.pid }), { mode: 0o600 });
+      track(dir);
+      const cleanup = () => { untrack(dir); return rm(dir, { recursive: true, force: true }).catch(() => {}); };
       const config = join(dir, "ngrok.yml");
       const policyFile = join(dir, "policy.yml");
       await writeFile(config, ngrokConfig(creds.authtoken), { mode: 0o600 });
@@ -278,6 +377,8 @@ export function ngrokProvider(deps: NgrokProviderDeps = {}): TunnelProvider {
         await cleanup();
         throw new TunnelError("unavailable", `could not start ngrok: ${err?.message ?? err}`);
       }
+      track(dir, child.pid);
+      await writeFile(ownerFile, JSON.stringify({ owner: process.pid, agent: child.pid }), { mode: 0o600 }).catch(() => {});
       let stopped = false;
       let started = false;
       let health: TunnelHealth = { state: "down", reason: "starting", since: new Date().toISOString() };

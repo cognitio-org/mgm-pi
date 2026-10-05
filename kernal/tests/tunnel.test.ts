@@ -8,23 +8,24 @@
  */
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ngrokTrafficPolicy } from "../.pi/extensions/_shared/tunnel/policy.ts";
 import { endsEvent, slidingWindow, startGuardProxy } from "../.pi/extensions/_shared/tunnel/proxy.ts";
-import { classifyNgrokLog, compareVersions, findNgrok, installNgrok, ngrokProvider, NGROK_PINNED } from "../.pi/extensions/_shared/tunnel/ngrok.ts";
+import { classifyNgrokLog, compareVersions, findNgrok, installNgrok, ngrokProvider, sweepLeftoverTunnels, NGROK_PINNED } from "../.pi/extensions/_shared/tunnel/ngrok.ts";
 import { cloudflareProvider } from "../.pi/extensions/_shared/tunnel/cloudflare.ts";
 import {
   DEFAULT_ALLOW_PATHS, TunnelError, interimCredentialsFromEnv, openTunnel, parseTunnelChoice, selectProvider,
   type NgrokCredentials, type ProviderRegistry, type TunnelProvider,
 } from "../.pi/extensions/_shared/tunnel/tunnel.ts";
 
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-ngrok.mjs");
+const TESTS = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = join(TESTS, "fixtures", "fake-ngrok.mjs");
 const CREDS: NgrokCredentials = { provider: "ngrok", authtoken: "2fakeAuthToken_0123456789abcdef", url: "https://kernal-test.ngrok.app" };
 
 // ---------- helpers ----------
@@ -174,6 +175,21 @@ describe("guard proxy", () => {
     }
   });
 
+  test("refused tokens are not charged: a flood without the token cannot 429 the router", async () => {
+    const model = await modelServer();
+    const guard = await startGuardProxy({ upstream: model.url, bearerToken: "tok_0123456789abcdef", rateLimit: { requests: 3, windowSeconds: 60 }, now: () => 1_000_000 });
+    try {
+      for (let i = 0; i < 20; i++) assert.equal((await send(guard.url, "/v1/models")).status, 401);
+      const auth = { authorization: "Bearer tok_0123456789abcdef" };
+      for (let i = 0; i < 3; i++) assert.equal((await send(guard.url, "/v1/models", { headers: auth })).status, 200);
+      assert.equal((await send(guard.url, "/v1/models", { headers: auth })).status, 429, "authorized traffic still has its limit");
+      assert.deepEqual(guard.stats().refused, { rate: 1, auth: 20, method: 0, path: 0 });
+    } finally {
+      await guard.close();
+      await model.close();
+    }
+  });
+
   test("slidingWindow on its own", () => {
     let t = 0;
     const w = slidingWindow({ requests: 2, windowSeconds: 1 }, () => t);
@@ -258,6 +274,26 @@ describe("ngrok runtime", () => {
     }
   });
 
+  test("a broken KERNAL_NGROK_BIN never falls through to a working managed or PATH ngrok", async () => {
+    const onPath = fakeNgrok();
+    const binDir = emptyBinDir();
+    writeFileSync(join(binDir, "ngrok"), readFileSync(onPath.bin));
+    chmodSync(join(binDir, "ngrok"), 0o755);
+    process.env.PATH = `${onPath.dir}:/usr/bin:/bin`;
+    try {
+      assert.equal((await findNgrok({ binDir: emptyBinDir() })).found?.source, "path", "the PATH ngrok works on its own");
+      process.env.KERNAL_NGROK_BIN = "/nonexistent/ngrok";
+      const r = await findNgrok({ binDir });
+      assert.equal(r.found, undefined);
+      assert.match((r as any).reason, /^\/nonexistent\/ngrok does not run/);
+      process.env.KERNAL_NGROK_BIN = fakeNgrok({ version: "3.3.1" }).bin;
+      assert.match((await ngrokProvider({ binDir }).status(CREDS)).reason!, /ngrok 3\.3\.1; Kernal needs/);
+    } finally {
+      process.env.PATH = "/usr/bin:/bin";
+      delete process.env.KERNAL_NGROK_BIN;
+    }
+  });
+
   test("Kernal's own copy in its bin directory is found before PATH", async () => {
     const binDir = emptyBinDir();
     const fake = fakeNgrok();
@@ -274,7 +310,13 @@ describe("ngrok runtime", () => {
       assert.equal((await p.status()).available, true, "runtime alone");
       assert.match((await p.status({ ...CREDS, authtoken: "x" })).reason!, /authtoken/);
       assert.match((await p.status({ ...CREDS, url: "https://a.ngrok.app/path" })).reason!, /endpoint URL/);
-      assert.match((await p.status({ provider: "cloudflare", tunnelToken: "t" })).reason!, /no ngrok credentials/);
+      assert.match((await p.status({ ...CREDS, url: "http://a.ngrok.app" })).reason!, /not an https ngrok endpoint URL/, "plaintext http");
+      assert.match((await p.status({ ...CREDS, url: "https://a.ngrok.app:8443" })).reason!, /endpoint URL/, "explicit port");
+      assert.match((await p.status({ ...CREDS, bearerToken: "short" })).reason!, /bearer token/);
+      assert.match((await p.status({ ...CREDS, bearerToken: "abcdefghijklmnop$!" })).reason!, /bearer token/);
+      assert.match((await p.status({ ...CREDS, trafficPolicy: "  " })).reason!, /traffic policy is empty/);
+      assert.equal((await p.status({ ...CREDS, url: "https://kernal-test.internal", bearerToken: "tok_0123456789abcdef" })).available, true);
+      assert.match((await p.status({ provider: "cloudflare", tunnelToken: "t" })).reason!, /no ngrok credentials \(set NGROK_AUTHTOKEN/);
     } finally {
       delete process.env.KERNAL_NGROK_BIN;
     }
@@ -422,6 +464,87 @@ describe("ngrok provider", () => {
       delete process.env.KERNAL_NGROK_BIN;
     }
   });
+
+  /** Runs a separate host process that starts a tunnel with the fake agent, then either is killed
+   * with SIGKILL (`kill`) or exits without calling stop() (`exit`). */
+  async function hostThatDies(how: "kill" | "exit"): Promise<{ agentPid: number; dir: string }> {
+    const fake = fakeNgrok();
+    const script = join(mkdtempSync(join(tmpdir(), "kernal-host-")), "host.ts");
+    writeFileSync(script, [
+      `import { ngrokProvider } from ${JSON.stringify(join(TESTS, "..", ".pi/extensions/_shared/tunnel/ngrok.ts"))};`,
+      // tests/isolate.mjs clears KERNAL_* in every test process, this one included: set it here.
+      `process.env.KERNAL_NGROK_BIN = ${JSON.stringify(fake.bin)};`,
+      `const t = await ngrokProvider({ binDir: ${JSON.stringify(emptyBinDir())} }).start({ localUrl: "http://127.0.0.1:1", credentials: ${JSON.stringify(CREDS)} });`,
+      `process.stdout.write("started\\n");`,
+      how === "exit" ? `process.exit(0);` : `setInterval(() => {}, 1000);`,
+    ].join("\n"));
+    const host = spawn(process.execPath, ["--import", join(TESTS, "resolve-pi.mjs"), script], { stdio: ["ignore", "pipe", "inherit"] });
+    const exited = new Promise((r) => host.once("exit", r));
+    await new Promise<void>((resolve, reject) => {
+      host.stdout!.on("data", (c) => { if (String(c).includes("started")) resolve(); });
+      host.once("exit", (code) => reject(new Error(`host exited early (${code})`)));
+    });
+    if (how === "kill") host.kill("SIGKILL");
+    await exited;
+    const rec = fake.record();
+    return { agentPid: rec.pid, dir: dirname(rec.args[rec.args.indexOf("--config") + 1]) };
+  }
+
+  /** A private TMPDIR, so the sweep only ever sees this test's tunnel directories. */
+  async function withTmp(fn: (tmp: string) => Promise<void>): Promise<void> {
+    const saved = process.env.TMPDIR;
+    const tmp = mkdtempSync(join(tmpdir(), "kernal-tmp-"));
+    process.env.TMPDIR = tmp;
+    try { await fn(tmp); } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
+  }
+
+  test("a host that exits without stop(): its exit hook kills the agent and removes the token", async () => {
+    await withTmp(async () => {
+      const { agentPid, dir } = await hostThatDies("exit");
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(alive(agentPid), false, "the agent went with its host");
+      assert.equal(existsSync(dir), false, "the config with the token is gone");
+    });
+  });
+
+  test("a host killed with SIGKILL: the next start kills its leftover agent and removes its directory", async () => {
+    await withTmp(async (tmp) => {
+      const { agentPid, dir } = await hostThatDies("kill");
+      assert.equal(alive(agentPid), true, "nothing in the dead host could stop it");
+      assert.ok(existsSync(join(dir, "ngrok.yml")), "its authtoken is still on disk");
+      const fake = fakeNgrok();
+      process.env.KERNAL_NGROK_BIN = fake.bin;
+      const logs: string[] = [];
+      try {
+        const t = await ngrokProvider({ binDir: emptyBinDir() }).start({ localUrl: "http://127.0.0.1:1", credentials: CREDS, onLog: (l) => logs.push(l) });
+        assert.equal(alive(agentPid), false, "the leftover agent no longer holds the domain");
+        assert.equal(existsSync(dir), false);
+        assert.ok(logs.some((l) => l.includes(`leftover agent (pid ${agentPid})`)), logs.join("\n"));
+        assert.equal(readdirSync(tmp).filter((n) => n.startsWith("kernal-tunnel-")).length, 1, "only the new tunnel's");
+        await t.stop();
+      } finally {
+        delete process.env.KERNAL_NGROK_BIN;
+      }
+    });
+  });
+
+  test("the sweep leaves a live host's tunnel, a reused pid and a directory being set up alone", async () => {
+    await withTmp(async (tmp) => {
+      const mine = join(tmp, "kernal-tunnel-live");
+      mkdirSync(mine);
+      writeFileSync(join(mine, "owner.json"), JSON.stringify({ owner: process.pid, agent: process.pid }));
+      // A dead owner whose agent pid now belongs to an unrelated process (this one): not killed.
+      const reused = join(tmp, "kernal-tunnel-reused");
+      mkdirSync(reused);
+      writeFileSync(join(reused, "owner.json"), JSON.stringify({ owner: 99_999_999, agent: process.pid }));
+      const fresh = join(tmp, "kernal-tunnel-starting");
+      mkdirSync(fresh);
+      const r = await sweepLeftoverTunnels({ tmp });
+      assert.deepEqual(r.killed, []);
+      assert.deepEqual(r.removed, [reused]);
+      assert.ok(existsSync(mine) && existsSync(fresh), "a live owner's, and one still being set up");
+    });
+  });
 });
 
 // ---------- selection ----------
@@ -487,7 +610,26 @@ describe("provider selection", () => {
     assert.equal(ng.ok && ng.provider.id, "ngrok");
   });
 
-  test("interim credentials from today's .env names", () => {
+  test("a malformed bearer token is not selectable, with the reason", async () => {
+    process.env.KERNAL_NGROK_BIN = fakeNgrok().bin;
+    try {
+      const reg: ProviderRegistry = { ngrok: ngrokProvider({ binDir: emptyBinDir() }), cloudflare: cloudflareProvider() };
+      const sel = await selectProvider("ngrok", [{ ...CREDS, bearerToken: "short" }], reg);
+      assert.equal(sel.ok, false);
+      assert.match(sel.ok ? "" : sel.reason, /bearer token must be 16-512/);
+    } finally {
+      delete process.env.KERNAL_NGROK_BIN;
+    }
+  });
+
+  test("no ngrok credentials says what to set", async () => {
+    const sel = await selectProvider("ngrok", [], { ngrok: stubProvider("ngrok", true), cloudflare: stubProvider("cloudflare", true) });
+    assert.equal(sel.ok, false);
+    assert.match(sel.ok ? "" : sel.reason, /set NGROK_AUTHTOKEN in \.env; Kernal does not read ngrok's own config/);
+  });
+
+  test("interim credentials from .env (NGROK_AUTHTOKEN, new in .env.example, plus tunnel.sh's names)", () => {
+    assert.match(readFileSync(join(TESTS, "..", "..", ".env.example"), "utf8"), /^# NGROK_AUTHTOKEN=/m);
     assert.equal(interimCredentialsFromEnv({}), undefined);
     assert.deepEqual(interimCredentialsFromEnv({ NGROK_AUTHTOKEN: "abc_123456789", TUNNEL_DOMAIN_LMSTUDIO: "me.ngrok.app", LOCAL_TUNNEL_TOKEN: "tok_0123456789abcdef" }),
       { provider: "ngrok", authtoken: "abc_123456789", url: "https://me.ngrok.app", bearerToken: "tok_0123456789abcdef" });

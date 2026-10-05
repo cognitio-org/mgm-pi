@@ -4,11 +4,16 @@
  * depth), and keeps silent event streams alive. Folds in ~/localllm/keepalive.mjs (openllm#10,
  * #281), which tunnel.sh ran by hand.
  *
- * In order, per request: the rate limit (a sliding window over every request, 429), the bearer
- * token when one is set (401, compared in constant time and then removed, so the tunnel's gate never
- * reaches the model server), the method (GET, HEAD or POST; 405) and the path, which must equal an
+ * In order, per request: the bearer token when one is set (401, compared in constant time and then
+ * removed, so the tunnel's gate never reaches the model server), the rate limit (a sliding window
+ * over the requests that passed the token, 429), the method (GET, HEAD or POST; 405) and the path, which must equal an
  * allow-listed one exactly, query aside (404). Anything percent-encoded, doubled or relative is
  * simply not equal, so there is nothing to normalize and nothing to get wrong.
+ *
+ * The token goes first because every request arrives from the one local agent, so the window is
+ * global: charged before the token, a flood at a leaked URL (the case this layer exists for, an
+ * edge policy that is wrong or missing) would spend the router's budget and lock it out. A refused
+ * token costs a constant-time compare and nothing else; 16+ characters leave nothing to brute-force.
  *
  * Keep-alive: LM Studio holds a tool call's arguments back and sends them in one chunk once the call
  * is complete, so a long tool call leaves the stream silent for minutes, and ngrok drops a stream
@@ -113,13 +118,13 @@ export function startGuardProxy(opts: GuardProxyOptions): Promise<GuardProxy> {
   };
 
   const server = http.createServer((req, res) => {
-    if (!limiter.take()) {
-      stats.refused.rate++;
-      return sendJson(res, 429, "rate limit exceeded", { "retry-after": String(limiter.retryAfterSeconds()) });
-    }
     if (!authorized(req.headers.authorization)) {
       stats.refused.auth++;
       return sendJson(res, 401, "unauthorized");
+    }
+    if (!limiter.take()) {
+      stats.refused.rate++;
+      return sendJson(res, 429, "rate limit exceeded", { "retry-after": String(limiter.retryAfterSeconds()) });
     }
     if (!METHODS.has(req.method ?? "")) {
       stats.refused.method++;

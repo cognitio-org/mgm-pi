@@ -452,3 +452,31 @@ export async function writeProviderKey(account: session.SessionAccount, provider
   if (res.body?.error === "invalid_value") return "Outfitter refused the key: 8 to 512 characters, no spaces";
   return `Outfitter refused the key (${res.status}${typeof res.body?.error === "string" ? `: ${res.body.error}` : ""})`;
 }
+
+// ---------- #458: the Settings page's model dropdowns ----------
+
+/** One provider connect knows, as its `kernal:connect` op "state" answers (the Model page's list). */
+export type ConnectionModels = { id: string; registered: boolean; rejected?: string; models: string[] };
+export type ModelOptionProvider = { id: string; label: string; models: string[]; note?: string };
+
+const MODEL_PROVIDER_ORDER = ["litellm", "openrouter", "lmstudio"];
+const MODEL_PROVIDER_LABEL: Record<string, string> = { litellm: "Router", openrouter: "OpenRouter", lmstudio: "Local server" };
+
+/** The options behind model.default and compaction.summaryModel on the Settings page: each
+ * provider's discovered models from connect (the router's, the curated OpenRouter list with every
+ * level's adds and removes, the local server's), the same list the Model page shows. A provider
+ * that isn't connected has none, and says why; with connect not loaded there are no providers,
+ * and the page keeps plain text boxes. Options only: a save still takes any id. */
+export function settingModelOptions(conns: readonly ConnectionModels[]): { providers: ModelOptionProvider[] } {
+  const rank = (id: string) => { const i = MODEL_PROVIDER_ORDER.indexOf(id); return i < 0 ? MODEL_PROVIDER_ORDER.length : i; };
+  return {
+    providers: [...conns].sort((a, b) => rank(a.id) - rank(b.id)).map((c) => {
+      const label = MODEL_PROVIDER_LABEL[c.id] ?? c.id;
+      const models = c.registered ? [...new Set(c.models)] : [];
+      const note = !c.registered
+        ? `${label} is not connected${c.rejected ? ` (${c.rejected})` : ""}: set it up under Connections, or type the id with Other…`
+        : models.length ? undefined : `${label} reported no models.`;
+      return { id: c.id, label, models, ...(note ? { note } : {}) };
+    }),
+  };
+}

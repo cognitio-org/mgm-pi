@@ -48,7 +48,7 @@ import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./
 import { env } from "../_shared/env.ts";
 import { probeServer } from "../_shared/local-discovery.ts";
 import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig, shellValue } from "../_shared/central-config.ts";
-import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
+import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingModelOptions, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -244,10 +244,15 @@ export function createApi(d: ApiDeps): Api {
 
     // ---------- settings: each central value's source, and where a save goes (central.ts) ----------
     "GET /settings": async () => {
-      const view = await settingsView();
+      // #458: the model dropdowns' options are connect's discovered models, as on the Model page.
+      const [view, conns] = await Promise.all([settingsView(), connections()]);
       const account = signedInAccount();
       const keys = account ? await listProviderKeys(account) : undefined;
-      return { body: { ...view, ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}) } };
+      return { body: {
+        ...view,
+        modelOptions: settingModelOptions(conns),
+        ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}),
+      } };
     },
 
     "POST /settings": async (body: { target?: unknown; values?: unknown; version?: unknown }) => {

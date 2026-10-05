@@ -12,6 +12,7 @@ import {
   HEARTBEAT_INTERVAL_SECONDS,
   MAX_MODELS,
   MAX_SERVERS,
+  OTHERS_STALE_LISTED_SECONDS,
   type CredentialsHint,
   type HeartbeatModel,
   type HeartbeatRequest,
@@ -45,8 +46,9 @@ const MAX_STRING = 512;
 const MAX_ENDPOINTS = 32;
 /** Lines of "model id not routable" in one answer; the rest are counted. */
 const MAX_ROUTABLE_PROBLEMS = 10;
-// C0 and C1 control characters: never in a name people read.
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+// C0 and C1 control characters and bidi overrides/isolates: never in text people read (every string
+// of a heartbeat can reach someone's listing).
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 
 export class HeartbeatInvalid extends Error {
   readonly field: string;
@@ -65,7 +67,7 @@ function str(o: Obj, key: string, path: string, opts: { optional?: boolean; max?
     if (opts.optional) return undefined;
     throw new HeartbeatInvalid(path + key);
   }
-  if (typeof v !== "string" || v.length > (opts.max ?? MAX_STRING) || v.length < (opts.min ?? 0)) throw new HeartbeatInvalid(path + key);
+  if (typeof v !== "string" || v.length > (opts.max ?? MAX_STRING) || v.length < (opts.min ?? 0) || CONTROL.test(v)) throw new HeartbeatInvalid(path + key);
   return v;
 }
 
@@ -115,7 +117,7 @@ function parseServer(raw: unknown, i: number): HeartbeatServer {
   const endpoints = raw.endpoints ?? [];
   if (!Array.isArray(endpoints) || endpoints.length > MAX_ENDPOINTS) throw new HeartbeatInvalid(p + "endpoints");
   endpoints.forEach((e, j) => {
-    if (typeof e !== "string" || e.length > MAX_STRING) throw new HeartbeatInvalid(`${p}endpoints[${j}]`);
+    if (typeof e !== "string" || e.length > MAX_STRING || CONTROL.test(e)) throw new HeartbeatInvalid(`${p}endpoints[${j}]`);
   });
   return compact({
     id: str(raw, "id", p, { min: 1 })!,
@@ -250,10 +252,11 @@ export async function recordHeartbeat(
 
   let next: LocalHost | null;
   if (previous) {
-    // Only the reported fields: routerPrefix, accessGroup, managed and createdAt stay as they are
-    // (and a credentials call writing `managed` at the same moment isn't overwritten). A newer
-    // login on the same machine takes the record over and clears a revocation.
-    next = await hosts.update(id, { ...reported, ownerEmail: caller.email, revokedAt: undefined });
+    // Only the reported fields: routerPrefix, accessGroup, managed, lastBearerVersion and createdAt
+    // stay as they are (and a credentials call writing `managed` at the same moment isn't
+    // overwritten). A newer login on the same machine takes the record over and clears a
+    // revocation; a heartbeat revives a tombstone (§1.8). Cleared fields are unset, never null.
+    next = await hosts.update(id, { ...reported, ownerEmail: caller.email, revokedAt: undefined, deletedAt: undefined });
     if (!next) throw new Error("the host record vanished during the heartbeat");
   } else {
     next = await createRecord(deps, { id, userId, email: caller.email, hostId: hb.hostId, createdAt: iso, reported });
@@ -261,8 +264,7 @@ export async function recordHeartbeat(
 
   // §1.3 step 5: sharing off drops the public endpoint (the credential stays, harmless).
   if (!next.shareModels && next.managed?.endpointId) {
-    const patch = await dropCloudEndpoint(deps, next);
-    if (patch) next = (await hosts.update(id, patch)) ?? next;
+    next = (await dropCloudEndpoint(deps, next)) ?? (await hosts.findById(id)) ?? next;
   }
 
   const problems = routableProblems(next.models);
@@ -289,8 +291,13 @@ async function createRecord(
 ): Promise<LocalHost> {
   const hosts = deps.store.localHosts;
   for (const routerPrefix of routerPrefixCandidates(a.email, a.reported.hostName, a.id)) {
+    // §3.1: free when nobody holds it, or only a tombstone of the same person (removed first, so
+    // the prefix moves to this record). Another person's record, live or tombstone, never yields.
     const holder = await hosts.findByRouterPrefix(routerPrefix);
-    if (holder && holder.id !== a.id) continue;
+    if (holder && holder.id !== a.id) {
+      if (holder.userId !== a.userId || !holder.deletedAt) continue;
+      await hosts.delete(holder.id);
+    }
     const record: LocalHost = compact({
       id: a.id,
       userId: a.userId,
@@ -344,27 +351,40 @@ export function hostView(host: LocalHost, mine: boolean, now: Date): LocalHostVi
   });
 }
 
-/** The caller's own hosts (any status), then everyone else's that share and aren't revoked or
- * not-sharing; each part newest first. */
+/** The caller's own hosts (any status, no tombstones), then everyone else's that share, aren't
+ * revoked, and are online, offline, or stale for under OTHERS_STALE_LISTED_SECONDS; each part
+ * newest first. */
 export async function listLocalHosts(deps: Pick<LocalHostDeps, "store" | "now">, email: string): Promise<LocalHostListResponse> {
   const now = (deps.now ?? (() => new Date()))();
   const userId = userIdFor(email);
-  const own = await deps.store.localHosts.listForUser(userId);
+  const own = (await deps.store.localHosts.listForUser(userId)).filter((h) => !h.deletedAt);
   const others = (await deps.store.localHosts.listSharing()).filter((h) => {
-    if (h.userId === userId) return false;
+    if (h.userId === userId || h.deletedAt) return false;
     const status = hostStatus(h, now);
-    return status === "online" || status === "offline" || status === "stale";
+    if (status === "stale") return now.getTime() - Date.parse(h.lastSeenAt) < OTHERS_STALE_LISTED_SECONDS * 1000;
+    return status === "online" || status === "offline";
   });
   return { hosts: [...own.map((h) => hostView(h, true, now)), ...others.map((h) => hostView(h, false, now))] };
 }
 
 // ---------- DELETE /api/local-hosts/:id (§1.8) ----------
 
-/** Removes the host's ngrok resources, bearer and record, then tells the listeners. */
+/** Removes the host's ngrok resources and bearer, turns the record into a tombstone (§1.8: it keeps
+ * routerPrefix, userId and lastBearerVersion, so the prefix never passes to another person), then
+ * tells the listeners. */
 export async function deleteLocalHost(deps: LocalHostDeps, host: LocalHost): Promise<void> {
+  const now = (deps.now ?? (() => new Date()))();
   await deleteHostNgrok(deps, host);
   await retireBearer(deps, host);
-  await deps.store.localHosts.delete(host.id);
+  await deps.store.localHosts.update(host.id, {
+    deletedAt: now.toISOString(),
+    shareModels: false,
+    servers: [],
+    models: [],
+    tunnel: { provider: host.tunnel.provider, managed: host.tunnel.managed, state: "off" },
+    managed: undefined,
+    issuingUntil: undefined,
+  });
   const { problems } = await deps.events.changed({ reason: "deleted", host });
   if (problems.length) deps.log?.("local hosts: listeners reported problems on delete", { id: host.id, problems });
 }
@@ -377,20 +397,28 @@ export function localHostDeviceHook(deps: LocalHostDeps): DeviceLifecycleHook {
   return {
     name: "local hosts",
     async onRevoked({ device }) {
-      const now = (deps.now ?? (() => new Date()))();
       for (const host of await deps.store.localHosts.listForDevice(device.id)) {
-        if (host.revokedAt) continue;
-        await deleteHostNgrok(deps, host);
-        await retireBearer(deps, host);
-        const next = await deps.store.localHosts.update(host.id, {
-          revokedAt: now.toISOString(),
-          managed: undefined,
-          ...(host.managed ? { retiredBearerVersion: host.managed.bearerVersion } : {}),
-        });
-        if (!next) continue;
-        const { problems } = await deps.events.changed({ reason: "device-revoked", host: next, previous: host });
-        if (problems.length) deps.log?.("local hosts: listeners reported problems on revoke", { id: host.id, problems });
+        if (host.revokedAt || host.deletedAt) continue;
+        // One host failing must not leave the others' credentials alive.
+        try {
+          await revokeLocalHost(deps, host);
+        } catch (err) {
+          deps.log?.("local hosts: revoking a host failed", { id: host.id, err: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+        }
       }
     },
   };
+}
+
+/** One host of a revoked device (§2.5): ngrok resources and bearer go, `revokedAt` is set, `managed`
+ * unset (lastBearerVersion stays), and the listeners hear of it. Also used by the routes when a
+ * device turns out to be revoked while its own request ran. */
+export async function revokeLocalHost(deps: LocalHostDeps, host: LocalHost): Promise<void> {
+  const now = (deps.now ?? (() => new Date()))();
+  await deleteHostNgrok(deps, host);
+  await retireBearer(deps, host);
+  const next = await deps.store.localHosts.update(host.id, { revokedAt: now.toISOString(), managed: undefined });
+  if (!next) return;
+  const { problems } = await deps.events.changed({ reason: "device-revoked", host: next, previous: host });
+  if (problems.length) deps.log?.("local hosts: listeners reported problems on revoke", { id: host.id, problems });
 }

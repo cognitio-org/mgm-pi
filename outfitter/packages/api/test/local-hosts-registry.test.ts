@@ -131,6 +131,9 @@ describe("heartbeat validation (§1.2)", () => {
     ["bad tunnel state", { ...heartbeat(), tunnel: { ...heartbeat().tunnel, state: "busy" } }, "tunnel.state"],
     ["bad reason", { ...heartbeat(), reason: "busy" }, "reason"],
     ["missing tunnel", { ...heartbeat(), tunnel: undefined }, "tunnel"],
+    ["control character in a server id", { ...heartbeat(), servers: [{ ...heartbeat().servers[0], id: "http://x\u001b[2J" }] }, "servers[0].id"],
+    ["bidi override in a model id", { ...heartbeat(), models: [{ ...heartbeat().models[0], id: "qwen\u202egpj" }] }, "models[0].id"],
+    ["control character in an endpoint", { ...heartbeat(), servers: [{ ...heartbeat().servers[0], endpoints: ["/v1\u0000"] }] }, "servers[0].endpoints[0]"],
   ];
   for (const [name, body, field] of cases) {
     test(`refuses ${name} (field ${field})`, () => {
@@ -372,7 +375,7 @@ describe("GET listing (§1.7)", () => {
 });
 
 describe("delete and device revoke", () => {
-  test("deleteLocalHost removes ngrok resources, disables the bearer, deletes the record, then announces it", async () => {
+  test("deleteLocalHost removes ngrok resources, disables the bearer, leaves a tombstone, then announces it", async () => {
     const h = harness();
     const first = await recordHeartbeat(h.deps, caller(), heartbeat());
     const ep = await h.ngrok.createCloudEndpoint({ url: "https://lh-x.kernal.run", trafficPolicy: "{}", description: "d", metadata: "{}" });
@@ -386,7 +389,12 @@ describe("delete and device revoke", () => {
     assert.deepEqual(h.ngrok.deletedEndpoints, [ep.id]);
     assert.deepEqual(h.ngrok.deletedCredentials, [cred.id]);
     assert.equal(await h.secrets.accessLatest("outfitter-localhost-x"), undefined);
-    assert.equal(await h.store.localHosts.findById(first.id), null);
+    const tomb = (await h.store.localHosts.findById(first.id))!;
+    assert.equal(tomb.deletedAt, T0.toISOString());
+    assert.equal(tomb.shareModels, false);
+    assert.deepEqual([tomb.servers, tomb.models, tomb.tunnel.state, tomb.managed], [[], [], "off", undefined]);
+    assert.equal(tomb.routerPrefix, before.routerPrefix);
+    assert.deepEqual((await listLocalHosts({ store: h.store, now: () => T0 }, EMAIL)).hosts, [], "a tombstone isn't listed");
     const last = h.changes.at(-1)!;
     assert.equal(last.reason, "deleted");
     assert.equal(last.host.id, first.id);
@@ -405,7 +413,7 @@ describe("delete and device revoke", () => {
     const rec = (await h.store.localHosts.findById(a.id))!;
     assert.equal(rec.revokedAt, T0.toISOString());
     assert.equal(rec.managed, undefined);
-    assert.equal(rec.retiredBearerVersion, 3);
+    assert.equal(rec.lastBearerVersion, undefined, "revoke never writes or clears lastBearerVersion");
     assert.deepEqual(h.ngrok.deletedEndpoints, ["ep_9"]);
     assert.deepEqual(h.ngrok.deletedCredentials, ["cr_9"]);
     assert.equal(await h.secrets.accessLatest("outfitter-localhost-a"), undefined);
@@ -526,5 +534,64 @@ describe("the store never reads a cleared revokedAt as revoked (MongoDB, no igno
     await recordHeartbeat(deps, caller("dev_b"), heartbeat());
     assert.ok(!("revokedAt" in (await raw.findOne({ _id: answer.id as never }))!));
     assert.ok((await store!.localHosts.listSharing()).some((h) => h.id === answer.id));
+  });
+});
+
+describe("contract round 1: tombstones, user-aware prefixes, stale listing window", () => {
+  test("a prefix: the same person's tombstone yields it (and is removed); another person's never does", async () => {
+    const h = harness();
+    const first = await recordHeartbeat(h.deps, caller(), heartbeat());
+    await deleteLocalHost(h.deps, (await h.store.localHosts.findById(first.id))!);
+
+    // Another person whose slug is the same ("mgm@other.example"): the tombstone holds the prefix.
+    const other = await recordHeartbeat(h.deps, caller("dev_o", "mgm@other.example"), heartbeat());
+    assert.notEqual(other.routerPrefix, first.routerPrefix);
+    assert.ok((await h.store.localHosts.findById(first.id))!.deletedAt, "the tombstone stays");
+
+    // The same person on another machine with the same name: their own tombstone yields.
+    const second = await recordHeartbeat(h.deps, caller("dev_b"), heartbeat({ hostId: "h_" + "a".repeat(24) }));
+    assert.equal(second.routerPrefix, first.routerPrefix);
+    assert.equal(await h.store.localHosts.findById(first.id), null, "the tombstone is removed first");
+
+    // A live record of the same person never yields.
+    const third = await recordHeartbeat(h.deps, caller("dev_c"), heartbeat({ hostId: "h_" + "b".repeat(24) }));
+    assert.notEqual(third.routerPrefix, first.routerPrefix);
+  });
+
+  test("a heartbeat revives a tombstone: same prefix, deletedAt unset, listed again", async () => {
+    const h = harness();
+    const first = await recordHeartbeat(h.deps, caller(), heartbeat());
+    await h.store.localHosts.update(first.id, { lastBearerVersion: 4 });
+    await deleteLocalHost(h.deps, (await h.store.localHosts.findById(first.id))!);
+    assert.equal((await h.store.localHosts.findById(first.id))!.lastBearerVersion, 4, "DELETE keeps lastBearerVersion");
+    const back = await recordHeartbeat(h.deps, caller(), heartbeat());
+    assert.equal(back.routerPrefix, first.routerPrefix);
+    const rec = (await h.store.localHosts.findById(first.id))!;
+    assert.ok(!("deletedAt" in rec));
+    assert.equal(rec.lastBearerVersion, 4);
+    assert.equal((await listLocalHosts({ store: h.store, now: () => T0 }, EMAIL)).hosts.length, 1);
+  });
+
+  test("others' stale hosts are listed for 7 days after their last heartbeat; the owner's always", async () => {
+    const h = harness();
+    await recordHeartbeat(h.deps, caller("dev_o", "ana@example.com"), heartbeat());
+    const at = (days: number) => ({ store: h.store, now: () => new Date(T0.getTime() + days * 86_400_000) });
+    assert.equal((await listLocalHosts(at(6.9), EMAIL)).hosts.length, 1);
+    assert.equal((await listLocalHosts(at(7.1), EMAIL)).hosts.length, 0);
+    assert.equal((await listLocalHosts(at(30), "ana@example.com")).hosts.length, 1);
+  });
+
+  test("the revoke hook goes on past a host that fails", async () => {
+    const h = harness();
+    const a = await recordHeartbeat(h.deps, caller("dev_a"), heartbeat());
+    const b = await recordHeartbeat(h.deps, caller("dev_a"), heartbeat({ hostId: "h_" + "9".repeat(24), hostName: "other" }));
+    const realUpdate = h.store.localHosts.update.bind(h.store.localHosts);
+    h.store.localHosts.update = async (id, patch) => {
+      if (id === b.id && patch.revokedAt) throw new Error("mongo hiccup");
+      return realUpdate(id, patch);
+    };
+    await localHostDeviceHook(h.deps).onRevoked!({ device: { id: "dev_a", userId: userIdFor(EMAIL), ownerEmail: EMAIL, name: "mbp" }, reason: "revoked" });
+    // listForDevice is newest first; whichever order, the healthy one is revoked.
+    assert.ok((await h.store.localHosts.findById(a.id))!.revokedAt);
   });
 });

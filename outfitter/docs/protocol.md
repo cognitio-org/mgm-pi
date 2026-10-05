@@ -775,8 +775,9 @@ vLLM) with everyone signed in. The contract is `docs/specs/local-host.md`; the c
   the per-host bearer (`lhb_…`), the public URL `https://lh-<random>.<LOCAL_HOST_DOMAIN>`, allowed
   paths, rate limit, `issuedAt`/`expiresAt` (advisory, 7 days). `Cache-Control: no-store`; Kernal
   keeps it in memory only. Every call mints a new credential (and deletes the previous one); the
-  bearer and the cloud endpoint stay. Errors: `404 host_unknown` (heartbeat first), `409
-  sharing_off`, `403 host_revoked`, `503 local_host_tunnels_off` (no `NGROK_API_KEY` or
+  bearer and the cloud endpoint stay. Errors: `404 host_unknown` (heartbeat first, or the host was
+  deleted), `409 sharing_off`, `403 host_revoked`, `409 credentials_busy` (another call for the same
+  host is running; retry), `404 device not found` (the device was revoked while the call ran), `503 local_host_tunnels_off` (no `NGROK_API_KEY` or
   `LOCAL_HOST_DOMAIN`, which defaults to `PREVIEW_DOMAIN`), `502 ngrok_failed`.
 - The cloud endpoint's policy, written only by the api: rate limit 120 per 60 s per client IP, `401`
   without `Authorization: Bearer <bearer>`, `404` JSON outside `/v1/chat/completions`,
@@ -784,10 +785,13 @@ vLLM) with everyone signed in. The contract is `docs/specs/local-host.md`; the c
   endpoint. The internal policy (applied by the laptop) and Kernal's guard proxy check the bearer and
   paths again. The bearer lives in Secret Manager `outfitter-localhost-<hex>`; Mongo has its sha256.
 - `GET /api/local-hosts` (every role; a person, or a device token) → `{ hosts }`: the caller's own
-  hosts (any status), then everyone else's sharing hosts that are online, offline or stale. No
-  credential, endpoint, bearer, internal URL, device or user id.
+  hosts (any status), then everyone else's sharing hosts that are online, offline, or stale for
+  under 7 days. No credential, endpoint, bearer, internal URL, device or user id. Strings with
+  control or bidi-override characters are refused at the heartbeat.
 - `DELETE /api/local-hosts/:id` (the owner, or an operator on web; anyone else 404) → 204: deletes
-  the ngrok endpoint and credential, disables the bearer, removes the record.
+  the ngrok endpoint and credential, disables the bearer, and leaves a tombstone (not listed; DELETE
+  on it 404) that keeps the router prefix for the same person. The laptop's next heartbeat revives
+  it. `bearerVersion` only ever goes up for a record, across revokes and deletes.
 - A Dongle or personal API token gets `403 device_token_required` on all four; a machine token `403
   machine_token`.
 - Revoking a device deletes its hosts' ngrok resources and bearer and marks them `revoked` until a

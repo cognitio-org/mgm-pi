@@ -168,9 +168,24 @@ describe("the flow through the routes", () => {
     assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/local-hosts/not-an-id", headers: auth(token) })).statusCode, 404);
     const del = await app.fastify.inject({ method: "DELETE", url: `/api/local-hosts/${ID}`, headers: auth(token) });
     assert.equal(del.statusCode, 204);
-    assert.equal(await app.store.localHosts.findById(ID), null);
+    assert.ok((await app.store.localHosts.findById(ID))!.deletedAt, "a tombstone stays");
     assert.equal(ngrok.endpoints.size, 0);
     assert.equal(ngrok.credentials.size, 0);
+    // A tombstone: not listed, DELETE 404, credentials 404 host_unknown.
+    assert.deepEqual((await app.fastify.inject({ method: "GET", url: "/api/local-hosts", headers: auth(token) })).json(), { hosts: [] });
+    assert.equal((await app.fastify.inject({ method: "DELETE", url: `/api/local-hosts/${ID}`, headers: auth(token) })).statusCode, 404);
+    const tombCreds = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/tunnel-credentials", headers: auth(token), payload: { hostId: HOST_ID } });
+    assert.equal(tombCreds.statusCode, 404);
+    assert.deepEqual(tombCreds.json(), { error: "host_unknown" });
+    // The laptop's next heartbeat revives it: same id and prefix, listed again; a new bearer gets
+    // a higher version than the one before the delete.
+    const revived = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/heartbeat", headers: auth(token), payload: heartbeat() });
+    assert.equal(revived.json().routerPrefix, answer.routerPrefix);
+    assert.equal((await app.store.localHosts.findById(ID))!.deletedAt, undefined);
+    assert.equal((await app.fastify.inject({ method: "GET", url: "/api/local-hosts", headers: auth(token) })).json().hosts.length, 1);
+    const re = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/tunnel-credentials", headers: auth(token), payload: { hostId: HOST_ID } });
+    assert.equal(re.statusCode, 200);
+    assert.equal((await app.store.localHosts.findById(ID))!.managed!.bearerVersion, 2);
     await app.fastify.close();
   });
 
@@ -219,7 +234,7 @@ describe("the flow through the routes", () => {
     assert.equal(listed.json().hosts[0].owner.mine, false);
     const del = await web.fastify.inject({ method: "DELETE", url: `/api/local-hosts/${ID}` });
     assert.equal(del.statusCode, 204);
-    assert.equal(await link.store.localHosts.findById(ID), null);
+    assert.ok((await link.store.localHosts.findById(ID))!.deletedAt);
     await web.fastify.close();
     await link.fastify.close();
   });
@@ -239,6 +254,50 @@ describe("the flow through the routes", () => {
     assert.equal(ngrok.endpoints.size, 0);
     assert.equal(ngrok.credentials.size, 0);
     assert.ok((await app.store.devices.findById(device.id))!.revokedAt);
+    await app.fastify.close();
+  });
+
+  test("a device revoked while its credentials call runs gets 404 and no working credential", async () => {
+    const ngrok = new FakeNgrok();
+    const app = await linkApp({ ngrok, domain: "kernal.run" });
+    const { token, device } = await seedDevice(app);
+    await app.fastify.inject({ method: "POST", url: "/api/local-hosts/heartbeat", headers: auth(token), payload: heartbeat() });
+    const realCreate = ngrok.createCloudEndpoint.bind(ngrok);
+    ngrok.createCloudEndpoint = async (input) => {
+      await app.store.devices.revoke(device.id, "revoked", new Date().toISOString());
+      return realCreate(input);
+    };
+    const res = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/tunnel-credentials", headers: auth(token), payload: { hostId: HOST_ID } });
+    assert.equal(res.statusCode, 404);
+    assert.ok(!res.body.includes("lhb_"));
+    const rec = (await app.store.localHosts.findById(ID))!;
+    assert.ok(rec.revokedAt);
+    assert.equal(rec.managed, undefined);
+    assert.equal(ngrok.credentials.size, 0);
+    assert.equal(ngrok.endpoints.size, 0);
+    await app.fastify.close();
+  });
+
+  test("a heartbeat racing its device's revoke doesn't un-revoke the host", async () => {
+    const ngrok = new FakeNgrok();
+    const app = await linkApp({ ngrok, domain: "kernal.run" });
+    const { token, device } = await seedDevice(app);
+    await app.fastify.inject({ method: "POST", url: "/api/local-hosts/heartbeat", headers: auth(token), payload: heartbeat() });
+    // The revoke lands (device row and host record) after the route checked the device but
+    // before the heartbeat wrote.
+    const realFind = app.store.localHosts.findById.bind(app.store.localHosts);
+    let raced = false;
+    app.store.localHosts.findById = async (id) => {
+      if (!raced) {
+        raced = true;
+        await app.store.devices.revoke(device.id, "revoked", new Date().toISOString());
+        await app.store.localHosts.update(ID, { revokedAt: new Date().toISOString() });
+      }
+      return realFind(id);
+    };
+    const res = await app.fastify.inject({ method: "POST", url: "/api/local-hosts/heartbeat", headers: auth(token), payload: heartbeat({ reason: "interval" }) });
+    assert.equal(res.statusCode, 404);
+    assert.ok((await realFind(ID))!.revokedAt);
     await app.fastify.close();
   });
 

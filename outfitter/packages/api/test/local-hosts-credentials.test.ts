@@ -13,6 +13,7 @@ import { localHostDeviceHook, recordHeartbeat, deleteLocalHost, type LocalHostDe
 import {
   TunnelCredentialsError,
   cloudPolicy,
+  dropCloudEndpoint,
   internalPolicy,
   issueTunnelCredentials,
   localHostTunnelListener,
@@ -249,7 +250,7 @@ describe("clean-up (§2.5)", () => {
     assert.equal(remade.bearerSecret, managed.bearerSecret, "the same secret, a new version");
     assert.equal(remade.bearerHash, bearerHash(again.bearer));
     assert.notEqual(remade.bearerHash, managed.bearerHash);
-    assert.equal((await h.host()).retiredBearerVersion, undefined);
+    assert.equal((await h.host()).lastBearerVersion, 2);
   });
 
   test("host deleted: everything goes", async () => {
@@ -287,6 +288,7 @@ describe("the tunnel listener's sweep (§2.5)", () => {
     assert.equal(rec.managed?.endpointId, undefined);
     assert.equal(rec.managed?.publicUrl, undefined);
     assert.ok(rec.managed?.credentialId);
+    assert.equal(rec.lastBearerVersion, 1, "the idle sweep keeps lastBearerVersion");
   });
 
   test("deletes our unreferenced endpoints and credentials past the grace; never others' or fresh ones", async () => {
@@ -316,5 +318,67 @@ describe("the tunnel listener's sweep (§2.5)", () => {
   test("without an ngrok client the sweep does nothing and reports no counts", async () => {
     const h = harness({ ngrok: false });
     assert.equal(await localHostTunnelListener(h.deps).sweep!(T0), undefined);
+  });
+});
+
+describe("races (review round 1)", () => {
+  test("a revoke while a call is in flight wins: nothing new is stored, what the call made is removed", async () => {
+    const h = harness();
+    const host = await registered(h);
+    const realCreate = h.ngrok.createCloudEndpoint.bind(h.ngrok);
+    h.ngrok.createCloudEndpoint = async (input) => {
+      const ep = await realCreate(input);
+      await localHostDeviceHook(h.deps).onRevoked!({ device: { id: "dev_a", userId: userIdFor(EMAIL), ownerEmail: EMAIL, name: "mbp" }, reason: "revoked" });
+      return ep;
+    };
+    await assert.rejects(issueTunnelCredentials(h.deps, host), (err: unknown) => err instanceof TunnelCredentialsError && err.code === "host_revoked");
+    const rec = await h.host();
+    assert.ok(rec.revokedAt);
+    assert.equal(rec.managed, undefined);
+    assert.equal(h.ngrok.credentials.size, 0, "the new credential is deleted");
+    assert.equal(h.ngrok.endpoints.size, 0, "the new endpoint is deleted");
+    assert.equal(await h.secrets.accessLatest(bearerSecretName(ID)), undefined, "the new bearer is disabled");
+  });
+
+  test("sharing turned off while a call is in flight: sharing_off, nothing stored", async () => {
+    const h = harness();
+    const host = await registered(h);
+    const realCreate = h.ngrok.createCredential.bind(h.ngrok);
+    h.ngrok.createCredential = async (input) => {
+      const cred = await realCreate(input);
+      await recordHeartbeat(h.deps, { email: EMAIL, deviceId: "dev_a" }, heartbeat({ shareModels: false }));
+      return cred;
+    };
+    await assert.rejects(issueTunnelCredentials(h.deps, host), (err: unknown) => err instanceof TunnelCredentialsError && err.code === "sharing_off");
+    assert.equal((await h.host()).managed, undefined);
+    assert.equal(h.ngrok.endpoints.size, 0);
+    assert.equal(h.ngrok.credentials.size, 0);
+  });
+
+  test("two calls at once: the second is credentials_busy and the first's bearer stays the one stored", async () => {
+    const h = harness();
+    const host = await registered(h);
+    const [a, b] = await Promise.allSettled([issueTunnelCredentials(h.deps, host), issueTunnelCredentials(h.deps, host)]);
+    const ok = [a, b].filter((r) => r.status === "fulfilled");
+    const busy = [a, b].filter((r) => r.status === "rejected" && (r.reason as TunnelCredentialsError).code === "credentials_busy");
+    assert.equal(ok.length, 1);
+    assert.equal(busy.length, 1);
+    const answer = (ok[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof issueTunnelCredentials>>>).value;
+    assert.equal(await h.secrets.accessLatest(bearerSecretName(ID)), answer.bearer);
+    assert.equal((await h.host()).managed!.bearerHash, bearerHash(answer.bearer));
+    assert.equal((await h.host()).issuingUntil, undefined, "the hold is released");
+    await issueTunnelCredentials(h.deps, await h.host()); // and the next call goes through
+  });
+
+  test("the idle sweep never overwrites credentials issued after it read the record", async () => {
+    const h = harness();
+    await issueTunnelCredentials(h.deps, await registered(h));
+    const stale = await h.host(); // the sweep's snapshot
+    h.clock.now = new Date(T0.getTime() + 1000);
+    await issueTunnelCredentials(h.deps, await h.host()); // a refetch lands meanwhile
+    const fresh = (await h.host()).managed!;
+    assert.equal(await dropCloudEndpoint(h.deps, stale), null);
+    assert.deepEqual((await h.host()).managed, fresh);
+    assert.ok(h.ngrok.endpoints.has(fresh.endpointId!), "the endpoint in use is not deleted");
   });
 });

@@ -19,6 +19,7 @@ import {
   listLocalHosts,
   parseHeartbeat,
   recordHeartbeat,
+  revokeLocalHost,
   type LocalHostDeps,
 } from "../local-hosts/registry.ts";
 import { TunnelCredentialsError, issueTunnelCredentials, provisioningOn } from "../local-hosts/tunnel-credentials.ts";
@@ -60,6 +61,23 @@ async function deviceOrRefuse(ctx: RouteContext, req: FastifyRequest, reply: Fas
   return device;
 }
 
+/** Status of each TunnelCredentialsError code (§2.3). */
+const CREDENTIALS_STATUS: Record<TunnelCredentialsError["code"], number> = {
+  local_host_tunnels_off: 503,
+  ngrok_failed: 502,
+  host_unknown: 404,
+  host_revoked: 403,
+  sharing_off: 409,
+  credentials_busy: 409,
+};
+
+/** True when the device was revoked while its request ran (the revoke hook may have finished
+ * before this request wrote): the request's work is undone by revoking the host again. */
+async function revokedMeanwhile(ctx: RouteContext, deviceId: string): Promise<boolean> {
+  const device = await ctx.store.devices.findById(deviceId);
+  return !device || Boolean(device.revokedAt);
+}
+
 export async function registerLocalHostRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   const role = ctx.config.role;
   const deps = (req: FastifyRequest): LocalHostDeps => ({
@@ -85,6 +103,11 @@ export async function registerLocalHostRoutes(app: FastifyInstance, ctx: RouteCo
       }
       try {
         const answer = await recordHeartbeat(deps(req), { email: req.identity!.email, deviceId: device.id }, hb);
+        if (await revokedMeanwhile(ctx, device.id)) {
+          const host = await ctx.store.localHosts.findById(answer.id);
+          if (host && host.deviceId === device.id) await revokeLocalHost(deps(req), host);
+          return reply.code(404).send({ error: "device not found" });
+        }
         reply.header("cache-control", "no-store");
         return answer;
       } catch (err) {
@@ -97,23 +120,30 @@ export async function registerLocalHostRoutes(app: FastifyInstance, ctx: RouteCo
     // its body is never logged.
     app.post("/api/local-hosts/tunnel-credentials", { bodyLimit: MAX_BODY_BYTES }, async (req, reply) => {
       if (refuseNonDevice(req, reply)) return;
-      if (!(await deviceOrRefuse(ctx, req, reply))) return;
+      const device = await deviceOrRefuse(ctx, req, reply);
+      if (!device) return;
       const hostId = (req.body as { hostId?: unknown } | undefined)?.hostId;
       if (typeof hostId !== "string" || !HOST_ID_RE.test(hostId)) return reply.code(400).send({ error: "invalid_request", field: "hostId" });
       if (!provisioningOn({ ngrok: ctx.localHostNgrok, config: ctx.config })) return reply.code(503).send({ error: "local_host_tunnels_off" });
       // The id derives from the caller, so another user's record can't be addressed.
       const host = await ctx.store.localHosts.findById(localHostId(userIdFor(req.identity!.email), hostId));
-      if (!host) return reply.code(404).send({ error: "host_unknown" });
+      if (!host || host.deletedAt) return reply.code(404).send({ error: "host_unknown" });
       if (host.revokedAt) return reply.code(403).send({ error: "host_revoked" });
       if (!host.shareModels) return reply.code(409).send({ error: "sharing_off" });
       try {
         const answer = await issueTunnelCredentials(deps(req), host);
+        if (await revokedMeanwhile(ctx, device.id)) {
+          // Never hand a just-revoked device a working credential: revoking the host deletes it.
+          const now = await ctx.store.localHosts.findById(host.id);
+          if (now) await revokeLocalHost(deps(req), now);
+          return reply.code(404).send({ error: "device not found" });
+        }
         req.log.info({ id: host.id, credentialId: answer.credentialId }, "local host tunnel credentials issued");
         reply.header("cache-control", "no-store");
         return answer;
       } catch (err) {
         if (err instanceof TunnelCredentialsError) {
-          return reply.code(err.code === "local_host_tunnels_off" ? 503 : 502).send({ error: err.code });
+          return reply.code(CREDENTIALS_STATUS[err.code]).send({ error: err.code });
         }
         throw err;
       }
@@ -131,7 +161,8 @@ export async function registerLocalHostRoutes(app: FastifyInstance, ctx: RouteCo
     if (refuseOtherTokens(req, reply)) return;
     if ((await deviceOrRefuse(ctx, req, reply)) === undefined) return;
     const { id } = req.params;
-    const host = LOCAL_HOST_ID_RE.test(id) ? await ctx.store.localHosts.findById(id) : null;
+    const found = LOCAL_HOST_ID_RE.test(id) ? await ctx.store.localHosts.findById(id) : null;
+    const host = found && !found.deletedAt ? found : null; // a tombstone is already deleted
     const identity = req.identity!;
     const mayDelete = host && (host.userId === userIdFor(identity.email) || (role !== "link" && identity.operator));
     if (!host || !mayDelete) return reply.code(404).send({ error: "not found" });

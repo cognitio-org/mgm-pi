@@ -7,7 +7,7 @@
 // authtoken only in the one answer that hands it out. Mongo holds ids and a bearer hash.
 
 import { createHash } from "node:crypto";
-import type { Collection as MongoCollection, Db } from "mongodb";
+import type { Collection as MongoCollection, Db, Filter } from "mongodb";
 import {
   HEARTBEAT_INTERVAL_SECONDS,
   STALE_AFTER_MISSED,
@@ -63,9 +63,31 @@ export interface LocalHost {
   lastSeenAt: string;
   /** Set when the device that owned it was revoked; the next accepted heartbeat (a newer login) clears it. */
   revokedAt?: string;
-  /** The bearerVersion of a bearer that was retired with `managed` (device revoked, §2.5), so the
-   * next one minted is that + 1 and the router entries see a new version. Task A's (additive). */
-  retiredBearerVersion?: number;
+  /** The highest bearerVersion ever minted for this record; revoke, the idle sweep and DELETE never
+   * clear it, so the next bearer is always that + 1 (§2.3). */
+  lastBearerVersion?: number;
+  /** Tombstone of a DELETE (§1.8): sharing off, no models, no `managed`; keeps routerPrefix for the
+   * same user. The next heartbeat revives it. */
+  deletedAt?: string;
+  /** A credentials call holds the host until this time (ISO), so two never interleave. Task A's
+   * (additive). */
+  issuingUntil?: string;
+}
+
+/** What updateIf requires of the stored record; every given condition must hold. Task A's
+ * (additive). */
+export interface LocalHostExpect {
+  /** revokedAt absent (or null). */
+  notRevoked?: true;
+  /** deletedAt absent (or null): not a tombstone. */
+  notDeleted?: true;
+  shareModels?: boolean;
+  /** managed.credentialId equals this; null: no `managed` at all. */
+  credentialId?: string | null;
+  /** managed.endpointId equals this. */
+  endpointId?: string;
+  /** No credentials call holds the record at this ISO time (issuingUntil absent or earlier). */
+  freeAt?: string;
 }
 
 export interface LocalHostsCollection {
@@ -83,7 +105,20 @@ export interface LocalHostsCollection {
   upsert(host: LocalHost): Promise<void>;
   /** Merges `patch` (a field set to undefined is removed); null when there is no such record. */
   update(id: string, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null>;
+  /** update, only when the stored record meets `expect`; null when it doesn't (or is gone). */
+  updateIf(id: string, expect: LocalHostExpect, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null>;
   delete(id: string): Promise<boolean>;
+}
+
+function meets(h: LocalHost, e: LocalHostExpect): boolean {
+  if (e.notRevoked && h.revokedAt) return false;
+  if (e.notDeleted && h.deletedAt) return false;
+  if (e.shareModels !== undefined && h.shareModels !== e.shareModels) return false;
+  if (e.credentialId === null && h.managed) return false;
+  if (typeof e.credentialId === "string" && h.managed?.credentialId !== e.credentialId) return false;
+  if (e.endpointId !== undefined && h.managed?.endpointId !== e.endpointId) return false;
+  if (e.freeAt !== undefined && h.issuingUntil && h.issuingUntil >= e.freeAt) return false;
+  return true;
 }
 
 export class LocalHostPrefixTakenError extends Error {
@@ -188,6 +223,11 @@ export class MemoryLocalHosts implements LocalHostsCollection {
     this.hosts.set(id, next);
     return copy(next);
   }
+  async updateIf(id: string, expect: LocalHostExpect, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null> {
+    const h = this.hosts.get(id);
+    if (!h || !meets(h, expect)) return null;
+    return this.update(id, patch);
+  }
   async delete(id: string): Promise<boolean> {
     return this.hosts.delete(id);
   }
@@ -255,6 +295,20 @@ export class MongoLocalHosts implements LocalHostsCollection {
     }
   }
   async update(id: string, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null> {
+    return this.updateWhere({ _id: id }, patch);
+  }
+  async updateIf(id: string, expect: LocalHostExpect, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null> {
+    const and: Filter<LocalHostDoc>[] = [{ _id: id }];
+    if (expect.notRevoked) and.push({ $or: [{ revokedAt: { $exists: false } }, { revokedAt: { $type: "null" } }] });
+    if (expect.notDeleted) and.push({ $or: [{ deletedAt: { $exists: false } }, { deletedAt: { $type: "null" } }] });
+    if (expect.shareModels !== undefined) and.push({ shareModels: expect.shareModels });
+    if (expect.credentialId === null) and.push({ $or: [{ managed: { $exists: false } }, { managed: { $type: "null" } }] });
+    if (typeof expect.credentialId === "string") and.push({ "managed.credentialId": expect.credentialId });
+    if (expect.endpointId !== undefined) and.push({ "managed.endpointId": expect.endpointId });
+    if (expect.freeAt !== undefined) and.push({ $or: [{ issuingUntil: { $exists: false } }, { issuingUntil: { $type: "null" } }, { issuingUntil: { $lt: expect.freeAt } }] });
+    return this.updateWhere({ $and: and }, patch);
+  }
+  private async updateWhere(filter: Filter<LocalHostDoc>, patch: Partial<Omit<LocalHost, "id">>): Promise<LocalHost | null> {
     const set: Record<string, unknown> = {};
     const unset: Record<string, ""> = {};
     for (const [field, value] of Object.entries(patch)) {
@@ -262,9 +316,9 @@ export class MongoLocalHosts implements LocalHostsCollection {
       if (value === undefined) unset[field] = "";
       else set[field] = withoutUndefined(value);
     }
-    if (!Object.keys(set).length && !Object.keys(unset).length) return this.findById(id);
+    if (!Object.keys(set).length && !Object.keys(unset).length) return fromDoc(await this.col.findOne(filter));
     const doc = await this.col.findOneAndUpdate(
-      { _id: id },
+      filter,
       { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) },
       { returnDocument: "after" },
     );

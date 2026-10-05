@@ -143,7 +143,27 @@ function olderThanGrace(metadata: string | undefined, now: Date): boolean {
 
 // ---------- issuing (§2.3) ----------
 
-export type TunnelCredentialsErrorCode = "local_host_tunnels_off" | "ngrok_failed";
+export type TunnelCredentialsErrorCode =
+  | "local_host_tunnels_off"
+  | "ngrok_failed"
+  | "host_unknown"
+  | "host_revoked"
+  | "sharing_off"
+  /** Another credentials call for the same host is running; retry shortly. */
+  | "credentials_busy";
+
+/** How long one credentials call may hold its host (issuingUntil); ngrok and Secret Manager calls
+ * finish well inside it. */
+export const ISSUING_LEASE_MS = 60_000;
+
+/** Why a guarded write on `id` found nothing to write: the record's state now, as an error code. */
+async function refusal(hosts: LocalHostsCollection, id: string): Promise<TunnelCredentialsErrorCode> {
+  const now = await hosts.findById(id);
+  if (!now || now.deletedAt) return "host_unknown";
+  if (now.revokedAt) return "host_revoked";
+  if (!now.shareModels) return "sharing_off";
+  return "credentials_busy";
+}
 
 export class TunnelCredentialsError extends Error {
   readonly code: TunnelCredentialsErrorCode;
@@ -167,11 +187,33 @@ function errText(err: unknown): string {
  * record. Every call mints a new ngrok credential (ngrok shows a token once); the bearer and the
  * cloud endpoint are kept while they're valid, so the router entries don't churn. A failure removes
  * what this call made and throws TunnelCredentialsError("ngrok_failed").
+ *
+ * The call holds the record (issuingUntil) so two never interleave, and stores its result only if
+ * the record is still sharing, not revoked, and on the credential it started from: a revoke,
+ * sharing turned off, or a delete meanwhile wins, and what this call made is removed.
  */
 export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: LocalHost): Promise<TunnelCredentialsResponse> {
   if (!provisioningOn(deps)) throw new TunnelCredentialsError("local_host_tunnels_off", "per-host tunnels are off");
-  const ngrok = deps.ngrok!;
   const now = (deps.now ?? (() => new Date()))();
+  const hosts = deps.store.localHosts;
+  const leased = await hosts.updateIf(
+    host.id,
+    { notRevoked: true, notDeleted: true, shareModels: true, freeAt: now.toISOString() },
+    { issuingUntil: new Date(now.getTime() + ISSUING_LEASE_MS).toISOString() },
+  );
+  if (!leased) {
+    const code = await refusal(hosts, host.id);
+    throw new TunnelCredentialsError(code, `tunnel credentials refused: ${code}`);
+  }
+  try {
+    return await issueHeld(deps, leased, now);
+  } finally {
+    await hosts.update(host.id, { issuingUntil: undefined }).catch(() => {});
+  }
+}
+
+async function issueHeld(deps: LocalHostTunnelDeps, host: LocalHost, now: Date): Promise<TunnelCredentialsResponse> {
+  const ngrok = deps.ngrok!;
   const log = deps.log ?? (() => {});
   const secretName = bearerSecretName(host.id);
   const previous = host.managed;
@@ -186,18 +228,21 @@ export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: Lo
   try {
     // 1. Bearer: stable across refetches; minted when there is none, or Secret Manager lost it.
     let bearer = previous ? await deps.secretAdmin.accessLatest(previous.bearerSecret) : undefined;
+    // Monotonic per record (§2.3): the highest ever minted is lastBearerVersion, which revoke, the
+    // idle sweep and DELETE never clear.
+    const highest = Math.max(previous?.bearerVersion ?? 0, host.lastBearerVersion ?? 0);
     let bearerVersion = previous?.bearerVersion ?? 0;
     let minted = false;
     if (!bearer || !BEARER_RE.test(bearer)) {
       bearer = newBearer();
-      bearerVersion = Math.max(bearerVersion, host.retiredBearerVersion ?? 0) + 1;
+      bearerVersion = highest + 1;
       await deps.secretAdmin.addVersion(secretName, bearer);
       minted = true;
       // A rollback must not leave a bearer nobody holds as the latest enabled version.
       undo.push(() => deps.secretAdmin.disableAllEnabled(secretName));
     } else if (bearerHash(bearer) !== previous!.bearerHash) {
       // Someone added a version by hand: it is the bearer now, and the router must hear about it.
-      bearerVersion += 1;
+      bearerVersion = highest + 1;
       minted = true;
     }
 
@@ -238,8 +283,17 @@ export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: Lo
       bearerVersion,
       bearerHash: bearerHash(bearer),
     };
-    const next = await deps.store.localHosts.update(host.id, { managed, retiredBearerVersion: undefined });
-    if (!next) throw new Error("the host record is gone");
+    const next = await deps.store.localHosts.updateIf(
+      host.id,
+      { notRevoked: true, notDeleted: true, shareModels: true, credentialId: previous?.credentialId ?? null },
+      { managed, lastBearerVersion: Math.max(bearerVersion, host.lastBearerVersion ?? 0) },
+    );
+    if (!next) {
+      // Revoked, sharing off, deleted or (past the lease) re-issued meanwhile: that state wins.
+      await rollback();
+      const code = await refusal(deps.store.localHosts, host.id);
+      throw new TunnelCredentialsError(code === "credentials_busy" ? "credentials_busy" : code, `tunnel credentials not stored: ${code}`);
+    }
     undo.length = 0;
 
     if (previous?.credentialId && previous.credentialId !== cred.id) {
@@ -269,6 +323,7 @@ export async function issueTunnelCredentials(deps: LocalHostTunnelDeps, host: Lo
       expiresAt: new Date(now.getTime() + CREDENTIALS_REFETCH_SECONDS * 1000).toISOString(),
     };
   } catch (err) {
+    if (err instanceof TunnelCredentialsError) throw err;
     log("local hosts: issuing tunnel credentials failed", { id: host.id, err: errText(err) });
     await rollback();
     throw new TunnelCredentialsError("ngrok_failed", "issuing tunnel credentials failed");
@@ -289,18 +344,25 @@ export async function deleteHostNgrok(deps: LocalHostTunnelDeps, host: LocalHost
   await deps.ngrok.deleteCredential(credentialId).catch((err) => log("local hosts: deleting a credential failed; the sweep retries", { id: host.id, err: errText(err) }));
 }
 
-/** Deletes only the cloud endpoint (sharing off, idle) and returns the patch that forgets it. The
- * credential stays: it can only bind an internal endpoint nothing forwards to. */
-export async function dropCloudEndpoint(deps: LocalHostTunnelDeps, host: LocalHost): Promise<Partial<LocalHost> | undefined> {
+/**
+ * Forgets and deletes only the cloud endpoint (sharing off, idle); the credential stays (it can only
+ * bind an internal endpoint nothing forwards to). The record is updated only while it still holds
+ * this credential and endpoint, so a credentials call that landed meanwhile is never overwritten;
+ * the endpoint is deleted only once that write matched. Returns the updated record, or null when
+ * there was nothing to drop or the record moved on.
+ */
+export async function dropCloudEndpoint(deps: LocalHostTunnelDeps, host: LocalHost): Promise<LocalHost | null> {
   const managed = host.managed;
-  if (!managed?.endpointId) return undefined;
+  if (!managed?.endpointId) return null;
+  const { endpointId: _e, publicUrl: _p, ...rest } = managed;
+  const next = await deps.store.localHosts.updateIf(host.id, { credentialId: managed.credentialId, endpointId: managed.endpointId }, { managed: rest });
+  if (!next) return null;
   if (deps.ngrok) {
     // Forgotten even when the delete fails: an unreferenced endpoint is an orphan the sweep deletes.
     await deps.ngrok.deleteEndpoint(managed.endpointId).catch((err) =>
       (deps.log ?? (() => {}))("local hosts: deleting a cloud endpoint failed; the sweep retries", { id: host.id, err: errText(err) }));
   }
-  const { endpointId: _e, publicUrl: _p, ...rest } = managed;
-  return { managed: rest };
+  return next;
 }
 
 /** Disables the bearer's Secret Manager versions; logged, never thrown. */
@@ -331,9 +393,9 @@ export function localHostTunnelListener(deps: LocalHostTunnelDeps): LocalHostLis
       for (const host of hosts) {
         if (!host.managed?.endpointId || hostStatus(host, now) !== "stale") continue;
         if (now.getTime() - Date.parse(host.lastSeenAt) <= idleMs) continue;
-        const patch = await dropCloudEndpoint(deps, host);
-        if (patch && (await deps.store.localHosts.update(host.id, patch))) {
-          host.managed = patch.managed;
+        const next = await dropCloudEndpoint(deps, host);
+        if (next) {
+          host.managed = next.managed;
           out.endpointsIdle++;
         }
       }

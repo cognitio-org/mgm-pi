@@ -611,6 +611,19 @@ button.danger {
   .html-preview-toolbar { align-items: flex-start; }
 }
 
+/* Conversation prose a touch larger than the surrounding UI, and held to a readable measure: on a
+ * wide window the box spans the column (so code and tables get the room) while paragraphs wrap at
+ * about 100 characters instead of running the full width. */
+.entry.user .md,
+.entry.assistant-text .md {
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+.entry.user .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
+.entry.assistant-text .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: 100ch;
+}
+
 /* Thinking stays visibly secondary. */
 .entry.assistant-thinking .md { font-style: italic; }
 .entry.assistant-thinking .md code, .entry.assistant-thinking .md pre { font-style: normal; }
@@ -622,7 +635,71 @@ button.danger {
   padding: 3rem 1rem;
 }
 
-/* Long transcript prose: opening plus Read. The dialog reuses .html-preview-dialog's size. */
+/* Long transcript prose (Markdown.tsx, lib/reading.ts): the whole message, formatted, in a box
+ * capped at about half the window that scrolls on its own; a dashed rule under it says there's
+ * more. The pop-out sits on the card's top border like the who-mark, so it costs no row of its own.
+ * The dialog reuses .html-preview-dialog's size. */
+.md-long {
+  position: relative;
+}
+.entry.assistant-text > .md-long,
+.entry.user > .md-long {
+  position: static; /* the badge pins to the card's border, not the text box */
+}
+.md-scroll {
+  max-height: min(55vh, 34rem);
+  overflow-y: auto;
+  padding-right: 0.4rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  border-bottom: 1px dashed var(--border);
+}
+.md-scroll:focus-visible {
+  outline-offset: 0;
+}
+.md-long .md-read {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  line-height: 0;
+  background: var(--mark-bg, var(--bg-elevated));
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+.entry.assistant-text > .md-long .md-read {
+  top: -11px;
+  right: 8px;
+}
+.entry.user > .md-long .md-read {
+  top: -11px;
+  right: 36px; /* left of the you-mark */
+  border-color: var(--accent);
+}
+.md-long .md-read:hover,
+.md-long .md-read:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.md-long .md-read:active {
+  transform: none;
+}
+/* A finger needs more than 22px; the badge grows its hit area, not its look. */
+@media (pointer: coarse) {
+  .md-long .md-read::after {
+    content: "";
+    position: absolute;
+    inset: -11px;
+  }
+}
 .reading-title {
   min-width: 0;
   overflow: hidden;
@@ -636,7 +713,6 @@ button.danger {
   overflow: auto;
   padding: 0.9rem 1rem 1.15rem;
 }
-.md-read { margin: 0 0 0.2rem; }
 
 /* User attachments and data: images in markdown. Remote images never become an <img>. */
 .user-attachments {

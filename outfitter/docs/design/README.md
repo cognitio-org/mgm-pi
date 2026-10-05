@@ -93,6 +93,29 @@ and restyled in place, not renamed.
 | `.dither` | Sparing 1-bit dither texture | Header strip and empty states only, per the brief — don't reach for it elsewhere |
 | `.sr-only` | Visually-hidden, screen-reader-only text | Utility, not theme-specific |
 
+## Density and the conversation view
+
+The retro chrome stays (striped title bars, hard shadows, square corners), but space goes to the
+conversation first:
+
+- **Width.** `.app-main` is capped at 1320px, not 1100px. Prose inside a transcript card wraps at
+  about 100 characters (`max-width: 100ch` on its paragraphs, lists and headings), so a wide window
+  gives code blocks and tables room without making paragraphs hard to read.
+- **Control height by pointer.** Touch screens keep the 44px tap target. With a mouse or trackpad
+  (`hover: hover` and `pointer: fine`), buttons, inputs and selects are 34px, the session title
+  bar's transport buttons are 28px, and the status-bar chips are 24px. All of these are above
+  WCAG 2.5.8's 24px minimum.
+- **Transcript spacing.** Cards have smaller gaps and padding, and the who-marks and rail glyphs
+  are slightly smaller. Prose in a message is 0.94rem with a 1.55 line height, a little larger
+  than the UI around it.
+- **Composer.** The formatting toggle (**Aa**) is in the same row as send mode, voice and Send. The
+  status row above the editor only shows while there's a send status.
+- **Long messages** (`lib/reading.ts`'s `isLongDocument`: 1200+ characters, or two or more
+  headings) show in full and formatted, in a box capped at `min(55vh, 34rem)` that scrolls on its
+  own, with a dashed rule underneath. A small pixel pop-out badge sits on the card's top border,
+  opposite the who-mark, and opens the same text in `ReadingDialog`. This replaces the earlier
+  "opening paragraph + Read button" layout, which hid the formatting and broke up the reading.
+
 ## Nerd out panel
 
 The session page's home for operational details (#198), in `src/styles/nerd-out.css`. The

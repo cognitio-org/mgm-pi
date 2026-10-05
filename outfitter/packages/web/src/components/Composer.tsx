@@ -208,17 +208,6 @@ export function Composer({
     <div className="composer">
       <div className="composer-row composer-status-row">
         <div className="composer-status">{status}</div>
-        <button
-          type="button"
-          className="md-tools-toggle"
-          aria-expanded={toolsOpen}
-          aria-controls={toolbarId}
-          aria-label="Formatting tools"
-          title="Formatting tools"
-          onClick={() => setToolsOpen((o) => !o)}
-        >
-          <span aria-hidden="true">Aa</span>
-        </button>
       </div>
       <MarkdownEditor
         value={text}
@@ -231,7 +220,18 @@ export function Composer({
         toolsOpen={toolsOpen}
         toolbarId={toolbarId}
       />
-      <div className="composer-row">
+      <div className="composer-row composer-controls">
+        <button
+          type="button"
+          className="md-tools-toggle"
+          aria-expanded={toolsOpen}
+          aria-controls={toolbarId}
+          aria-label="Formatting tools"
+          title="Formatting tools"
+          onClick={() => setToolsOpen((o) => !o)}
+        >
+          <span aria-hidden="true">Aa</span>
+        </button>
         <select
           className="composer-mode-select"
           value={behavior}

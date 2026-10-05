@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Markdown } from "../src/components/Markdown.tsx";
 import { ReadingDialog } from "../src/components/ReadingDialog.tsx";
-import { isLongDocument, readingOpening, readingTitle } from "../src/lib/reading.ts";
+import { isLongDocument, readingTitle } from "../src/lib/reading.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,23 +42,13 @@ describe("isLongDocument", () => {
   });
 });
 
-describe("readingOpening and readingTitle", () => {
+describe("readingTitle", () => {
   it("uses the first heading with marks stripped, else Reading", () => {
     expect(readingTitle("no heading\n\nbody")).toBe("Reading");
     expect(readingTitle("# Title\n\nbody")).toBe("Title");
     expect(readingTitle("##  Title ##\n")).toBe("Title");
     expect(readingTitle("# \n\nbody")).toBe("Reading");
     expect(readingTitle("### Deep\n\n## Later")).toBe("Deep");
-  });
-
-  it("takes the first prose paragraph and clips it to 320 characters plus an ellipsis", () => {
-    expect(readingOpening("# Title\n\nHello world\n\n# Next\n\nHidden")).toBe("Hello world");
-    expect(readingOpening("# Title\nThe intro continues")).toBe("The intro continues");
-    expect(readingOpening("# Alpha\n\n# Beta")).toBe("Alpha");
-    expect(readingOpening("a".repeat(320))).toBe("a".repeat(320));
-    expect(readingOpening("a".repeat(321))).toBe(`${"a".repeat(320)}…`);
-    expect(readingOpening(`hello\nworld\n\nnext`)).toBe("hello world");
-    expect(readingOpening("   ")).toBe("");
   });
 });
 
@@ -143,12 +133,12 @@ describe("ReadingDialog", () => {
   });
 });
 
-describe("Markdown Read", () => {
-  it("opens the reading dialog on the full text and restores focus", () => {
+describe("Markdown reading view", () => {
+  it("renders the whole long message and pops it out into the reading dialog, restoring focus", () => {
     const text = `# Fleet notes\n\n${"word ".repeat(250)}\n\n## Later\n\nTAILMARKER`;
     mount(<Markdown text={text} />);
-    const read = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "Read")!;
-    expect(container!.textContent).not.toContain("TAILMARKER");
+    const read = container!.querySelector<HTMLButtonElement>('button[aria-label="Open in reading view"]')!;
+    expect(container!.querySelector(".md-scroll")!.textContent).toContain("TAILMARKER");
     act(() => {
       read.focus();
       read.click();

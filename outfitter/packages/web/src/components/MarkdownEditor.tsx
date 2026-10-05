@@ -328,7 +328,7 @@ export function MarkdownEditor({ value, onChange, onSend, enterMode, placeholder
       </div>
       {preview && (
         <div className="md-preview" role="region" aria-label="Message preview" tabIndex={0}>
-          {value.trim() ? <Markdown text={value} /> : <p className="md-preview-empty">Nothing to preview.</p>}
+          {value.trim() ? <Markdown text={value} reading={false} /> : <p className="md-preview-empty">Nothing to preview.</p>}
         </div>
       )}
     </div>

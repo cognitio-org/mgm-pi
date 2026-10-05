@@ -50,6 +50,38 @@ select {
   min-height: 44px;
 }
 
+/* With a mouse or trackpad the 44px finger target is mostly empty space: every toolbar, the
+ * session title bar and the composer stood a third taller than their text. A precise pointer gets
+ * 34px (still well over WCAG 2.5.8's 24px); touch screens of any width keep 44px. */
+@media (hover: hover) and (pointer: fine) {
+  button,
+  .btn,
+  .theme-toggle,
+  input,
+  select {
+    min-height: 34px;
+  }
+
+  .icon-toggle {
+    min-width: 36px;
+  }
+
+  /* The session title bar's transport buttons and the status bar's chips are the densest rows on
+   * the page; they sit in a striped bar, so they shrink further. */
+  .session-titlebar .run-controls .btn {
+    min-height: 28px;
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+    font-size: 0.82rem;
+  }
+
+  .nerd-out-toggle,
+  .thought-bubble-toggle,
+  .copy-chip {
+    min-height: 24px;
+  }
+}
+
 /* ---------- compact top bar (<=700px): logo + title + one menu button ---------- */
 
 .app-menu-button {
@@ -272,7 +304,7 @@ select {
 
 @media (max-width: 700px) {
   .app-main {
-    padding: 0.65rem;
+    padding: 0.5rem;
   }
 
   .session-view {
@@ -366,12 +398,12 @@ select {
   .transcript {
     max-height: none;
     overflow-y: visible;
-    padding: 1.05rem 0.6rem 0.6rem;
+    padding: 0.9rem 0.45rem 0.5rem;
   }
 
   .beat {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 1rem;
+    row-gap: 0.8rem;
   }
 
   .beat .rail {
@@ -408,9 +440,22 @@ select {
     z-index: 15;
     background: var(--bg-elevated);
     border-top: 1px solid var(--border-strong);
-    padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom));
-    margin: 0 -0.65rem -0.65rem;
+    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
+    margin: 0 -0.5rem -0.5rem;
     overscroll-behavior: contain;
+  }
+
+  /* Aa joins the send-mode row, which is already full at 390px: tighter gaps and segment padding
+   * make the room, and Send keeps its full label. */
+  .composer-controls {
+    gap: 0.25rem;
+  }
+
+  .composer-controls .composer-mode-buttons button {
+    padding-left: 0.32rem;
+    padding-right: 0.32rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
   }
 
   /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --

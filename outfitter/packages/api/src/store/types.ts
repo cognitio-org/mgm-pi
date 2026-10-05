@@ -815,6 +815,9 @@ export interface SessionsCollection {
   /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it
    * doesn't exist -- or, when clearing, if it is being formatted (formattingAt). */
   setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
+  /** Sets the floppy's modelOverride, or clears it (back to the tape's model) for `null`.
+   * Returns the updated session, or null if it doesn't exist. */
+  setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null>;
   /** #208: atomically sets formattingAt on an archived session that isn't already being formatted.
    * null if there is no such session (missing, restored, or claimed by another format). */
   claimForFormat(id: string, nowIso: string): Promise<Session | null>;

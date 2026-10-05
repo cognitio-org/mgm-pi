@@ -23,7 +23,7 @@ below).
 | `baseBranch` | string? | repo sessions only |
 | `branch` | string? | repo sessions only; absent = agentd works out of a scratch `/workspace` |
 | `prompt` | string? | the opening prompt, replayed to agentd on the first `wake()` |
-| `modelOverride` | string? | E2.8: per-session model override, takes priority over the guru's `model` |
+| `modelOverride` | string? | E2.8: per-session model override, takes priority over the guru's `model`. Set at create time or any time after with `PUT /api/sessions/:id/model` (a running Drive switches live); absent means the tape's model |
 | `parentId` | string? | set for a session created by `outfitter_delegate` (E5.2, not yet implemented) |
 | `status` | `"open"` \| `"closed"` | |
 | `leafId` | string? | id of the current leaf entry (tip of the transcript tree) |

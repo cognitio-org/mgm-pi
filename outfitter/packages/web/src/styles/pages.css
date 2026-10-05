@@ -314,6 +314,32 @@ a.vscode-card:focus-visible {
   position: relative;
 }
 
+/* The header's model reads as text and opens the switcher. */
+.session-model-switch {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.session-model-switch:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.session-model-pending {
+  color: var(--text-dim);
+}
+
+.switch-model-note {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
 .model-picker-list {
   position: absolute;
   z-index: 10;

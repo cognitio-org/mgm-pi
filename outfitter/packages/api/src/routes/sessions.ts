@@ -14,6 +14,7 @@ import { summarizeStartup } from "../startup.ts";
 import { sessionJsonl } from "../session-jsonl.ts";
 import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import { createSession, postUserMail } from "../session-create.ts";
+import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
@@ -233,6 +234,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // preview matches the prompt that run was given; before any run has recorded one, the
       // Tape's current value, which is what the next run will get.
       allowExternalHtmlResources: run?.allowExternalHtmlResources ?? guru?.allowExternalHtmlResources === true,
+      // The tape's own model, which a floppy without a modelOverride runs on (PUT /model below).
+      guruModel: guru?.model,
       // #147: each run's own value, keyed by run id, so an entry that carries `outfitterRunId`
       // (entry-wire.ts) previews the way its run was told. Runs that never recorded one are left
       // out; their entries use allowExternalHtmlResources above.
@@ -447,6 +450,21 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
       model: body.model,
     });
     return reply.code(201).send({ session, run });
+  });
+
+  // The floppy's model, switchable at any time: stored as its modelOverride (null goes back to the
+  // tape's model), and sent to a Drive that is going as pi's own set_model. Anyone who can open the
+  // session, like sending it a message.
+  app.put("/api/sessions/:id/model", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const body = (req.body ?? {}) as { model?: unknown };
+    if (body.model !== null && !isModelId(body.model)) {
+      return reply.code(400).send({ error: `model must be provider/id (at most ${MODEL_ID_MAX} characters), or null for the tape's model` });
+    }
+    if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
+    const guru = await ctx.store.gurus.findById(session.guruId);
+    return switchSessionModel(ctx, session, guru, body.model);
   });
 
   app.get("/api/sessions/:id/stream", async (req, reply) => {

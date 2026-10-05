@@ -139,6 +139,15 @@ class MongoSessions implements SessionsCollection {
     return stripId<Session>(result);
   }
 
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      model ? { $set: { modelOverride: model, updatedAt: nowIso } } : { $set: { updatedAt: nowIso }, $unset: { modelOverride: "" } },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
   async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
     const result = await this.col.findOneAndUpdate(
       archivedAt ? { _id: id } : { _id: id, formattingAt: { $exists: false } },

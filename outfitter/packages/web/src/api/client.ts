@@ -75,7 +75,10 @@ export interface SessionDetail {
   baseBranch?: string;
   branch?: string;
   prompt?: string;
+  /** The floppy's own model choice (PUT /api/sessions/:id/model); absent means the tape's. */
   modelOverride?: string;
+  /** The tape's model, which the floppy runs on without an override. */
+  guruModel?: string;
   parentId?: string;
   status: "open" | "closed";
   leafId?: string;
@@ -203,6 +206,15 @@ export interface RevokeTokensResult {
   match: TokenOwnerMatch;
   revoked: TokenRecord[];
   owners: string[];
+}
+
+/** PUT /api/sessions/:id/model's answer (api src/session-model.ts). */
+export interface ModelSwitch {
+  modelOverride: string | null;
+  /** What pi was told to use: the laptop preflight may have swapped a laptop model out. */
+  model: string;
+  applied: "live" | "next-run";
+  modelFallback?: { wanted: string; used: string };
 }
 
 export interface ModelRow {
@@ -754,6 +766,11 @@ export const api = {
   /** #255: whether replies on this floppy are read aloud. */
   setSessionVoiceSpeak(id: string, speak: boolean): Promise<{ voiceSpeak: boolean }> {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
+  },
+
+  /** Switches the floppy's model, live when a Drive is going; null goes back to the tape's. */
+  setSessionModel(id: string, model: string | null): Promise<ModelSwitch> {
+    return request(`/api/sessions/${id}/model`, { method: "PUT", body: JSON.stringify({ model }) });
   },
 
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }> {

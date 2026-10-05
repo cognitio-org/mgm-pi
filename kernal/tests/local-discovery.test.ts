@@ -1,10 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  discoverLocalModels, probeServer, defaultTargets, serverRoot, classify, snapshotKey, parseLmStudioNative, parseOllama, parseOpenAiModels,
+  discoverLocalModels, probeServer, defaultTargets, OLLAMA_SHOW_CONCURRENCY, serverRoot, classify, snapshotKey, parseLmStudioNative, parseOllama, parseOpenAiModels,
   type DiscoverySnapshot,
 } from "../.pi/extensions/_shared/local-discovery.ts";
-import { lmStudioMeta, parseLmStudioModels } from "../.pi/extensions/connect/lib.ts";
+import { lmStudioMeta, normalizeBaseUrl, parseLmStudioModels } from "../.pi/extensions/connect/lib.ts";
 
 // ---------- recorded responses, one per server type ----------
 const LMSTUDIO_NATIVE = { object: "list", data: [
@@ -72,6 +72,14 @@ describe("where to look", () => {
     assert.equal(serverRoot("https://mac.example.ts.net/lmstudio/v1"), "https://mac.example.ts.net/lmstudio", "a path prefix is kept");
     assert.equal(serverRoot(""), undefined);
     assert.equal(serverRoot("http://"), undefined);
+  });
+  test("a bare host gets connect's scheme: http when local or private, https otherwise; OLLAMA_HOST stays http", () => {
+    for (const [typed, root] of [["mac.example.ts.net:1234", "https://mac.example.ts.net:1234"], ["192.168.1.5:1234", "http://192.168.1.5:1234"], ["10.0.0.2:1234/v1", "http://10.0.0.2:1234"], ["[::1]:1234", "http://[::1]:1234"]]) {
+      assert.equal(serverRoot(typed), root, typed);
+      assert.equal(normalizeBaseUrl(typed, ""), `${root}/v1`, `connect reaches ${typed} at the same place`);
+    }
+    assert.equal(defaultTargets({ LMSTUDIO_BASE_URL: "mac.example.ts.net:1234" })[0].url, "https://mac.example.ts.net:1234");
+    assert.equal(defaultTargets({ OLLAMA_HOST: "gpu-box:11434" }).find((x) => x.kind === "ollama")!.url, "http://gpu-box:11434", "Ollama reads a bare OLLAMA_HOST as http");
   });
   test("defaults are localhost's usual ports only", () => {
     assert.deepEqual(defaultTargets({}).map((t) => `${t.kind} ${t.url}`), ["lmstudio http://localhost:1234", "ollama http://localhost:11434", "auto http://localhost:8080", "auto http://localhost:8000"]);
@@ -198,6 +206,16 @@ describe("probing", () => {
     assert.equal((await probeServer({ kind: "ollama", url: OL }, { fetch: http500 })).server.error, "HTTP 500");
     const weird = stubFetch({ [`${P8000}/v1/models`]: () => ({ data: "not a list" }) });
     assert.deepEqual((await probeServer({ kind: "vllm", url: P8000 }, { fetch: weird })).models, []);
+    const bun = (async () => { throw Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), { code: "ConnectionRefused" }); }) as unknown as typeof fetch;
+    assert.equal((await probeServer({ kind: "vllm", url: P8000 }, { fetch: bun })).server.error, "refused", "Bun's fetch, as release bundles run");
+  });
+  test("auto on a shared port needs a real model list: a dev API's {} or {error} with a 200 is no model server", async () => {
+    for (const body of [{}, { error: "not found" }, { models: [] }]) {
+      const { server, models } = await probeServer({ kind: "auto", url: P8000 }, { fetch: stubFetch({ [`${P8000}/v1/models`]: () => body }) });
+      assert.deepEqual(server, { id: P8000, kind: "openai", baseUrl: `${P8000}/v1`, ok: false, error: "bad response", endpoints: [], models: 0 }, JSON.stringify(body));
+      assert.deepEqual(models, []);
+    }
+    assert.equal((await probeServer({ kind: "auto", url: P8000 }, { fetch: stubFetch({ [`${P8000}/v1/models`]: () => ({ object: "list", data: [] }) }) })).server.ok, true, "an empty but real list is a server");
   });
   test("a hung server times out quickly", async () => {
     const t0 = Date.now();
@@ -234,6 +252,54 @@ describe("discoverLocalModels", () => {
     const snap = await discoverLocalModels({ targets: [{ kind: "vllm", url: P8000 }], fetch: stubFetch(ALL, calls) });
     assert.deepEqual(calls, [`GET ${P8000}/v1/models`]);
     assert.equal(snap.models.length, 1);
+  });
+});
+
+describe("Ollama /api/show: bounded and reusable", () => {
+  const MANY = { models: Array.from({ length: 12 }, (_, i) => ({ name: `m${i}:latest`, model: `m${i}:latest`, digest: `d${i}`, size: 1, details: {} })) };
+  const SHOW = { capabilities: ["completion", "tools"], model_info: { "llama.context_length": 8192 } };
+  test("at most OLLAMA_SHOW_CONCURRENCY calls in flight", async () => {
+    let now = 0, peak = 0;
+    const show: Route = async () => { peak = Math.max(peak, ++now); await new Promise((r) => setTimeout(r, 5)); now--; return SHOW; };
+    const { models } = await probeServer({ kind: "ollama", url: OL }, { fetch: stubFetch({ [`${OL}/api/tags`]: () => MANY, [`${OL}/api/show`]: show }) });
+    assert.equal(models.length, 12);
+    assert.ok(models.every((m) => m.toolUse === true), "every model still gets its capabilities");
+    assert.equal(peak, OLLAMA_SHOW_CONCURRENCY);
+  });
+  test("a cached answer is reused: a /api/show failing on a later scan doesn't change the key", async () => {
+    const cache = new Map<string, any>();
+    const calls: string[] = [];
+    let fail = "";
+    const routes: Record<string, Route> = { [`${OL}/api/tags`]: () => MANY, [`${OL}/api/show`]: (b) => (b.model === fail ? new Response("", { status: 500 }) : SHOW) };
+    const scan = () => discoverLocalModels({ targets: [{ kind: "ollama", url: OL }], fetch: stubFetch(routes, calls), ollamaShowCache: cache });
+    const first = await scan();
+    assert.equal(calls.filter((c) => c.endsWith("/api/show")).length, 12);
+    assert.equal(first.models[0].digest, "d0");
+    calls.length = 0; fail = "m3:latest";
+    const second = await scan();
+    assert.equal(calls.filter((c) => c.endsWith("/api/show")).length, 0, "nothing re-read for an unchanged digest");
+    assert.equal(second.key, first.key);
+    assert.deepEqual(second, first);
+    // Without the cache the same failure would have flapped the key: that is what the cache prevents.
+    const uncached = await discoverLocalModels({ targets: [{ kind: "ollama", url: OL }], fetch: stubFetch(routes) });
+    assert.notEqual(uncached.key, first.key);
+  });
+  test("a new digest is asked again, and models gone from the server leave the cache", async () => {
+    const cache = new Map<string, any>([["http://other:11434 x@y", SHOW]]);
+    const calls: string[] = [];
+    let tags: any = MANY;
+    const fetch = stubFetch({ [`${OL}/api/tags`]: () => tags, [`${OL}/api/show`]: () => SHOW }, calls);
+    await probeServer({ kind: "ollama", url: OL }, { fetch, ollamaShowCache: cache });
+    tags = { models: [{ ...MANY.models[0], digest: "new" }, MANY.models[1]] };
+    calls.length = 0;
+    await probeServer({ kind: "ollama", url: OL }, { fetch, ollamaShowCache: cache });
+    assert.deepEqual(calls.filter((c) => c.endsWith("/api/show")), [`POST ${OL}/api/show`], "only the re-pulled model");
+    assert.deepEqual([...cache.keys()].sort(), [`${OL} m0:latest@new`, `${OL} m1:latest@d1`, "http://other:11434 x@y"], "another server's entries are left alone");
+  });
+  test("without a digest nothing is cached", async () => {
+    const cache = new Map<string, any>();
+    await probeServer({ kind: "ollama", url: OL }, { fetch: stubFetch(ALL), ollamaShowCache: cache });
+    assert.equal(cache.size, 0);
   });
 });
 

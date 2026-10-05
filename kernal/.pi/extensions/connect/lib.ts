@@ -3,7 +3,7 @@
  * LiteLLM /model/info parsing, spend-header parsing, and budget panel rendering.
  * Everything here is unit-tested in ../../../tests without pi or network.
  */
-import { type LocalModel, parseLmStudioNative } from "../_shared/local-discovery.ts";
+import { type LocalModel, bareScheme, parseLmStudioNative } from "../_shared/local-discovery.ts";
 
 // ---------- env ----------
 export function parseEnvText(text: string): Record<string, string> {
@@ -249,7 +249,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
 export function normalizeBaseUrl(input: string, fallback: string): string {
   let u = (input || "").trim();
   if (!u) return fallback;
-  if (!/^https?:\/\//i.test(u)) u = (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|\[::1\])/.test(u) ? "http://" : "https://") + u;
+  if (!/^https?:\/\//i.test(u)) u = bareScheme(u) + u;   // the rule local discovery's serverRoot uses too
   u = u.replace(/\/+$/, "");
   if (!/\/v\d+$/i.test(u)) u += "/v1";
   return u;

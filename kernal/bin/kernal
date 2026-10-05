@@ -141,6 +141,14 @@ EOF
 SRC="${BASH_SOURCE[0]}"
 while [[ -L "$SRC" ]]; do DIR="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"; [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"; done
 ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
+# #432: the key variables the shell already exported, before the .env files are exported over them
+# (central-config's SHELL_WATCHED and SHELL_KEYS_MARKER): signed in, Kernal warns when one of them
+# overrides this device's router key or the account's provider key. Always exported, even empty.
+KERNAL_SHELL_KEYS=""
+for _k in LITELLM_AGENT_KEY LITELLM_API_KEY OPENROUTER_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY; do
+  if [[ -n "${!_k:-}" ]]; then KERNAL_SHELL_KEYS="${KERNAL_SHELL_KEYS:+$KERNAL_SHELL_KEYS }$_k"; fi
+done
+export KERNAL_SHELL_KEYS
 # Secrets: ~/localllm/.env in a source checkout, ./.env in a release bundle (/setup writes it).
 found_env=0
 if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_env=1; fi

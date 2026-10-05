@@ -46,7 +46,7 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
-import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig } from "../_shared/central-config.ts";
+import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig, shellValue } from "../_shared/central-config.ts";
 import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
@@ -112,7 +112,10 @@ export function createApi(d: ApiDeps): Api {
     const router = safe(() => resolveConfig().values["router.key"]);
     if (router) out.LITELLM_AGENT_KEY = sourceLabel(router);
     const or = env().OPENROUTER_API_KEY;
-    if (or) out.OPENROUTER_API_KEY = providerKey("openrouter") === or && !process.env.OPENROUTER_API_KEY ? "your account" : "this machine";
+    // #432: a key exported by the shell says so ("shell (OPENROUTER_API_KEY)"): it wins over the account's.
+    const orShell = shellValue("OPENROUTER_API_KEY");
+    if (or) out.OPENROUTER_API_KEY = orShell === or ? sourceLabel({ source: "env", sourceName: "OPENROUTER_API_KEY" })
+      : providerKey("openrouter") === or && !process.env.OPENROUTER_API_KEY ? "your account" : "this machine";
     return out;
   };
   const shortName = (id: string) => ({ lmstudio: "Local server", litellm: "Router", openrouter: "OpenRouter" } as Record<string, string>)[id] ?? id;

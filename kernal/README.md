@@ -53,6 +53,20 @@ without a terminal, and the file is copied to `.env.bak-<time>` before the first
 `~/localllm/.env` and the `.env` files next to the install are touched, never a project's own. Keys
 left in `.env` keep working, with a deprecation warning.
 
+**Keys exported by your shell.** A key variable in the shell's environment still wins over the
+login: `LITELLM_AGENT_KEY` or `LITELLM_API_KEY` over this device's router key, and
+`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` or `DEEPGRAM_API_KEY`
+over your account's key for that provider. A long-lived terminal can still hold old keys after
+`kernal login` removed them from `.env` (oh-my-zsh's `dotenv` plugin exports a `.env` when you `cd`
+into its folder). Signed in, Kernal warns once per process when that happens, as a notice at start-up
+or a stderr line without a UI: "LITELLM_AGENT_KEY from your shell overrides this device's own router
+key (spend isn't attributed to you). Unset it, or open a new terminal." It warns only when the device
+or account has a different key of its own; provider keys are checked once the account's keys arrive
+(a moment after start). `/config` and `/admin` show such a value's source as `shell (<NAME>)`.
+A value equal to one in a `.env` file Kernal reads counts as `.env`, not the shell (`bin/kernal`
+exports those files, and they have their own deprecation warning); `bin/kernal` records which of
+these variables the shell already had before it does (`KERNAL_SHELL_KEYS`).
+
 **Dongles are retired.** `kernal login` is the only way to connect Kernal to Outfitter. Kernal no
 longer reads `OUTFITTER_TOKEN`: one left in the environment or `.env` is ignored, with the one-line
 notice "Dongles are retired; run kernal login". The web app no longer creates Dongles; existing ones

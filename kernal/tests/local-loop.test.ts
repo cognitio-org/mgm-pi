@@ -186,6 +186,19 @@ describe("signed out (§4.8)", () => {
 });
 
 describe("managed credentials and the heartbeat cadence (§1.4)", () => {
+  test("after a restart the api answers current, but nothing is cached: credentials are fetched anyway", async () => {
+    const { w, at, last } = world();
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("current") }];
+    await at(0);
+    assert.equal(w.credentialCalls, 1, "fetched although the hint was current");
+    assert.equal(w.opened.length, 1);
+    assert.equal((w.opened[0].credentials[0] as any).authtoken, `${AUTHTOKEN}1`);
+    assert.equal(last().tunnel.state, "up");
+    assert.equal(last().tunnel.managed, true);
+    await at(15);
+    assert.equal(w.credentialCalls, 1, "cached from then on");
+  });
+
   test("start → fetch → tunnel on Outfitter's credentials → change → interval", async () => {
     const { w, at, last } = world();
     w.replies.heartbeat = [{ status: 200, body: hbAnswer("fetch", { status: "offline", routerModels: [] }) }, { status: 200, body: hbAnswer("current") }];

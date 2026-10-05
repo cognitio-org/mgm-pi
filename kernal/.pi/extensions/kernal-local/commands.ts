@@ -166,19 +166,22 @@ async function disable(io: LocalIo, env: Env): Promise<number> {
   const alive = io.alive ?? pidAlive;
   const kill = io.kill ?? ((pid: number, sig: NodeJS.Signals) => process.kill(pid, sig));
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  // The loop sends its "stop" heartbeat on SIGTERM; give it the chance before the unit goes.
+  // Removing the unit first: launchctl bootout / systemctl disable --now send SIGTERM (the loop's
+  // "stop" heartbeat) and wait, and the unit can't restart it (KeepAlive / Restart=always would if
+  // it were signalled while still installed).
+  const before = serviceStatus(sd);
+  const r = removeService(sd);
+  if (!r.ok) {
+    io.err(`kernal local: ${r.error}`);
+    return 1;
+  }
+  // A loop still holding run.lock is a foreground `kernal local run`: stop it the same way.
   const pid = readLockPid(home);
   if (pid !== undefined && pid !== process.pid && alive(pid)) {
     try {
       kill(pid, "SIGTERM");
       for (let waited = 0; waited < DISABLE_WAIT_MS && alive(pid); waited += 100) await sleep(100);
     } catch {}
-  }
-  const before = serviceStatus(sd);
-  const r = removeService(sd);
-  if (!r.ok) {
-    io.err(`kernal local: ${r.error}`);
-    return 1;
   }
   io.out(before.installed ? `Stopped and removed the Local Host service (${r.unit}).` : "The Local Host service was not installed.");
   return 0;

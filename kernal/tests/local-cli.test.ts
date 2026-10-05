@@ -217,8 +217,13 @@ describe("enable and disable (§4.2, §4.5)", () => {
     assert.match(t.err.join("\n"), /macOS and Linux/);
   });
 
-  test("disable: SIGTERM to the running loop first (its stop heartbeat), then bootout and delete", async () => {
+  test("disable: bootout and delete first (no KeepAlive restart), then SIGTERM to a loop still running", async () => {
     const t = io();
+    const order: string[] = [];
+    const runner = t.io.runner!;
+    t.io.runner = (cmd, args) => { order.push(cmd); return runner(cmd, args); };
+    const kill = t.io.kill!;
+    t.io.kill = (pid, sig) => { order.push("kill"); kill(pid, sig); };
     mkdirSync(join(t.home, "local-host"), { recursive: true });
     writeFileSync(lockPath(t.home), "777\n");
     let alive = 3;
@@ -228,6 +233,7 @@ describe("enable and disable (§4.2, §4.5)", () => {
     writeFileSync(plist, "x");
     assert.equal(await main(["disable"], t.io), 0);
     assert.deepEqual(t.kills, [[777, "SIGTERM"]]);
+    assert.deepEqual(order, ["launchctl", "launchctl", "kill"], "print, bootout, then the signal");
     assert.ok(t.calls.includes("launchctl bootout gui/501/one.kernal.local-host"));
     assert.ok(!existsSync(plist));
     assert.match(t.out.join("\n"), /Stopped and removed/);

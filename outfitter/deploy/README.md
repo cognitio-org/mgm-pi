@@ -179,7 +179,8 @@ Sentry plugin in the image build, a separate follow-up.
    | `outfitter-mongodb-uri` | `MONGODB_URI` | `config.ts` (`loadConfig`) → `store/index.ts` (`openStore`) | required; without it the API falls back to `MemoryStore` |
    | `outfitter-local-tunnel-token` | `LOCAL_TUNNEL_TOKEN` | `config.ts` → `src/laptop.ts`'s `LaptopProbe` | required for the E2.8 laptop preflight to mean anything in prod |
    | `outfitter-github-pat` | `GITHUB_PAT` | **nothing yet** | deployed as a placeholder only — see (b) |
-   | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10); `src/central/litellm-keys.ts`'s device/run key minting and spend (#389), both roles. Written only by `litellm-admin.sh` | the probe calls `/health/liveliness`, `/model/info`, `/key/info` and falls back to `outfitter-litellm-key-default` (b) when unset. Minting calls `/user/info`, `/user/new`, `/user/list`, `/key/generate`, `/key/delete`, `/team/list`, `/team/new`, `/spend/logs`; the Local Host router entries (#384, `src/local-hosts/router-sync.ts`) call `/model/info`, `/model/new`, `/model/update`, `/model/delete` (`litellm-admin.sh`'s `ALLOWED_ROUTES` is exactly the routes the api calls); unset means no minting: logins carry no router key and runs keep the shared keys. Personal provider keys (#393) are written by the api itself as `outfitter-user-<userId>-<provider>`; nothing to create |
+   | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10); `src/central/litellm-keys.ts`'s device/run key minting and spend (#389), both roles. Written only by `litellm-admin.sh` | the probe calls `/health/liveliness`, `/model/info`, `/key/info` and falls back to `outfitter-litellm-key-default` (b) when unset. Minting calls `/user/info`, `/user/new`, `/user/list`, `/key/generate`, `/key/delete`, `/team/list`, `/team/new`, `/spend/logs` (`litellm-admin.sh`'s `ALLOWED_ROUTES` is exactly the routes the api calls); unset means no minting: logins carry no router key and runs keep the shared keys. Personal provider keys (#393) are written by the api itself as `outfitter-user-<userId>-<provider>`; nothing to create |
+   | `outfitter-litellm-admin-key` | `LOCAL_HOST_ROUTER_KEY` | `config.ts` → `src/local-hosts/router-sync.ts`, the Local Host router entries (#384), **link role only**. Written only by `KEY=local-hosts ./litellm-admin.sh` | optional; a separate key from `outfitter-litellm-admin` (owner decision 2026-10-05) whose routes are only `/model/info`, `/model/new`, `/model/update`, `/model/delete`. Unset means no `local/...` router entries (heartbeats still work). The router must run with `STORE_MODEL_IN_DB=True` and keep a caller-supplied `model_info.id` (see "Router admin key") |
    | `outfitter-ngrok-api-key` | `NGROK_API_KEY` | `config.ts` → `src/providers-status.ts`'s ngrok probe (E2.10) | optional; `GET https://api.ngrok.com/endpoints` reconciler. Unset means the "ngrok" row reports `unknown`/"not configured", not a poll failure |
    | `outfitter-deepgram-key` | `DEEPGRAM_API_KEY` | `config.ts` → `src/voice.ts`'s `VoiceService` (#252), **web role only** | optional; a Deepgram **Member** key with `usage:read`, in the same Deepgram project as kernal's bundle key (`DEEPGRAM_PROJECT_ID` in `config.env`). The bundle key is usage-only and can't mint the browser tokens. Unset means `POST /api/voice/token` answers 404 `voice_disabled` |
    | `outfitter-agentengine-memory-sa` | `AGENT_ENGINE_MEMORY_SA` | `config.ts` → `src/agentengine/` (E9), **link role only** | optional; JSON `{client_id, client_secret}` of the Agent Engine service account in the memory project (`AGENT_ENGINE_MEMORY_PROJECT_ID` in `config.env`, the Atlas project `outfitter`). Role `AGENT_DEVELOPER` is enough for memory. Mounted only while that project id is set. Record its expiry in `AGENT_ENGINE_MEMORY_SA_EXPIRES_AT`; the api warns from 14 days before |
@@ -744,21 +745,36 @@ never the master key:
   role, no enterprise licence needed); `/key/regenerate` is not included.
 
 The api calls these routes with it (`src/central/litellm-keys.ts`, `src/providers-status.ts`,
-`src/models.ts`, `src/local-hosts/router-sync.ts`), and `ALLOWED_ROUTES` is exactly this list:
-`/user/info`, `/user/new`, `/user/list`, `/key/generate`, `/key/delete`, `/key/info`, `/team/list`,
-`/team/new`, `/spend/logs`, `/model/info`, `/model/new`, `/model/update`, `/model/delete`,
-`/health/liveliness`. The `/model/*` write routes are the Local Host router entries (#384:
-`local/<user>-<host>/<model>`, only entries whose `model_info.metadata` the api wrote). The key is
-mounted on both roles, the public link service included, so it carries nothing broader: no
-`/key/update`, `/key/list`, `/key/block`/`unblock` or `/user/update`. `test/litellm-admin.test.sh`
-fails if the list and the code drift apart in either direction. If the owner needs broader routes by
-hand, mint a separate key that is never mounted on Cloud Run. A key's routes are fixed when it is minted: after `ALLOWED_ROUTES` changes, run
-`ROTATE=1 ./litellm-admin.sh` so the stored key carries the new list.
+`src/models.ts`), and `ALLOWED_ROUTES` is exactly this list: `/user/info`, `/user/new`, `/user/list`,
+`/key/generate`, `/key/delete`, `/key/info`, `/team/list`, `/team/new`, `/spend/logs`,
+`/model/info`, `/health/liveliness`. The key is mounted on both roles, the public link service
+included, so it carries nothing broader: no `/key/update`, `/key/list`, `/key/block`/`unblock`,
+`/user/update` or `/model/new`/`update`/`delete`. `test/litellm-admin.test.sh` fails if the list and
+the code drift apart in either direction. If the owner needs broader routes by hand, mint a separate
+key that is never mounted on Cloud Run. A key's routes are fixed when it is minted: after
+`ALLOWED_ROUTES` changes, run `ROTATE=1 ./litellm-admin.sh` so the stored key carries the new list.
+
+**The Local Host key** (`KEY=local-hosts`, #384, `docs/specs/local-host.md` §3.5) is a second key of
+the same `outfitter-svc` user (alias `outfitter-localhosts-*`), stored in `outfitter-litellm-admin-key`
+and mounted as `LOCAL_HOST_ROUTER_KEY` on the **link role only** (where heartbeats and the tick run;
+the api registers the router listener only there). Its routes are exactly what
+`src/local-hosts/router-sync.ts` calls: `/model/info`, `/model/new`, `/model/update`,
+`/model/delete`. That is a wider capability than its route count suggests: `allowed_routes` is
+route-level, so the key can add, repoint (`api_base`) or delete **any** router deployment, including
+ones that hold provider keys. It is accepted because the key never leaves the link service, can't mint
+or read keys, and `router-sync.ts` only writes `local/...` entries whose `model_info.metadata` it
+stamped (`outfitter: "local-host"`, `env`). Follow-up #466: a guard in our router fork so this key's
+writes may only touch `local/*` entries carrying that metadata. Before it is useful, check the
+router: `STORE_MODEL_IN_DB=True` (the `/model/*` writes need DB-backed models), and a `/model/new`
+with a caller-supplied `model_info.id` keeps that id (if not, `router-sync.ts` logs an error naming
+`STORE_MODEL_IN_DB` and leaves those entries alone instead of re-adding them every tick).
 
 ```bash
 DRY_RUN=1 ./litellm-admin.sh                      # shows the plan, reads nothing secret
 ./litellm-admin.sh                                # first time: creates the user + key, stores it
 ROTATE=1 ./litellm-admin.sh                       # new key, old secret versions disabled, old key deleted
+DRY_RUN=1 KEY=local-hosts ./litellm-admin.sh      # the Local Host key's plan
+KEY=local-hosts ./litellm-admin.sh                # first time: the /model/*-only key into outfitter-litellm-admin-key
 MASTER_KEY_PROJECT=<project> ./litellm-admin.sh   # if kernal-litellm-prod-master-key lives elsewhere
 ```
 

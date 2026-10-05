@@ -272,7 +272,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const localHostNgrok = opts.ngrok ?? (config.ngrokApiKey ? createNgrokApi(config.ngrokApiKey) : undefined);
   // Task A (#382/#383): its LocalHostListener (ngrok clean-up) and device-revoke hook go here.
   // Task B (#384): its LocalHostListener (router reconciliation) goes here.
-  if (litellmKeys && config.litellmAdminKey) localHostEvents.register(localHostRouterListener({ store, config, secretAdmin, log: (msg, err) => fastify.log.warn({ err }, msg) }));
+  // Its own key (LOCAL_HOST_ROUTER_KEY), mounted on link only; never on web (local-host.md §3.5).
+  if (config.localHostRouterKey && config.role !== "web") localHostEvents.register(localHostRouterListener({ store, config, secretAdmin, log: (msg, err) => fastify.log.warn({ err }, msg) }));
 
   fastify.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;

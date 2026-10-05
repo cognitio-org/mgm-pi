@@ -14,12 +14,18 @@
 //             touched.
 //
 // LiteLLM's model management API (https://docs.litellm.ai/docs/proxy/model_management), called with
-// the scoped admin key (LITELLM_ADMIN_KEY; deploy/litellm-admin.sh ALLOWED_ROUTES lists exactly
-// these routes and its test greps this file):
+// its own key (LOCAL_HOST_ROUTER_KEY, Secret Manager outfitter-litellm-admin-key, link role only;
+// `KEY=local-hosts deploy/litellm-admin.sh` mints it with exactly these routes, and its test greps
+// this file). Not LITELLM_ADMIN_KEY: that one mints keys and is mounted on both roles.
 //   GET  /model/info     { data: [{ model_name, litellm_params (api_key withheld), model_info }] }
 //   POST /model/new      { model_name, litellm_params, model_info }
 //   POST /model/update   the same, matched by model_info.id
 //   POST /model/delete   { id }
+//
+// Router requirements (owner-checked, local-host.md §7): STORE_MODEL_IN_DB=True (the /model/*
+// writes need DB-backed models), and /model/new keeps a caller-supplied model_info.id. If it
+// doesn't, the ids never match: this module then logs an error, leaves those entries alone and
+// counts them failed, rather than deleting and re-adding them on every sweep.
 //
 // The bearer is read from Secret Manager (managed.bearerSecret) and goes only into the payload's
 // `litellm_params.api_key`. No log line, error or count carries it.
@@ -31,12 +37,24 @@ import { hostStatus, routerFingerprint, sharedModels, type LocalHost } from "../
 import type { Store } from "../store/types.ts";
 import { LOCAL_HOST_ACCESS_GROUP, type HeartbeatModel, type ServerKind } from "./contract.ts";
 import type { LocalHostChange, LocalHostListener } from "./events.ts";
-import { routerDeploymentId, routerModelName } from "./naming.ts";
+import { bearerHash, routerDeploymentId, routerModelName } from "./naming.ts";
 
 /** `model_info.metadata.outfitter` on every entry this module writes. */
 export const ROUTER_METADATA_TAG = "local-host";
 /** The deployment's timeouts, as today's hand-made `local-qwen-mlx` (a cold load takes minutes). */
 export const LOCAL_MODEL_TIMEOUT_SECONDS = 600;
+/** `model_info.metadata.payloadVersion`: bump it whenever buildDeployment's output changes shape
+ * (the thinking switch, a new field), so existing entries are rewritten although their host's
+ * fingerprint didn't change. */
+export const ROUTER_PAYLOAD_VERSION = 1;
+/** Per router call inside onChange: well under events.ts LISTENER_TIMEOUT_MS (20 s), so a slow router
+ * shows in the heartbeat's problems as its own error, not "still updating". */
+export const ONCHANGE_CALL_TIMEOUT_MS = 4_000;
+/** The whole sweep stops starting new work after this (the tick runs other sweeps too, under Cloud
+ * Scheduler's attempt deadline); what is left waits for the next tick. */
+export const SWEEP_DEADLINE_MS = 60_000;
+
+const NO_ANSWER = "LiteLLM did not answer";
 
 const KIND_LABEL: Record<ServerKind, string> = {
   lmstudio: "LM Studio",
@@ -78,6 +96,7 @@ export interface RouterEntryMetadata {
   ownerUserId: string;
   modelId: string;
   fingerprint: string;
+  payloadVersion: number;
 }
 
 /** An entry as /model/info lists it (only the fields compared here). */
@@ -134,6 +153,9 @@ export function routableSharedModels(host: LocalHost): HeartbeatModel[] {
 export function thinkingOffBody(model: HeartbeatModel): Record<string, unknown> | undefined {
   if (model.type === "embeddings") return undefined;
   const body: Record<string, unknown> = { chat_template_kwargs: { enable_thinking: false } };
+  // Ollama documents "none" as disabling thinking on /v1/chat/completions (docs.ollama.com
+  // api/openai-compatibility: named levels resolve per model, unsupported names fall back to the
+  // model default) and ignores chat_template_kwargs; LM Studio reads both.
   if (model.kind === "lmstudio" || model.kind === "ollama") body.reasoning_effort = "none";
   return body;
 }
@@ -179,13 +201,16 @@ export function buildDeployment(host: LocalHost, model: HeartbeatModel, opts: { 
         ownerUserId: host.userId,
         modelId: model.id,
         fingerprint: routerFingerprint(host, opts.now),
+        payloadVersion: ROUTER_PAYLOAD_VERSION,
       },
     },
   };
 }
 
 /** Whether a listed entry already matches the desired deployment. /model/info withholds api_key,
- * which is covered by the fingerprint (it includes managed.bearerVersion). */
+ * which is covered by the fingerprint (it includes managed.bearerVersion, monotonic per record).
+ * Payload fields the fingerprint doesn't cover (extra_body, descriptions, supports_*) are covered by
+ * payloadVersion. */
 function entryMatches(entry: RouterEntry, want: RouterDeployment): boolean {
   const p = entry.litellm_params ?? {};
   const info = entry.model_info ?? {};
@@ -193,6 +218,7 @@ function entryMatches(entry: RouterEntry, want: RouterDeployment): boolean {
   const groups = Array.isArray(info.access_groups) ? info.access_groups : [];
   return (
     meta.fingerprint === want.model_info.metadata.fingerprint &&
+    meta.payloadVersion === want.model_info.metadata.payloadVersion &&
     entry.model_name === want.model_name &&
     p.model === want.litellm_params.model &&
     p.api_base === want.litellm_params.api_base &&
@@ -231,16 +257,23 @@ function errorDetail(body: unknown): string {
 
 type Fetch = typeof fetch;
 
+/** One onChange or sweep: its per-call timeout, the sweep's deadline, and whether it stopped. */
+interface Run {
+  timeoutMs: number;
+  deadline?: number;
+  stopped: boolean;
+}
+
 export interface LocalHostRouterOptions {
   store: Pick<Store, "localHosts">;
-  config: Pick<Config, "litellmBaseUrl" | "litellmAdminKey" | "previewEnv">;
+  config: Pick<Config, "litellmBaseUrl" | "localHostRouterKey" | "previewEnv">;
   secretAdmin: Pick<SecretAdmin, "accessLatest">;
   fetch?: Fetch;
   log?: (msg: string, err?: unknown) => void;
   now?: () => Date;
 }
 
-/** The bearer cache is dropped when it grows past this (old bearer versions pile up otherwise). */
+/** The bearer cache is dropped when it grows past this (old bearers pile up otherwise). */
 const BEARER_CACHE_LIMIT = 512;
 
 export class LocalHostRouterSync implements LocalHostListener {
@@ -257,13 +290,16 @@ export class LocalHostRouterSync implements LocalHostListener {
   private readonly chains = new Map<string, Promise<unknown>>();
   /** Bumped by each onChange; a sweep skips a host whose generation moved after its /model/info. */
   private readonly generation = new Map<string, number>();
-  /** Bearer per `<secret>#<bearerVersion>`, so a sweep doesn't read Secret Manager per host. */
+  /** Bearer per `managed.bearerHash` (each value checked against it), so a sweep doesn't read Secret
+   * Manager per host, and a re-minted bearer is never served from an older entry. */
   private readonly bearers = new Map<string, string>();
+  /** The "router did not keep model_info.id" error is logged once per instance. */
+  private idWarned = false;
 
   constructor(opts: LocalHostRouterOptions) {
     // config.litellmBaseUrl is the OpenAI-style base (…/v1); the management routes sit at the root.
     this.root = opts.config.litellmBaseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-    this.adminKey = opts.config.litellmAdminKey;
+    this.adminKey = opts.config.localHostRouterKey;
     this.env = opts.config.previewEnv;
     this.store = opts.store;
     this.secretAdmin = opts.secretAdmin;
@@ -279,12 +315,13 @@ export class LocalHostRouterSync implements LocalHostListener {
     this.generation.set(id, (this.generation.get(id) ?? 0) + 1);
     const counts = zero();
     const errors: string[] = [];
+    const run: Run = { timeoutMs: ONCHANGE_CALL_TIMEOUT_MS, stopped: false };
     await this.serial(id, async () => {
       // The stored record, not the one in the event: a later change may already have landed, and a
       // record that is gone wants no entries.
       const host = change.reason === "deleted" || change.reason === "device-revoked" ? null : await this.store.localHosts.findById(id);
-      const entries = (await this.listEntries()).filter((e) => e.model_info?.metadata?.hostId === id);
-      await this.reconcileHost(id, host, entries, counts, this.now(), errors);
+      const entries = (await this.listEntries(run.timeoutMs)).filter((e) => e.model_info?.metadata?.hostId === id);
+      await this.reconcileHost(id, host, entries, counts, this.now(), run, errors);
     });
     // events.ts puts "router: " in front of this in the heartbeat's problems.
     if (counts.failed) throw new LitellmError(`${errors[0] ?? "failed"}${counts.failed > 1 ? ` (+${counts.failed - 1} more)` : ""}`);
@@ -293,9 +330,13 @@ export class LocalHostRouterSync implements LocalHostListener {
   async sweep(): Promise<SweepCounts> {
     const now = this.now();
     const counts = zero();
-    // Before the list: an onChange that starts after this point may write what the list misses.
+    const run: Run = { timeoutMs: LITELLM_TIMEOUT_MS, deadline: Date.now() + SWEEP_DEADLINE_MS, stopped: false };
+    // Before the list: an onChange that starts after this point may write what the list misses
+    // (generation), and one already queued or running may write before this sweep's turn for that
+    // host comes (busy). Either way the list is older than that host's state: skip it this time.
     const started = new Map(this.generation);
-    const entries = await this.listEntries();
+    const busy = new Set(this.chains.keys());
+    const entries = await this.listEntries(run.timeoutMs);
     const byHost = new Map<string, RouterEntry[]>();
     for (const e of entries) {
       const hostId = String(e.model_info?.metadata?.hostId ?? "");
@@ -306,12 +347,15 @@ export class LocalHostRouterSync implements LocalHostListener {
     for (const h of await this.store.localHosts.listSharing()) if (hostWantsEntries(h, now)) hosts.set(h.id, h);
     const ids = new Set([...hosts.keys(), ...byHost.keys()]);
     for (const id of ids) {
+      if (busy.has(id)) continue;
+      if (this.shouldStop(run)) break;
       await this.serial(id, async () => {
         // An onChange ran for this host after the list was read: its result is newer than ours.
         if ((this.generation.get(id) ?? 0) !== (started.get(id) ?? 0)) return;
-        await this.reconcileHost(id, hosts.get(id) ?? null, byHost.get(id) ?? [], counts, now);
+        await this.reconcileHost(id, hosts.get(id) ?? null, byHost.get(id) ?? [], counts, now, run);
       });
     }
+    if (run.stopped) counts.stopped = 1;
     if (this.bearers.size > BEARER_CACHE_LIMIT) this.bearers.clear();
     return counts;
   }
@@ -325,13 +369,15 @@ export class LocalHostRouterSync implements LocalHostListener {
     host: LocalHost | null,
     entries: RouterEntry[],
     counts: SweepCounts,
-    now: Date = this.now(),
+    now: Date,
+    run: Run,
     errors: string[] = [],
   ): Promise<void> {
     const fail = (what: string, err: unknown) => {
       const text = err instanceof Error ? err.message : String(err);
       counts.failed++;
       errors.push(text);
+      if (text === NO_ANSWER) run.stopped = true;
       this.log(`local hosts: router could not ${what}`, text);
     };
     const desired = new Map<string, RouterDeployment>();
@@ -353,14 +399,40 @@ export class LocalHostRouterSync implements LocalHostListener {
       }
     }
     const byId = new Map<string, RouterEntry[]>();
+    const misplaced: string[] = [];
     for (const e of entries) {
       const entryId = String(e.model_info?.id ?? "");
-      if (entryId) byId.set(entryId, [...(byId.get(entryId) ?? []), e]);
+      if (!entryId) continue;
+      // Ours by metadata, but not under the id we give it: the router assigned its own id. Deleting
+      // it and adding it again would only repeat that on every sweep, cutting off running requests.
+      // A wanted model's entry is left alone (and not added again); an unwanted one is deleted.
+      const modelId = String(e.model_info?.metadata?.modelId ?? "");
+      const ownId = modelId ? routerDeploymentId(id, modelId) : "";
+      if (entryId !== ownId && desired.has(ownId)) {
+        desired.delete(ownId);
+        misplaced.push(entryId);
+        continue;
+      }
+      byId.set(entryId, [...(byId.get(entryId) ?? []), e]);
+    }
+    if (misplaced.length) {
+      const text = `router did not keep model_info.id (${misplaced.length} entr${misplaced.length === 1 ? "y" : "ies"} of ${id}); check STORE_MODEL_IN_DB and /model/new`;
+      counts.failed += misplaced.length;
+      errors.push(text);
+      if (!this.idWarned) {
+        this.idWarned = true;
+        this.log(
+          `local hosts: the router stored entries under its own ids instead of model_info.id (e.g. ${misplaced[0]}); ` +
+            "router-sync leaves them alone instead of re-adding them. Check the router has STORE_MODEL_IN_DB=True " +
+            "and keeps a caller-supplied model_info.id on /model/new (local-host.md §7).",
+        );
+      }
     }
     // What stays, by id, once extras and duplicates are gone.
     const current = new Map<string, RouterEntry>();
     const restore = new Set<string>();
     for (const [entryId, list] of byId) {
+      if (this.shouldStop(run)) return;
       const wanted = desired.has(entryId);
       if (wanted && list.length === 1) {
         current.set(entryId, list[0]);
@@ -369,7 +441,7 @@ export class LocalHostRouterSync implements LocalHostListener {
       // Not desired, or several copies of one id (two instances added it at once). A delete by id
       // removes every copy; a desired one is put back below.
       try {
-        await this.deleteEntry(entryId);
+        await this.deleteEntry(entryId, run.timeoutMs);
         counts.deleted += wanted ? list.length - 1 : list.length;
         if (wanted) restore.add(entryId);
       } catch (err) {
@@ -378,14 +450,15 @@ export class LocalHostRouterSync implements LocalHostListener {
       }
     }
     for (const [entryId, want] of desired) {
+      if (this.shouldStop(run)) return;
       const existing = current.get(entryId);
       try {
         if (!existing) {
-          this.expectOk("/model/new", await this.call("POST", "/model/new", { body: want }));
+          this.expectOk("/model/new", await this.call("POST", "/model/new", { body: want, timeoutMs: run.timeoutMs }));
           if (!restore.has(entryId)) counts.added++;
         } else if (!entryMatches(existing, want)) {
           // Same model_info.id: requests already running on it keep going.
-          this.expectOk("/model/update", await this.call("POST", "/model/update", { body: want }));
+          this.expectOk("/model/update", await this.call("POST", "/model/update", { body: want, timeoutMs: run.timeoutMs }));
           counts.updated++;
         }
       } catch (err) {
@@ -394,20 +467,33 @@ export class LocalHostRouterSync implements LocalHostListener {
     }
   }
 
+  /** A sweep past the deadline, or after a call that didn't answer, starts nothing new. */
+  private shouldStop(run: Run): boolean {
+    if (!run.stopped && run.deadline !== undefined && Date.now() > run.deadline) run.stopped = true;
+    return run.stopped;
+  }
+
+  /** The host's bearer, as Secret Manager holds it, only when it hashes to `managed.bearerHash`:
+   * the record says which bearer is current, so neither a stale cache entry nor a secret that was
+   * re-minted after the record was read ever reaches the router. */
   private async bearer(host: LocalHost): Promise<string> {
     const managed = host.managed!;
-    const cacheKey = `${managed.bearerSecret}#${managed.bearerVersion}`;
-    const cached = this.bearers.get(cacheKey);
+    const cached = this.bearers.get(managed.bearerHash);
     if (cached) return cached;
-    const value = (await this.secretAdmin.accessLatest(managed.bearerSecret))?.trim();
-    if (!value) throw new Error(`bearer secret ${managed.bearerSecret} has no enabled version`);
-    this.bearers.set(cacheKey, value);
-    return value;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const value = (await this.secretAdmin.accessLatest(managed.bearerSecret))?.trim();
+      if (!value) throw new Error(`bearer secret ${managed.bearerSecret} has no enabled version`);
+      if (bearerHash(value) === managed.bearerHash) {
+        this.bearers.set(managed.bearerHash, value);
+        return value;
+      }
+    }
+    throw new Error(`bearer secret ${managed.bearerSecret} does not match the host's bearerHash`);
   }
 
   /** Our entries on the router: metadata.outfitter "local-host" and this env. */
-  private async listEntries(): Promise<RouterEntry[]> {
-    const res = await this.call("GET", "/model/info");
+  private async listEntries(timeoutMs: number): Promise<RouterEntry[]> {
+    const res = await this.call("GET", "/model/info", { timeoutMs });
     this.expectOk("/model/info", res);
     const body = res.body as { data?: unknown } | unknown[] | undefined;
     const data = (Array.isArray(body) ? body : Array.isArray((body as { data?: unknown })?.data) ? (body as { data: unknown[] }).data : []) as RouterEntry[];
@@ -417,8 +503,8 @@ export class LocalHostRouterSync implements LocalHostListener {
     });
   }
 
-  private async deleteEntry(entryId: string): Promise<void> {
-    const res = await this.call("POST", "/model/delete", { body: { id: entryId } });
+  private async deleteEntry(entryId: string, timeoutMs: number): Promise<void> {
+    const res = await this.call("POST", "/model/delete", { body: { id: entryId }, timeoutMs });
     // Already gone counts as deleted.
     if (res.ok || res.status === 404 || /not found|does not exist/i.test(errorDetail(res.body))) return;
     this.expectOk("/model/delete", res);
@@ -438,7 +524,7 @@ export class LocalHostRouterSync implements LocalHostListener {
   // ---------- HTTP ----------
 
   /** One management call: the status and parsed body; a LitellmError only when nothing came back. */
-  private async call(method: "GET" | "POST", path: string, opts: { body?: unknown } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
+  private async call(method: "GET" | "POST", path: string, opts: { body?: unknown; timeoutMs?: number } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
     let res: Response;
     try {
       res = await this.fetch(new URL(this.root + path), {
@@ -449,11 +535,11 @@ export class LocalHostRouterSync implements LocalHostListener {
           ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
         },
         ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-        signal: AbortSignal.timeout(LITELLM_TIMEOUT_MS),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? LITELLM_TIMEOUT_MS),
       });
     } catch (err) {
       this.log(`litellm: ${method} ${path} did not answer`, err instanceof Error ? err.message : String(err));
-      throw new LitellmError("LiteLLM did not answer");
+      throw new LitellmError(NO_ANSWER);
     }
     const text = await res.text().catch(() => "");
     let body: unknown = text;
@@ -477,7 +563,8 @@ function zero(): SweepCounts {
   return { added: 0, updated: 0, deleted: 0, failed: 0 };
 }
 
-/** B's listener (§5), registered in server.ts only when LITELLM_ADMIN_KEY is set. */
+/** B's listener (§5), registered in server.ts only when LOCAL_HOST_ROUTER_KEY is set and the role
+ * isn't web (the key is mounted on link only, local-host.md §3.5). */
 export function localHostRouterListener(opts: LocalHostRouterOptions): LocalHostRouterSync {
   return new LocalHostRouterSync(opts);
 }

@@ -5,11 +5,12 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { bearerSecretName, internalUrl, localHostId, routerDeploymentId } from "../src/local-hosts/naming.ts";
+import { bearerHash, bearerSecretName, internalUrl, localHostId, routerDeploymentId } from "../src/local-hosts/naming.ts";
 import { LocalHostEvents } from "../src/local-hosts/events.ts";
 import {
   buildDeployment,
   hostWantsEntries,
+  ROUTER_PAYLOAD_VERSION,
   localHostRouterListener,
   thinkingOffBody,
   type LocalHostRouterSync,
@@ -27,7 +28,7 @@ const ADMIN = "sk-admin-test-key";
 const ENV = "test-env";
 const BEARER = "lhb_" + "B".repeat(43);
 const BEARER2 = "lhb_" + "C".repeat(43);
-const CONFIG = { litellmBaseUrl: "https://router.test/v1", litellmAdminKey: ADMIN, previewEnv: ENV };
+const CONFIG = { litellmBaseUrl: "https://router.test/v1", localHostRouterKey: ADMIN, previewEnv: ENV };
 
 function host(overrides: Partial<LocalHost> = {}, hostId = "h_" + "a".repeat(24)): LocalHost {
   const id = overrides.id ?? localHostId("u_1", hostId);
@@ -53,7 +54,7 @@ function host(overrides: Partial<LocalHost> = {}, hostId = "h_" + "a".repeat(24)
       { id: "llama3.2:3b", server: "http://localhost:11434", kind: "ollama", loaded: false },
     ],
     tunnel: { provider: "ngrok", managed: true, state: "up", url: internalUrl(id), server: "http://localhost:1234", credentialId: "cr_1" },
-    managed: { credentialId: "cr_1", credentialIssuedAt: ago(60), endpointId: "ep_1", publicUrl: "https://lh-x.kernal.run", bearerSecret: bearerSecretName(id), bearerVersion: 1, bearerHash: "0".repeat(64) },
+    managed: { credentialId: "cr_1", credentialIssuedAt: ago(60), endpointId: "ep_1", publicUrl: "https://lh-x.kernal.run", bearerSecret: bearerSecretName(id), bearerVersion: 1, bearerHash: bearerHash(BEARER) },
     createdAt: ago(3600),
     updatedAt: ago(10),
     lastSeenAt: ago(10),
@@ -78,7 +79,7 @@ async function setup(hosts: LocalHost[] = []): Promise<Setup> {
   const clock = { now: NOW };
   for (const h of hosts) {
     await store.localHosts.upsert(h);
-    if (h.managed) await secrets.addVersion(h.managed.bearerSecret, BEARER);
+    if (h.managed) await secrets.addVersion(h.managed.bearerSecret, h.managed.bearerHash === bearerHash(BEARER2) ? BEARER2 : BEARER);
   }
   const sync = localHostRouterListener({
     store,
@@ -133,6 +134,7 @@ describe("buildDeployment (§3.3)", () => {
           ownerUserId: "u_1",
           modelId: "qwen/qwen3-coder-30b",
           fingerprint: routerFingerprint(h, NOW),
+          payloadVersion: ROUTER_PAYLOAD_VERSION,
         },
       },
     });
@@ -213,7 +215,7 @@ describe("onChange (§3.4): one host", () => {
     const { fake, store, secrets, sync } = await setup([h]);
     await sync.onChange({ reason: "heartbeat", host: h });
     await secrets.addVersion(h.managed!.bearerSecret, BEARER2);
-    const next = { ...h, managed: { ...h.managed!, bearerVersion: 2, publicUrl: "https://lh-y.kernal.run/" } };
+    const next = { ...h, managed: { ...h.managed!, bearerVersion: 2, bearerHash: bearerHash(BEARER2), publicUrl: "https://lh-y.kernal.run/" } };
     await store.localHosts.upsert(next);
     await sync.onChange({ reason: "credentials", host: next, previous: h });
     assert.equal(fake.callsTo("/model/update").length, 2);
@@ -311,10 +313,96 @@ describe("onChange (§3.4): one host", () => {
     const h = host();
     const { fake, store, sync } = await setup([h]);
     await sync.onChange({ reason: "heartbeat", host: h });
-    const next = { ...h, managed: { ...h.managed!, bearerSecret: "outfitter-localhost-missing", bearerVersion: 2 } };
+    const next = { ...h, managed: { ...h.managed!, bearerSecret: "outfitter-localhost-missing", bearerVersion: 2, bearerHash: bearerHash(BEARER2) } };
     await store.localHosts.upsert(next);
     await assert.rejects(sync.onChange({ reason: "credentials", host: next }), /no enabled version/);
     assert.equal(fake.deployments.length, 2);
+  });
+
+  test("revoke, then a re-mint under the same secret and version number: the new bearer, never the cached one", async () => {
+    const h = host();
+    const { fake, store, secrets, sync } = await setup([h]);
+    await sync.onChange({ reason: "heartbeat", host: h });
+    assert.ok(fake.deployments.every((d) => d.litellm_params.api_key === BEARER));
+    // Revoke: managed goes, the secret's versions are disabled, the entries go.
+    await secrets.disableAllEnabled(h.managed!.bearerSecret);
+    const revoked = { ...h, revokedAt: ago(5), managed: undefined };
+    await store.localHosts.upsert(revoked);
+    await sync.onChange({ reason: "device-revoked", host: revoked });
+    assert.equal(fake.deployments.length, 0);
+    // A re-login mints a new bearer under the same name. Even if a buggy registry reused version 1,
+    // the record's bearerHash says which value is current.
+    await secrets.addVersion(h.managed!.bearerSecret, BEARER2);
+    const again = { ...h, managed: { ...h.managed!, bearerVersion: 1, bearerHash: bearerHash(BEARER2) } };
+    await store.localHosts.upsert(again);
+    await sync.onChange({ reason: "credentials", host: again });
+    assert.equal(fake.deployments.length, 2);
+    assert.ok(fake.deployments.every((d) => d.litellm_params.api_key === BEARER2));
+  });
+
+  test("a secret that doesn't hash to bearerHash fails the host and leaves its entries alone", async () => {
+    const h = host();
+    const { fake, store, secrets, sync, logs } = await setup([h]);
+    await sync.onChange({ reason: "heartbeat", host: h });
+    let reads = 0;
+    const accessLatest = secrets.accessLatest.bind(secrets);
+    secrets.accessLatest = async (name: string) => {
+      reads++;
+      return accessLatest(name);
+    };
+    // The record moved on to a bearer Secret Manager doesn't hold (yet).
+    const next = { ...h, managed: { ...h.managed!, bearerVersion: 2, bearerHash: bearerHash(BEARER2), publicUrl: "https://lh-y.kernal.run" } };
+    await store.localHosts.upsert(next);
+    await assert.rejects(sync.onChange({ reason: "credentials", host: next }), /does not match the host's bearerHash/);
+    assert.equal(reads, 2, "re-read once before giving up");
+    assert.ok(fake.deployments.every((d) => d.litellm_params.api_base === "https://lh-x.kernal.run/v1"));
+    for (const line of logs) assert.ok(!line.includes(BEARER), line);
+  });
+
+  test("onChange caps each router call at ONCHANGE_CALL_TIMEOUT_MS", async () => {
+    const h = host();
+    const { fake, sync } = await setup([h]);
+    const seen: number[] = [];
+    const timeouts = AbortSignal.timeout;
+    AbortSignal.timeout = (ms: number) => {
+      seen.push(ms);
+      return timeouts.call(AbortSignal, ms);
+    };
+    try {
+      await sync.onChange({ reason: "heartbeat", host: h });
+      await sync.sweep();
+    } finally {
+      AbortSignal.timeout = timeouts;
+    }
+    const onChangeCalls = 3; // /model/info + two /model/new
+    assert.deepEqual(seen.slice(0, onChangeCalls), [4000, 4000, 4000]);
+    assert.ok(seen.slice(onChangeCalls).every((ms) => ms === 10_000), String(seen));
+  });
+
+  test("the router didn't keep model_info.id: logged once, entries left alone, nothing re-added", async () => {
+    const h = host();
+    const { fake, store, sync, logs } = await setup([h]);
+    // A router that assigns its own uuid on /model/new.
+    let n = 0;
+    const inner = fake.fetch;
+    (sync as unknown as { fetch: typeof fetch }).fetch = async (input, init) => {
+      const res = await inner(input, init);
+      if (String(input).endsWith("/model/new") && res.ok) fake.deployments[fake.deployments.length - 1].model_info.id = `uuid-${++n}`;
+      return res;
+    };
+    await sync.onChange({ reason: "heartbeat", host: h });
+    assert.equal(fake.deployments.length, 2);
+    fake.calls.length = 0;
+    const first = await sync.sweep();
+    assert.deepEqual(first, { added: 0, updated: 0, deleted: 0, failed: 2 });
+    assert.deepEqual(writes(fake), []);
+    await sync.sweep();
+    assert.deepEqual(writes(fake), [], "no delete/re-add loop");
+    assert.equal(logs.filter((l) => /STORE_MODEL_IN_DB/.test(l)).length, 1);
+    // Once the host is gone, those entries are removed by their own ids.
+    await store.localHosts.delete(h.id);
+    assert.deepEqual(await sync.sweep(), { added: 0, updated: 0, deleted: 2, failed: 0 });
+    assert.equal(fake.deployments.length, 0);
   });
 });
 
@@ -381,9 +469,10 @@ describe("sweep (§3.4): every host from one /model/info", () => {
     assert.equal(fake.deployments[0].litellm_params.api_base, "https://lh-x.kernal.run/v1");
   });
 
-  test("counts failures and keeps going; reads each bearer version from Secret Manager once", async () => {
+  test("counts failures and keeps going; reads each bearer from Secret Manager once", async () => {
     const a = host();
     const b = host({ routerPrefix: "mgm-other" }, "h_" + "b".repeat(24));
+    b.managed = { ...b.managed!, bearerHash: bearerHash(BEARER2) };
     const { fake, secrets, sync } = await setup([a, b]);
     let reads = 0;
     const accessLatest = secrets.accessLatest.bind(secrets);
@@ -407,10 +496,86 @@ describe("sweep (§3.4): every host from one /model/info", () => {
     events.register(sync);
     assert.deepEqual(await events.sweep(), {});
   });
+
+  test("a host whose onChange was already running when the sweep listed is skipped (no stale re-add)", async () => {
+    const h = host();
+    const { fake, sync } = await setup([h]);
+    // Hold an onChange inside its first call (/model/info), then sweep: the sweep's list has none of
+    // the entries that onChange is about to add.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inner = fake.fetch;
+    let held = false;
+    (sync as unknown as { fetch: typeof fetch }).fetch = async (input, init) => {
+      if (!held && String(input).endsWith("/model/info")) {
+        held = true;
+        await gate;
+      }
+      return inner(input, init);
+    };
+    const change = sync.onChange({ reason: "heartbeat", host: h });
+    await new Promise((r) => setImmediate(r));
+    const sweep = sync.sweep();
+    await new Promise((r) => setImmediate(r));
+    release();
+    await change;
+    assert.deepEqual(await sweep, { added: 0, updated: 0, deleted: 0, failed: 0 });
+    assert.equal(fake.deployments.length, 2);
+    assert.equal(fake.callsTo("/model/new").length, 2, "only the onChange's adds");
+  });
+
+  test("stops at the first call that doesn't answer, and past its deadline", async () => {
+    const a = host();
+    const b = host({ routerPrefix: "mgm-other" }, "h_" + "b".repeat(24));
+    const { fake, sync } = await setup([a, b]);
+    const inner = fake.fetch;
+    let writesTried = 0;
+    (sync as unknown as { fetch: typeof fetch }).fetch = async (input, init) => {
+      if (String(input).endsWith("/model/new")) {
+        writesTried++;
+        throw new TypeError("fetch failed");
+      }
+      return inner(input, init);
+    };
+    const counts = await sync.sweep();
+    assert.equal(writesTried, 1);
+    assert.deepEqual(counts, { added: 0, updated: 0, deleted: 0, failed: 1, stopped: 1 });
+  });
+
+  test("a payloadVersion change rewrites entries whose host didn't change", async () => {
+    const h = host();
+    const { fake, sync } = await setup([h]);
+    await sync.onChange({ reason: "heartbeat", host: h });
+    for (const d of fake.deployments) d.model_info.metadata.payloadVersion = ROUTER_PAYLOAD_VERSION - 1;
+    assert.deepEqual(await sync.sweep(), { added: 0, updated: 2, deleted: 0, failed: 0 });
+    assert.ok(fake.deployments.every((d) => d.model_info.metadata.payloadVersion === ROUTER_PAYLOAD_VERSION));
+  });
 });
 
-describe("server wiring (§3.4, §5)", () => {
-  test("no listener without LITELLM_ADMIN_KEY: the tick's localHosts has no router counts", async () => {
+describe("server wiring (§3.4, §3.5, §5)", () => {
+  for (const [label, env, wantRouter] of [
+    ["link with LOCAL_HOST_ROUTER_KEY: registered", { OUTFITTER_ROLE: "link", LOCAL_HOST_ROUTER_KEY: ADMIN }, true],
+    ["web, even with the key: not registered", { OUTFITTER_ROLE: "web", LOCAL_HOST_ROUTER_KEY: ADMIN }, false],
+    ["link with only LITELLM_ADMIN_KEY: not registered", { OUTFITTER_ROLE: "link", LITELLM_ADMIN_KEY: ADMIN }, false],
+  ] as const) {
+    test(label, async () => {
+      const fake = new FakeLitellm();
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = fake.fetch;
+      let app: Awaited<ReturnType<typeof buildTestApp>> | undefined;
+      try {
+        app = await buildTestApp({ LITELLM_BASE_URL: "https://router.test/v1", ...env });
+        const out = await app.localHostEvents.sweep();
+        assert.equal("router" in out, wantRouter, JSON.stringify(out));
+        if (wantRouter) for (const c of fake.calls) assert.equal(c.authorization, `Bearer ${ADMIN}`);
+      } finally {
+        globalThis.fetch = realFetch;
+        await app?.fastify.close();
+      }
+    });
+  }
+
+  test("no listener without LOCAL_HOST_ROUTER_KEY: the tick's localHosts has no router counts", async () => {
     const store = new MemoryStore();
     const fake = new FakeLitellm();
     // Minting injected (as other tests do) but no admin key in config: nothing may call the router.

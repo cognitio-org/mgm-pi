@@ -514,6 +514,67 @@ describe("failures", () => {
     assert.equal(w.heartbeats.length, n + 1, "one retry after the backoff, nothing more");
   });
 
+  test("credentials 409 credentials_busy: retried with backoff, sharing stays on (#467)", async () => {
+    const { w, at, last } = world();
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("fetch") }, { status: 200, body: hbAnswer("current") }];
+    w.replies.credentials = [
+      { status: 409, body: { error: "credentials_busy" } },
+      { status: 409, body: { error: "credentials_busy" } },
+      { status: 200, body: credsAnswer() },
+    ];
+    await at(0);
+    assert.equal(w.credentialCalls, 1);
+    assert.equal(w.opened.length, 0, "no tunnel yet");
+    assert.equal(w.stopped, 0);
+    assert.ok(w.logs.some((l) => /another call for this host is running/.test(l)));
+    await at(4);
+    assert.equal(w.credentialCalls, 1, "not before 5 s");
+    await at(5);
+    assert.equal(w.credentialCalls, 2);
+    await at(14);
+    assert.equal(w.credentialCalls, 2, "then 10 s");
+    await at(15);
+    assert.equal(w.credentialCalls, 3);
+    assert.equal(w.opened.length, 1, "the tunnel opens on the credentials once issued");
+    assert.equal(last().tunnel.state, "up");
+  });
+
+  test("credentials 409 sharing_off still stops asking (hint none)", async () => {
+    const { w, at } = world();
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("fetch") }, { status: 200, body: hbAnswer("none") }];
+    w.replies.credentials = [{ status: 409, body: { error: "sharing_off" } }];
+    await at(0);
+    await at(5);
+    await at(60);
+    assert.equal(w.credentialCalls, 1);
+    assert.equal(w.opened.length, 0);
+  });
+
+  test("credentials 404 device not found (revoked mid-call): blocked for 15 minutes", async () => {
+    const { w, at, last } = world();
+    w.replies.heartbeat = [{ status: 200, body: hbAnswer("fetch") }, { status: 200, body: hbAnswer("current") }];
+    w.replies.credentials = [{ status: 404, body: { error: "device not found" } }];
+    await at(0);
+    assert.match(last().heartbeat.error!, /device not found/);
+    const n = w.heartbeats.length;
+    await at(60);
+    await at(600);
+    assert.equal(w.heartbeats.length, n);
+    assert.equal(w.credentialCalls, 1);
+  });
+
+  test("heartbeat 409 router_prefix_taken: an ordinary failure with backoff, not a 15-minute block", async () => {
+    const { w, at, last } = world();
+    w.replies.heartbeat = [{ status: 409, body: { error: "router_prefix_taken" } }, { status: 200, body: hbAnswer("current") }];
+    await at(0);
+    assert.equal(last().heartbeat.error, "router_prefix_taken");
+    await at(4);
+    assert.equal(w.heartbeats.length, 1);
+    await at(5);
+    assert.equal(w.heartbeats.length, 2);
+    assert.equal(last().heartbeat.ok, true);
+  });
+
   test("400 invalid_heartbeat records the field", async () => {
     const { w, at, last } = world();
     w.replies.heartbeat = [{ status: 400, body: { error: "invalid_heartbeat", field: "hostName" } }];

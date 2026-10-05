@@ -428,9 +428,13 @@ export class LocalHostLoop {
       return;
     }
     const code = typeof json?.error === "string" ? json.error : `HTTP ${res.status}`;
+    // 409 credentials_busy: another credentials call for this host is still running (#467); it
+    // clears on its own, so back off and retry. Any other 409 is sharing_off.
+    if (res.status === 409 && code === "credentials_busy") return this.credsFailed(now, "tunnel credentials: another call for this host is running; retrying");
     if (res.status === 409) { this.hint = "none"; return this.credsFailed(now, "tunnel credentials: sharing is off for this host", false); }
     if (res.status === 503) { this.hint = "unavailable"; this.creds = undefined; this.d.log("info", "Outfitter provisions no tunnels here; using interim credentials if any"); return; }
     if (res.status === 404 && code === "host_unknown") { this.forceHeartbeat = true; return this.credsFailed(now, "tunnel credentials: Outfitter doesn't know this host yet"); }
+    // 404 device not found (revoked, possibly while the call ran) and the 403s: blocked for a while.
     if (res.status === 401 || res.status === 403 || res.status === 404) {
       this.hb.blockedUntil = now + BLOCKED_RETRY_MS;
       this.hb.error = `tunnel credentials refused: ${code}`;

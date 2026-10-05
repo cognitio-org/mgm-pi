@@ -665,10 +665,42 @@
   color: var(--text);
 }
 
+/* One grid, two arrangements. Desktop: the editor spans the full width and Send closes the
+ * controls row in the bottom-right corner (where the eye ends up after writing), so nothing sits
+ * beside the editor and no space is trapped next to a tall draft. Phones (mobile.css) put Send
+ * beside the editor instead, since their controls row has no room left. */
 .composer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "status status"
+    "editor editor"
+    "controls send"
+    "note note";
+  gap: 0.35rem 0.5rem;
+}
+
+.composer > .composer-status-row {
+  grid-area: status;
+}
+
+.composer > .md-editor-wrap {
+  grid-area: editor;
+  min-width: 0;
+}
+
+.composer > .composer-controls {
+  grid-area: controls;
+  min-width: 0;
+}
+
+.composer > .send-wrap {
+  grid-area: send;
+  align-self: center;
+}
+
+.composer > .voice-note {
+  grid-area: note;
 }
 
 .composer-row {
@@ -707,28 +739,15 @@
   color: var(--accent-contrast);
 }
 
-/* The editor and Send side by side, Send pinned to the bottom edge so it stays next to where
- * you're typing however tall the box grows. */
-.composer-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-}
-
-.composer-input-row > .md-editor-wrap {
-  flex: 1;
-  min-width: 0;
-}
-
-/* Taller than the rest of the controls by default: Send is the one button you hit every time. */
+/* Larger than the rest of the controls: Send is the one button you hit every time. */
 .send-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  min-height: 48px;
-  min-width: 6.5rem;
-  padding: 0.5rem 1rem;
+  min-height: 42px;
+  min-width: 7rem;
+  padding: 0.4rem 1.1rem;
   font-size: 1rem;
   letter-spacing: 0.02em;
 }

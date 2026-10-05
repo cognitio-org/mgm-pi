@@ -500,6 +500,20 @@ select {
     max-height: 55svh;
   }
 
+  /* Send beside the editor, at its bottom edge (by the thumb); the controls row below keeps the
+   * full width for Aa, the size toggle, send mode and voice. */
+  .composer {
+    grid-template-areas:
+      "status status"
+      "editor send"
+      "controls controls"
+      "note note";
+  }
+
+  .composer > .send-wrap {
+    align-self: end;
+  }
+
   .send-button {
     min-width: 4.75rem;
     min-height: 48px;

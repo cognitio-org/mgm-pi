@@ -360,7 +360,7 @@ describe("registerLitellmDeviceHooks", () => {
     assert.equal(second!.body.max_budget, 12.5);
     assert.equal(second!.body.budget_duration, "1d");
     assert.equal(second!.body.rpm_limit, 30);
-    assert.deepEqual(second!.body.models, ["claude-auto-llm", "gpt-auto-llm"]);
+    assert.deepEqual(second!.body.models, ["claude-auto-llm", "gpt-auto-llm", "local-hosts"]);
   });
 
   test("without minting nothing is registered", async () => {
@@ -410,9 +410,17 @@ describe("routerKeyLimits (fleet settings router.*)", () => {
       "router.runKey.maxBudgetUsd": 3,
     }));
     assert.deepEqual(limits, {
-      device: { duration: "14d", maxBudget: 0, budgetDuration: "7d", rpmLimit: 60, models: ["a", "b"] },
-      run: { maxBudget: 3, models: ["a", "b"] },
+      device: { duration: "14d", maxBudget: 0, budgetDuration: "7d", rpmLimit: 60, models: ["a", "b", "local-hosts"] },
+      run: { maxBudget: 3, models: ["a", "b", "local-hosts"] },
     });
+  });
+
+  test("#384: a restricting models list gets the local-hosts access group once; no list stays every model", () => {
+    assert.ok(!("models" in routerKeyLimits(defaultFleetSettings()).device));
+    assert.ok(!("models" in routerKeyLimits(defaultFleetSettings()).run));
+    const listed = routerKeyLimits(fleetWith({ "router.keys.models": "local-hosts, claude-auto-llm" }));
+    assert.deepEqual(listed.device.models, ["local-hosts", "claude-auto-llm"]);
+    assert.deepEqual(listed.run.models, ["local-hosts", "claude-auto-llm"]);
   });
 
   test("a stored value that doesn't fit (fractional days, out of range, wrong type) falls back to the default", () => {

@@ -23,6 +23,8 @@ import type { AgentEngine } from "../agentengine/index.ts";
 import type { FleetSettingsCache } from "../fleet-settings.ts";
 import type { DeviceLifecycle } from "../central/device-lifecycle.ts";
 import type { LitellmKeys } from "../central/litellm-keys.ts";
+import type { LocalHostEvents } from "../local-hosts/events.ts";
+import type { NgrokApi } from "../ngrok-api.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -79,4 +81,10 @@ export interface RouteContext {
   deviceLifecycle: DeviceLifecycle;
   /** CA-5: LiteLLM key minting and spend; undefined while LITELLM_ADMIN_KEY is unset. */
   litellmKeys?: LitellmKeys;
+  /** #378 Local Host (docs/specs/local-host.md §5): the registry (task A) announces host changes
+   * here; the router reconciliation (task B) listens. The tick runs its sweep. */
+  localHostEvents: LocalHostEvents;
+  /** #383: the ngrok API for per-host tunnel credentials; undefined while NGROK_API_KEY is unset.
+   * Credentials are provisioned only when this and config.localHostDomain are both set. */
+  localHostNgrok?: NgrokApi;
 }

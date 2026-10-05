@@ -24,8 +24,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
-import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
-import { envFilePath, getJson, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
+import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, lmStudioMeta, type Bus } from "../connect/lib.ts";
+import { envFilePath, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
 import {
   applyEdit, applyEmbeddingChoice, embeddingBaseUrl, embeddingProblem, getAt, invalidatesIndex, refreshRouterKey, rerankerProblem, routerFromEnv, setReranking,
   type EmbeddingChoice, type IndexStatus,
@@ -46,8 +46,9 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
+import { probeServer } from "../_shared/local-discovery.ts";
 import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig, shellValue } from "../_shared/central-config.ts";
-import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
+import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingModelOptions, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -236,17 +237,22 @@ export function createApi(d: ApiDeps): Api {
 
     "GET /connections/local-models": async (_b, q) => {
       const url = normalizeBaseUrl(q.get("url") ?? "", backends(env(), new Map())[0].baseUrl);
-      const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio", 3000);
-      const ids = native ? [...parseLmStudioModels(native).keys()] : ((await getJson(`${url}/models`, "lm-studio", 3000))?.data ?? []).map((m: any) => String(m.id));
+      const { server, models: found } = await probeServer({ kind: "lmstudio", url, apiKey: "lm-studio" }, { timeoutMs: 3000 });
+      const ids = server.endpoints.includes("/api/v0/models") ? [...lmStudioMeta(found).keys()] : found.filter((m) => m.listed).map((m) => m.id);
       return { body: { models: ids.filter((id: string) => !/embed/i.test(id)).sort() } };
     },
 
     // ---------- settings: each central value's source, and where a save goes (central.ts) ----------
     "GET /settings": async () => {
-      const view = await settingsView();
+      // #458: the model dropdowns' options are connect's discovered models, as on the Model page.
+      const [view, conns] = await Promise.all([settingsView(), connections()]);
       const account = signedInAccount();
       const keys = account ? await listProviderKeys(account) : undefined;
-      return { body: { ...view, ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}) } };
+      return { body: {
+        ...view,
+        modelOptions: settingModelOptions(conns),
+        ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}),
+      } };
     },
 
     "POST /settings": async (body: { target?: unknown; values?: unknown; version?: unknown }) => {

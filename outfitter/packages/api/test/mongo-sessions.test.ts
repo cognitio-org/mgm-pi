@@ -44,6 +44,12 @@ async function exercise(sessions: SessionsCollection): Promise<Record<string, un
   const restored = await sessions.setArchivedAt("shelved", null);
   result.restoredHasField = restored ? "archivedAt" in restored : "missing";
   result.afterRestore = await ids("exclude");
+  // The floppy's model switch: set, then cleared with $unset (not left as null).
+  result.modelSet = (await sessions.setModelOverride("live", "litellm/gpt-5-mini", "2026-10-05T00:00:00.000Z"))?.modelOverride;
+  const cleared = await sessions.setModelOverride("live", null, "2026-10-05T00:01:00.000Z");
+  result.modelClearedHasField = cleared ? "modelOverride" in cleared : "missing";
+  result.modelClearedUpdatedAt = cleared?.updatedAt;
+  result.modelMissing = await sessions.setModelOverride("no-such-session", "litellm/x", "2026-10-05T00:00:00.000Z");
   return result;
 }
 
@@ -137,6 +143,10 @@ describe("MongoSessions archive filter against a real MongoDB", () => {
       releasedHasField: false,
       restoredHasField: false,
       afterRestore: ["live", "shelved"],
+      modelSet: "litellm/gpt-5-mini",
+      modelClearedHasField: false,
+      modelClearedUpdatedAt: "2026-10-05T00:01:00.000Z",
+      modelMissing: null,
     });
   });
 

@@ -73,6 +73,7 @@ import type { FleetSettings } from "../fleet-settings.ts";
 import { MemoryDeviceCodes, MemoryDevices } from "./devices.ts";
 import { MemorySettings } from "./settings.ts";
 import { MemoryProviderKeys, MemoryRouterKeys } from "./keys.ts";
+import { MemoryLocalHosts } from "./local-hosts.ts";
 import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -113,6 +114,15 @@ class MemorySessions implements SessionsCollection {
     const row = this.rows.get(id);
     if (!row) return null;
     const next = { ...row, ...patch };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { modelOverride: _previous, ...rest } = row;
+    const next: Session = model ? { ...rest, modelOverride: model, updatedAt: nowIso } : { ...rest, updatedAt: nowIso };
     this.rows.set(id, next);
     return clone(next);
   }
@@ -1388,6 +1398,7 @@ export class MemoryStore implements Store {
   readonly settings = new MemorySettings();
   readonly routerKeys = new MemoryRouterKeys();
   readonly providerKeys = new MemoryProviderKeys();
+  readonly localHosts = new MemoryLocalHosts();
 
   constructor() {
     const tables: BrowserTables = {

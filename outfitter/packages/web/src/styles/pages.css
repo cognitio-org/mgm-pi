@@ -314,6 +314,32 @@ a.vscode-card:focus-visible {
   position: relative;
 }
 
+/* The header's model reads as text and opens the switcher. */
+.session-model-switch {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.session-model-switch:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.session-model-pending {
+  color: var(--text-dim);
+}
+
+.switch-model-note {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
 .model-picker-list {
   position: absolute;
   z-index: 10;
@@ -1226,4 +1252,79 @@ a.chip.github-fact {
 .account-source[data-source="fleet"],
 .account-source[data-source="group"] {
   border-color: var(--accent);
+}
+
+/* #458: the Account page's model dropdowns (components/account/ModelField.tsx), in the repo
+ * field's menu style. */
+.model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 14rem;
+}
+
+.model-field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.model-field-row input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.model-field-unlisted {
+  border-color: var(--warn);
+}
+
+.model-field-unlisted::before {
+  content: none;
+}
+
+.model-menu {
+  display: flex;
+  flex-direction: column;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.model-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+  box-shadow: none;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  background: transparent;
+  font-weight: 500;
+}
+
+.model-menu button:hover,
+.model-menu button.is-active {
+  background: var(--bg-inset);
+}
+
+.model-menu button:active {
+  transform: none;
+  box-shadow: none;
+}
+
+.model-menu-group {
+  padding: 0.35rem 0.5rem 0.15rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.model-menu-meta {
+  color: var(--text-dim);
+  font-size: 0.75rem;
 }

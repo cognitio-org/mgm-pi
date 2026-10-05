@@ -226,6 +226,7 @@ export function ProfilesPanel({ decls, onChanged }: { decls: SettingDecl[]; onCh
               return doc;
             }}
             onReload={() => load()}
+            profile={current.name}
           />
         </>
       )}

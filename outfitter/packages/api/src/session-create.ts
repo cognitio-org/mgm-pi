@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentLink } from "./agentlink.ts";
 import type { MailService } from "./mail.ts";
+import { pinnableModel } from "./session-model.ts";
 import type { Run, Session, Store } from "./store/types.ts";
 
 export interface SessionCreateDeps {
@@ -25,7 +26,8 @@ export interface NewSessionInput {
   branch?: string;
   prompt: string;
   name?: string;
-  /** Per-session model override; see src/laptop.ts's E2.8 preflight. */
+  /** The floppy's model. Omitted: the tape's model as it is now, pinned to the floppy, so a later
+   * edit of the tape doesn't move it (src/session-model.ts). See src/laptop.ts's E2.8 preflight. */
   model?: string;
   /** E9 §5: an A2A task's session. */
   origin?: "a2a";
@@ -79,7 +81,10 @@ export async function createSession(
   input: NewSessionInput,
   opts: CreateSessionOptions = {},
 ): Promise<{ session: Session; run: Run | null }> {
-  const session = buildSession(input);
+  // The tape only seeds a new floppy's model. A tape with no model leaves it to the owner's central
+  // settings (applied by agentd); the floppy then keeps what its transcript records.
+  const model = input.model ?? pinnableModel(await deps.store.gurus.findById(input.guruId));
+  const session = buildSession({ ...input, model });
   await deps.store.sessions.insert(session);
   if (opts.beforeMail) await opts.beforeMail(session);
   const run = await postUserMail(deps, session.id, input.ownerEmail, input.prompt, undefined, {

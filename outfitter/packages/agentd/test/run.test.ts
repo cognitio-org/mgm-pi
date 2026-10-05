@@ -652,18 +652,21 @@ test("RunController: multiple down-messages queued before pi is up are flushed t
   };
 
   link.deliver(spec);
-  // All three land before pi is spawned (begin() is still suspended in gitOps.clone()).
+  // All four land before pi is spawned (begin() is still suspended in gitOps.clone()). The `rpc`
+  // is a model switch made while the Drive was starting (api session-model.ts): pi gets it as is.
   link.deliver({ t: "prompt", text: "first" });
   link.deliver({ t: "steer", text: "second" });
+  link.deliver({ t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "gpt-5-mini" } });
   link.deliver({ t: "abort" });
 
-  await waitFor(() => pi !== undefined && pi.sent.length === 3);
+  await waitFor(() => pi !== undefined && pi.sent.length === 4);
   assert.deepEqual(
     pi!.sent.map((c) => c.type),
-    ["prompt", "steer", "abort"],
+    ["prompt", "steer", "set_model", "abort"],
   );
   assert.equal((pi!.sent[0] as any).message, "first");
   assert.equal((pi!.sent[1] as any).message, "second");
+  assert.deepEqual(pi!.sent[2], { type: "set_model", provider: "litellm", modelId: "gpt-5-mini" });
 });
 
 test("RunController: activity while idle that never produces agent_start/agent_settled (e.g. a `/command` prompt pi handles locally, or one it rejects) re-arms the idle timer instead of leaving it disarmed forever", async (t) => {

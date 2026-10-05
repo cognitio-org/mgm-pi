@@ -23,7 +23,7 @@ below).
 | `baseBranch` | string? | repo sessions only |
 | `branch` | string? | repo sessions only; absent = agentd works out of a scratch `/workspace` |
 | `prompt` | string? | the opening prompt, replayed to agentd on the first `wake()` |
-| `modelOverride` | string? | E2.8: per-session model override, takes priority over the guru's `model` |
+| `modelOverride` | string? | The floppy's model: pinned from the tape's `model` (or `POST /api/sessions {model}`) at creation, then whatever `PUT /api/sessions/:id/model` set (a running Drive switches live). A tape edit doesn't change it. Older floppies without it are pinned at their first run start from their transcript's last `model_change` (or what a laptop-fallback run wanted), else the tape's model. Never carries a `:thinking` suffix |
 | `parentId` | string? | set for a session created by `outfitter_delegate` (E5.2, not yet implemented) |
 | `status` | `"open"` \| `"closed"` | |
 | `leafId` | string? | id of the current leaf entry (tip of the transcript tree) |

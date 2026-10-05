@@ -39,6 +39,7 @@ import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { floppyActions, transport, transportLabel } from "../lib/vocabulary.ts";
 import { FormatFloppyDialog } from "../components/FormatFloppyDialog.tsx";
+import { SwitchModelDialog } from "../components/SwitchModelDialog.tsx";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 import { teleportCommand } from "../lib/webmcp.ts";
@@ -116,6 +117,9 @@ export function SessionPage() {
   // #209: Archive, Restore and Format. Archived floppies are read-only (api 409s wake and send).
   const [shelving, setShelving] = useState<"archive" | "restore" | null>(null);
   const [formatOpen, setFormatOpen] = useState(false);
+  // The model switcher, held as the session it was opened on like the nerd-out panel.
+  const [modelOpenFor, setModelOpenFor] = useState<string | null>(null);
+  const modelOpen = modelOpenFor === sessionId;
   // The route reuses this component across sessions, so an archive that returns after the user
   // moved on must not write its session into the next one's page.
   const currentSessionId = useRef(sessionId);
@@ -472,6 +476,12 @@ export function SessionPage() {
   const cluster = githubCluster(session);
   const looseRepo = looseRepoClause(session);
   const modelProviderKind = header.model?.split("/")[0];
+  // The floppy's own model (pinned from the tape when it was made, then switched), when pi isn't on
+  // it yet. Before the first reply the header shows the floppy's model itself instead.
+  const pendingModel =
+    header.model && session?.modelOverride && session.modelOverride !== header.model ? session.modelOverride : undefined;
+  const shownModel = header.model ?? session?.modelOverride;
+  const driveGoing = runState === "queued" || runState === "provisioning" || runState === "running" || runState === "idle";
   const modelProviderDown = modelProviderKind
     ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
     : false;
@@ -650,7 +660,21 @@ export function SessionPage() {
             <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
             <IdeChip />
             <span className="session-model-info">
-              {header.model ? <span className="mono">{header.model}</span> : "model unknown yet"}
+              <button
+                type="button"
+                className="session-model-switch"
+                onClick={() => setModelOpenFor(sessionId)}
+                disabled={archived || !session}
+                title={archived ? "Restore the floppy to switch its model" : "Switch model"}
+              >
+                {shownModel ? <span className="mono">{shownModel}</span> : "model unknown yet"}
+              </button>
+              {/* Chosen but not in use yet: no Drive is going, or pi hasn't taken it. */}
+              {pendingModel ? (
+                <span className="session-model-pending" title="The floppy switches to this model">
+                  → <span className="mono">{pendingModel}</span>
+                </span>
+              ) : null}
               {header.thinking ? <span>thinking {header.thinking}</span> : null}
               {header.context ? (
                 <span className="context-usage">
@@ -782,6 +806,29 @@ export function SessionPage() {
         </div>
       </div>
 
+      {modelOpen && session && (
+        <SwitchModelDialog
+          sessionId={sessionId}
+          current={shownModel}
+          modelOverride={session.modelOverride}
+          guruModel={session.guruModel}
+          models={models}
+          live={driveGoing}
+          onCancel={() => setModelOpenFor(null)}
+          onError={(error) => {
+            setModelOpenFor(null);
+            // The api may have stored the choice before the Drive's send failed: show what it has.
+            if (currentSessionId.current === session.id) {
+              setApiError(error);
+              loadSession();
+            }
+          }}
+          onSwitched={(result) => {
+            setModelOpenFor(null);
+            setSession((s) => (s && s.id === sessionId ? { ...s, modelOverride: result.modelOverride ?? undefined } : s));
+          }}
+        />
+      )}
       {formatOpen && (
         <FormatFloppyDialog
           sessionId={sessionId}

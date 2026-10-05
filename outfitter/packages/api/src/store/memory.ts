@@ -117,6 +117,15 @@ class MemorySessions implements SessionsCollection {
     return clone(next);
   }
 
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { modelOverride: _previous, ...rest } = row;
+    const next: Session = model ? { ...rest, modelOverride: model, updatedAt: nowIso } : { ...rest, updatedAt: nowIso };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
   async setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null> {
     const row = this.rows.get(id);
     if (!row || (!archivedAt && row.formattingAt)) return null;

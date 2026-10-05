@@ -11,10 +11,14 @@ import { resolveRunModel } from "./laptop.ts";
 
 export const MODEL_ID_MAX = 200;
 
+/** A `:<level>` thinking suffix (pi's levels), which `--model` takes but `set_model` doesn't. */
+const THINKING_SUFFIX = /:(off|minimal|low|medium|high|xhigh)$/;
+
 /** `provider/id`, as a tape names its model: no whitespace, both halves non-empty. The id may hold
- * more slashes (`litellm/openrouter/x`) or a colon (a Bedrock id). */
+ * more slashes (`litellm/openrouter/x`) or a colon (a Bedrock id), but not a thinking suffix: the
+ * tape sets the thinking level, and a suffixed id couldn't switch a running pi. */
 export function isModelId(value: unknown): value is string {
-  return typeof value === "string" && value.length <= MODEL_ID_MAX && /^[^\s/]+\/\S+$/.test(value);
+  return typeof value === "string" && value.length <= MODEL_ID_MAX && /^[^\s/]+\/\S+$/.test(value) && !THINKING_SUFFIX.test(value);
 }
 
 /** pi's `set_model` takes the provider and the id apart; the provider is everything before the
@@ -44,21 +48,26 @@ export interface ModelSwitch {
  * back to the tape's own. `guru` is null when the floppy's tape has been deleted. */
 export async function switchSessionModel(ctx: RouteContext, session: Session, guru: Guru | null, model: string | null): Promise<ModelSwitch> {
   await ctx.store.sessions.setModelOverride(session.id, model, new Date().toISOString());
-  const wanted = model ?? guru?.model ?? "";
   const run = await ctx.store.runs.findActiveForSession(session.id);
+  if (!takesLiveSwitch(run)) return { modelOverride: model, model: model ?? guru?.model ?? "", applied: "next-run" };
+  const laptopOnline = await ctx.laptopProbe.isOnline();
+  // Two switches at once: whichever sends last must send what is stored now, or pi would stay on
+  // the older one while the floppy says the newer. So read the floppy again right before sending.
+  const current = (await ctx.store.sessions.findById(session.id))?.modelOverride ?? null;
+  const wanted = current ?? guru?.model ?? "";
   // A tape with no model leaves it to the owner's central settings, which only agentd applies.
-  if (!takesLiveSwitch(run) || !wanted) return { modelOverride: model, model: wanted, applied: "next-run" };
+  if (!wanted) return { modelOverride: current, model: wanted, applied: "next-run" };
   const resolved = resolveRunModel({
     wanted,
     guruFallbackModel: guru?.fallbackModel,
     localModels: ctx.config.localModels,
     defaultCloudModel: ctx.config.defaultCloudModel,
-    laptopOnline: await ctx.laptopProbe.isOnline(),
+    laptopOnline,
   });
-  await ctx.store.runs.update(run.id, { modelFallback: resolved.fallback, updatedAt: new Date().toISOString() });
   await ctx.agentLink.send(run.id, { t: "rpc", command: setModelCommand(resolved.model) });
+  await ctx.store.runs.update(run.id, { modelFallback: resolved.fallback, updatedAt: new Date().toISOString() });
   return {
-    modelOverride: model,
+    modelOverride: current,
     model: resolved.model,
     applied: "live",
     ...(resolved.fallback ? { modelFallback: resolved.fallback } : {}),

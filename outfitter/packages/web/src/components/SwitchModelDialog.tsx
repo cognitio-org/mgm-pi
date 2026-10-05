@@ -21,8 +21,9 @@ interface Props {
   onError: (error: ApiErrorState) => void;
 }
 
-/** Same shape the api accepts (session-model.ts's isModelId). */
+/** Same shape the api accepts (session-model.ts's isModelId): no thinking suffix, the tape sets that. */
 const MODEL_ID = /^[^\s/]+\/\S+$/;
+const THINKING_SUFFIX = /:(off|minimal|low|medium|high|xhigh)$/;
 
 /** Switch the floppy's model (PUT /api/sessions/:id/model). The choice stays with the floppy, and a
  * running Drive moves to it before its next reply; "Use tape's model" drops the floppy's choice. */
@@ -30,7 +31,7 @@ export function SwitchModelDialog({ sessionId, current, modelOverride, guruModel
   const [value, setValue] = useState(modelOverride ?? current ?? guruModel ?? "");
   const [busy, setBusy] = useState<"switch" | "reset" | null>(null);
   const trimmed = value.trim();
-  const valid = MODEL_ID.test(trimmed) && trimmed.length <= 200;
+  const valid = MODEL_ID.test(trimmed) && !THINKING_SUFFIX.test(trimmed) && trimmed.length <= 200;
 
   async function save(model: string | null) {
     setBusy(model === null ? "reset" : "switch");

@@ -821,7 +821,11 @@ export function SessionPage() {
           onCancel={() => setModelOpenFor(null)}
           onError={(error) => {
             setModelOpenFor(null);
-            setApiError(error);
+            // The api may have stored the choice before the Drive's send failed: show what it has.
+            if (currentSessionId.current === session.id) {
+              setApiError(error);
+              loadSession();
+            }
           }}
           onSwitched={(result) => {
             setModelOpenFor(null);

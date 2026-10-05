@@ -21,7 +21,7 @@ function putModel(app: App, sessionId: string, model: unknown) {
 describe("session model helpers", () => {
   test("isModelId takes provider/id and nothing looser", () => {
     for (const ok of ["litellm/gpt-5-mini", "litellm/openrouter/qwen/qwen3-coder", "bedrock/anthropic.claude-v2:1"]) assert.equal(isModelId(ok), true, ok);
-    for (const bad of ["", "gpt-5", "/x", "litellm/", "litellm/a b", " litellm/x", 42, null, undefined, `p/${"x".repeat(200)}`]) {
+    for (const bad of ["", "gpt-5", "/x", "litellm/gpt-5:high", "litellm/x:off", "litellm/", "litellm/a b", " litellm/x", 42, null, undefined, `p/${"x".repeat(200)}`]) {
       assert.equal(isModelId(bad), false, String(bad));
     }
   });
@@ -124,6 +124,30 @@ describe("PUT /api/sessions/:id/model", () => {
     const run = await app.store.runs.findById(runId);
     assert.deepEqual(run?.modelFallback, { wanted: "litellm/local-qwen-mlx", used: "litellm/gpt-5-mini" });
     assert.deepEqual(run?.pending, [{ t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "gpt-5-mini" } }]);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("two switches at once leave pi on what the floppy stores", async () => {
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+    // The first PUT's laptop probe is slow; the second lands while it waits.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const probe = app.laptopProbe.isOnline.bind(app.laptopProbe);
+    let calls = 0;
+    app.laptopProbe.isOnline = async () => {
+      if (calls++ === 0) await gate;
+      return probe();
+    };
+    const first = putModel(app, session.id, "litellm/model-a");
+    while (calls === 0) await new Promise((r) => setTimeout(r, 5));
+    const second = await putModel(app, session.id, "litellm/model-b");
+    release();
+    assert.equal((await first).json().modelOverride, "litellm/model-b", "the late one reports what is stored");
+    assert.equal(second.json().modelOverride, "litellm/model-b");
+    const pending = (await app.store.runs.findById(runId))?.pending ?? [];
+    assert.deepEqual(pending.at(-1), { t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "model-b" } });
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

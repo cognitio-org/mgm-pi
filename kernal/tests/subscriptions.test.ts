@@ -270,6 +270,7 @@ describe("Claude runner", () => {
     assert.deepEqual(req.args, claudeArgs("sandboxed", "read the file", "/tmp/mcp.json"));
     assert.equal(req.args.at(-2), "-p");
     assert.equal(req.args.at(-1), "read the file", "a memory brief is not prepended when sandboxed");
+    assert.equal(req.args.includes("--no-session-persistence") && req.args.indexOf("--no-session-persistence") < req.args.indexOf("-p"), true);
     assert.equal(req.args.includes("--resume"), false);
     assert.equal(req.args.includes("--dangerously-skip-permissions"), false);
     assert.equal(req.args.includes("--permission-mode") && req.args.includes("plan"), true);

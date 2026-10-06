@@ -98,7 +98,7 @@ export function claudeArgs(mode: "sandboxed" | "full", prompt: string, mcpPath: 
   if (mode === "sandboxed") args.push("--permission-mode", "plan", "--setting-sources", "user", "--disallowedTools", "Bash");
   else args.push("--setting-sources", "user,project");
   // `-p` is last so a flag isn't read as the prompt. No `--resume`, no skip-permissions.
-  args.push("-p", prompt);
+  args.push("--no-session-persistence", "-p", prompt);
   return args;
 }
 

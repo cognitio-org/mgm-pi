@@ -61,7 +61,7 @@ describe("backends", () => {
     const [lm, ll] = backends({}, meta);
     assert.equal(lm.model("qwen/qwen3.6-35b-a3b").thinkingLevelMap?.off, "none");
     assert.equal(ll.model("local-qwen-mlx").thinkingLevelMap?.off, "none");
-    assert.equal(ll.model("local/mgm-mbp/qwen/qwen3.6-35b-a3b").thinkingLevelMap?.off, "none");
+    assert.equal(ll.model("local/mgm-mbp/qwen/qwen3.6-35b-a3b").thinkingLevelMap?.off, undefined, "no server kind yet, so none is not sent");
     assert.equal(ll.model("local/mgm-mbp/qwen/qwen3.6-35b-a3b").cost.output, 0);
     assert.equal(ll.model("claude-sonnet-5").thinkingLevelMap?.off, undefined);
     assert.deepEqual(lm.model("x").thinkingLevelMap, QWEN_THINKING_MAP);

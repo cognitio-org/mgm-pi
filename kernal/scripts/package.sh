@@ -89,7 +89,7 @@ MCP_ADAPTER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter"
 if ! { grep -q 'skipStaleClient(): void' "$MCP_ADAPTER/mcp-oauth-provider.ts" \
     && grep -q 'authProvider.skipStaleClient()' "$MCP_ADAPTER/mcp-auth-flow.ts" \
     && grep -q 'forceReauthorization: true,' "$MCP_ADAPTER/commands.ts"; }; then
-  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --fuzz=0 < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --forward --fuzz=0 < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
 fi
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;

@@ -44,7 +44,11 @@ test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
 let patched: { dir: string; adapter: string } | undefined;
 
 before(() => {
-  if (!canRun) return;
+  if (!canRun) {
+    // CI installs the lockfile, so a missing adapter or jiti there is a broken install.
+    if (process.env.CI) throw new Error(`pi-mcp-adapter or jiti is missing from ${modules}`);
+    return;
+  }
   // A killed run skips its after hook. Clear its copies, but not a concurrent run's.
   for (const name of readdirSync(modules)) {
     if (!name.startsWith(".mcp-reauth-")) continue;
@@ -55,16 +59,19 @@ before(() => {
   const dir = mkdtempSync(join(modules, ".mcp-reauth-"));
   const adapter = join(dir, "pi-mcp-adapter");
   // Source only: the docs, examples, bundled skills and dist build are not imported.
-  const skip = new Set(["dist", "examples", "skills", "node_modules"]);
+  // Top level only, so nested dependencies and same-named source folders are kept.
+  const skip = new Set(["dist", "examples", "skills"]);
   cpSync(adapterPath, adapter, {
     recursive: true,
-    filter: (src) => src === adapterPath || !(skip.has(basename(src)) || /\.(md|png)$/.test(src)),
+    filter: (src) => dirname(src) !== adapterPath || !(skip.has(basename(src)) || /\.(md|png)$/.test(src)),
   });
   const patch = readFileSync(patchPath);
-  const run = (args: string[]) => execFileSync("patch", ["-d", dir, "-p1", "--batch", "--fuzz=0", ...args], { input: patch, encoding: "utf8", stdio: "pipe" });
+  const run = (args: string[]) => execFileSync("patch", ["-d", dir, "-p1", "--batch", "--forward", "--fuzz=0", ...args], { input: patch, encoding: "utf8", stdio: "pipe" });
   try {
     // A local checkout may already be patched. CI's npm ci copy is the published package.
-    if (readFileSync(join(adapter, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) run(["-R"]);
+    if (readFileSync(join(adapter, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) {
+      execFileSync("patch", ["-d", dir, "-p1", "--batch", "--fuzz=0", "-R"], { input: patch, encoding: "utf8", stdio: "pipe" });
+    }
     run([]);
   } catch (error) {
     rmSync(dir, { recursive: true, force: true });
@@ -89,7 +96,7 @@ test("the patch forces re-auth only for explicit /mcp-auth", { skip: !canRun }, 
   assert.equal((flow.match(/forceReauthorization: options\.forceReauthorization === true/g) ?? []).length, 1);
   assert.equal((flow.match(/authProvider\.skipStaleClient\(\)/g) ?? []).length, 1);
   // startAuth's cleanup leaves the saved entry alone on a forced flow.
-  assert.match(flow, /!config\.clientId && options\.forceReauthorization !== true\)/);
+  assert.match(flow, /if \(options\.forceReauthorization !== true\) clearClientInfo\(/);
   const reconnect = commands.slice(
     commands.indexOf("export async function reconnectServer"),
     commands.indexOf("export async function authenticateServer"),
@@ -97,6 +104,15 @@ test("the patch forces re-auth only for explicit /mcp-auth", { skip: !canRun }, 
   assert.doesNotMatch(reconnect, /forceReauthorization/);
   assert.equal((commands.match(/forceReauthorization: true/g) ?? []).length, 1);
 });
+
+/** The parent's env minus anything that points the adapter's credential store at a real home. */
+function childEnv(agentDir: string): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of Object.keys(env)) {
+    if (name === "PI_PACKAGE_DIR" || name === "MCP_OAUTH_DIR" || name.endsWith("_CODING_AGENT_DIR")) delete env[name];
+  }
+  return { ...env, PI_CODING_AGENT_DIR: agentDir, PI_MCP_ADAPTER_OAUTH_FILE_KEY: randomBytes(32).toString("base64") };
+}
 
 test("a forced sign-in skips a client registered for an old callback port and persists nothing until it succeeds", { skip: !canRun }, (t) => {
   if (!patched) return t.skip(LOCAL_EDITS);
@@ -147,7 +163,7 @@ test("a forced sign-in skips a client registered for an old callback port and pe
   `;
   try {
     const out = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_MCP_ADAPTER_OAUTH_FILE_KEY: randomBytes(32).toString("base64") },
+      env: childEnv(agentDir),
       encoding: "utf8",
     }).trim().split("\n").pop()!);
     // Reconnect still refreshes with the saved client.

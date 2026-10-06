@@ -15,17 +15,18 @@
  }
  
  type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
-@@ -553,7 +561,8 @@
-   try {
-     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
-     authority()
--    if (storedAuth?.clientInfo && !config.clientId) {
-+    // A forced flow leaves the saved entry alone: the provider skips what it cannot use.
-+    if (storedAuth?.clientInfo && !config.clientId && options.forceReauthorization !== true) {
-       if (!storedAuth.tokens) {
-         clearClientInfo(serverName, authStorageOptions)
-         clearCodeVerifier(serverName, authStorageOptions)
-@@ -580,7 +589,13 @@
+@@ -565,7 +573,9 @@
+         if (!redirectUriMatches && !storedAuth.tokens.refreshToken) {
+           // A stale redirect URI only blocks the interactive leg; refresh does
+           // not send redirect_uri, so keep refresh-capable credentials intact.
+-          clearClientInfo(serverName, authStorageOptions)
++          // A forced flow keeps the saved entry: the provider skips the stale
++          // client, and an abandoned sign-in leaves the saved session as it was.
++          if (options.forceReauthorization !== true) clearClientInfo(serverName, authStorageOptions)
+           clearCodeVerifier(serverName, authStorageOptions)
+           clearOAuthState(serverName, authStorageOptions)
+         }
+@@ -580,7 +590,13 @@
      const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
      authority()
      throwIfAborted(signal)

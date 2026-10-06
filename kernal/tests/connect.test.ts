@@ -64,8 +64,11 @@ describe("backends", () => {
     assert.equal(ll.model("claude-sonnet-5").thinkingLevelMap?.off, undefined);
     assert.deepEqual(lm.model("x").thinkingLevelMap, QWEN_THINKING_MAP);
     assert.equal(isLocalRoute("local/mgm-host/qwen"), true);
-    assert.equal(ll.model("local/mgm-host/qwen").thinkingLevelMap, QWEN_THINKING_MAP);
-    assert.equal(ll.model("local/mgm-host/qwen").thinkingLevelMap?.off, "none");
+    assert.equal(ll.model("local/mgm-host/qwen").thinkingLevelMap?.off, undefined, "unknown server kind does not send reasoning_effort none");
+    const studio = backends({}, meta, new Map(), new Map([["local/mgm-host/qwen", { online: true, kind: "lmstudio" }]])).find((b) => b.id === "litellm")!;
+    assert.equal(studio.model("local/mgm-host/qwen").thinkingLevelMap?.off, "none");
+    const vllm = backends({}, meta, new Map(), new Map([["local/mgm-host/qwen", { online: true, kind: "vllm" }]])).find((b) => b.id === "litellm")!;
+    assert.equal(vllm.model("local/mgm-host/qwen").thinkingLevelMap?.off, undefined);
     assert.equal(ll.model("local/mgm-host/qwen").cost.output, 0);
   });
 
@@ -132,19 +135,24 @@ describe("backends", () => {
   test("shared host models merge without reordering the router's list", () => {
     const body = {
       hosts: [
-        { status: "offline", models: [
-          { shared: true, routerModel: "local/a-mbp/qwen", contextLength: 8192, vision: false },
+        { status: "offline", tunnel: { managed: true }, models: [
+          { shared: true, routerModel: "local/a-mbp/qwen", contextLength: 8192, vision: false, kind: "ollama" },
           { shared: false, routerModel: "local/a-mbp/hidden" },
           { shared: true, routerModel: "litellm/local/b-air/gemma", vision: true },
+          { shared: true, routerModel: "local/a-mbp/embed", type: "embeddings" },
         ] },
-        { status: "online", models: [{ shared: true, routerModel: "local/a-mbp/qwen", vision: true }] },
+        { status: "online", tunnel: { managed: true }, models: [{ shared: true, routerModel: "local/a-mbp/qwen", vision: true }] },
+        { status: "online", tunnel: { managed: false }, models: [{ shared: true, routerModel: "local/interim/x" }] },
       ],
     };
     const found = localModelsFromHosts(body);
     assert.equal(found.get("local/a-mbp/qwen")?.online, false, "first host wins");
     assert.equal(found.get("local/a-mbp/qwen")?.contextWindow, 8192);
     assert.equal(found.get("local/a-mbp/qwen")?.vision, false);
+    assert.equal(found.get("local/a-mbp/qwen")?.kind, "ollama");
     assert.equal(found.has("local/a-mbp/hidden"), false);
+    assert.equal(found.has("local/a-mbp/embed"), false);
+    assert.equal(found.has("local/interim/x"), false, "an interim tunnel has no router deployment");
     assert.equal(found.get("local/b-air/gemma")?.online, false);
     assert.deepEqual(mergeLitellmModels(["b", "a"], []), ["b", "a"]);
     assert.deepEqual(mergeLitellmModels(["b", "a"], ["a", "c", "d"]), ["b", "a", "c", "d"]);

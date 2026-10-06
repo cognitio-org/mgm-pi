@@ -123,26 +123,42 @@ export function isLocalRoute(id: string): boolean {
   return id.startsWith("local-") || id.startsWith("local/");
 }
 
-/** Context and vision for a shared model the router isn't listing right now (offline hosts drop out of /model/info). */
-export type LocalModelFact = { contextWindow?: number; vision?: boolean; online: boolean };
+/** `reasoning_effort: "none"` only where the server accepts it. */
+function localThinkingMap(id: string, kind: string | undefined) {
+  if (!isLocalRoute(id)) return GENERIC_THINKING_MAP;
+  if (id === "local-qwen-mlx") return QWEN_THINKING_MAP;
+  if (id.startsWith("local/") && (kind === "lmstudio" || kind === "ollama")) return QWEN_THINKING_MAP;
+  return GENERIC_THINKING_MAP;
+}
 
-/** Shared models from GET /api/local-hosts. First id wins. `litellm/` is stripped; unshared models are skipped. */
+/** Context and vision for a shared model the router isn't listing right now (offline hosts drop out of /model/info). */
+export type LocalModelFact = { contextWindow?: number; vision?: boolean; online: boolean; kind?: string };
+
+/** Chat types the router will serve. An embedding is not a chat model. */
+const CHAT_TYPES = new Set(["llm", "vlm"]);
+
+/** Shared models from GET /api/local-hosts. First id wins. `litellm/` is stripped; unshared models are skipped.
+ * Interim tunnels are up on the laptop but have no router deployment, so they stay off this list. */
 export function localModelsFromHosts(body: unknown): Map<string, LocalModelFact> {
   const hosts = (body as { hosts?: unknown } | null)?.hosts;
   const out = new Map<string, LocalModelFact>();
   if (!Array.isArray(hosts)) return out;
   for (const h of hosts) {
-    const online = (h as { status?: string })?.status === "online";
-    const models = (h as { models?: unknown })?.models;
+    const host = h as { status?: string; tunnel?: { managed?: boolean }; models?: unknown };
+    if (host?.tunnel?.managed !== true) continue;
+    const online = host.status === "online";
+    const models = host.models;
     if (!Array.isArray(models)) continue;
     for (const m of models) {
-      const row = m as { shared?: boolean; routerModel?: unknown; contextLength?: unknown; vision?: unknown };
+      const row = m as { shared?: boolean; routerModel?: unknown; contextLength?: unknown; vision?: unknown; type?: unknown; kind?: unknown };
       if (row?.shared !== true || typeof row.routerModel !== "string" || !row.routerModel) continue;
+      if (typeof row.type === "string" && row.type !== "" && !CHAT_TYPES.has(row.type)) continue;
       const id = row.routerModel.startsWith("litellm/") ? row.routerModel.slice("litellm/".length) : row.routerModel;
       if (out.has(id)) continue;
       const fact: LocalModelFact = { online };
       if (typeof row.contextLength === "number" && Number.isFinite(row.contextLength) && row.contextLength > 0) fact.contextWindow = row.contextLength;
       if (typeof row.vision === "boolean") fact.vision = row.vision;
+      if (typeof row.kind === "string" && row.kind) fact.kind = row.kind;
       out.set(id, fact);
     }
   }
@@ -243,7 +259,7 @@ export function backends(
   env: Record<string, string>,
   litellmMeta: Map<string, ModelMeta>,
   lmstudioMeta: Map<string, LmStudioMeta> = new Map(),
-  localFacts: Map<string, { contextWindow?: number; vision?: boolean }> = new Map(),
+  localFacts: Map<string, LocalModelFact> = new Map(),
 ): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
   const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;
@@ -290,7 +306,9 @@ export function backends(
           contextWindow: meta?.contextWindow ?? facts?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
           maxTokens: Math.min(meta?.maxTokens ?? (local ? 8192 : 32000), 64000),
           reasoning: meta?.reasoning ?? true,
-          thinkingLevelMap: local ? QWEN_THINKING_MAP : GENERIC_THINKING_MAP,
+          // `none` is what LM Studio and Ollama read. vLLM rejects it, so only those kinds (and the
+          // local-qwen-mlx alias) send it. Every other local server keeps the generic map.
+          thinkingLevelMap: localThinkingMap(id, facts?.kind),
           compat: PROXY_COMPAT,
         };
       },

@@ -38,9 +38,9 @@ export function LocalModelsPage() {
         <p className="empty-state">
           <Working label="Loading modems" size="lg" srOnly={false} />
         </p>
-      ) : hosts.length === 0 ? (
+      ) : hosts.length === 0 && !error ? (
         <p className="empty-state">No one is sharing local models yet.</p>
-      ) : (
+      ) : hosts.length > 0 ? (
         groups.map((group) => (
           <section key={group.email} className="local-host-owner" aria-label={group.email}>
             <h3>
@@ -52,7 +52,7 @@ export function LocalModelsPage() {
             ))}
           </section>
         ))
-      )}
+      ) : null}
     </div>
   );
 }

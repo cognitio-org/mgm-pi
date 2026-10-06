@@ -151,6 +151,13 @@ describe("LocalModelsPage", () => {
     await render(<LocalModelsPage />);
     expect(text()).toContain("No one is sharing local models yet.");
   });
+
+  it("a failed load is an error, not an empty fleet", async () => {
+    stubFetch((url) => (url === "/api/local-hosts" ? json({ error: "nope" }, 500) : undefined));
+    await render(<LocalModelsPage />);
+    expect(text()).not.toContain("No one is sharing local models yet.");
+    expect(container!.querySelector(".syntax-error")).not.toBeNull();
+  });
 });
 
 describe("Desk modem LED", () => {

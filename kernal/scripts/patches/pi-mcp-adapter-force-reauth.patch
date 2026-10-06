@@ -1,32 +1,59 @@
 --- a/pi-mcp-adapter/mcp-auth-flow.ts
 +++ b/pi-mcp-adapter/mcp-auth-flow.ts
-@@ -68,6 +68,12 @@
+@@ -68,6 +68,13 @@
    runtime?: McpOAuthRuntime
    skipIssuerMetadataValidation?: boolean
    definition?: Pick<ServerEntry, "headers" | "oauth">
 +  /**
-+   * Skip a stored refresh token and open the authorization server again.
++   * Ignore the saved session and open the authorization server again.
 +   * Explicit /mcp-auth sets this. Reconnect must not: a gateway session that
-+   * still refreshes would otherwise never return a browser URL.
++   * still refreshes would otherwise never return a browser URL. The SDK has
++   * no such option, so the provider hides the saved session for this flow.
 +   */
 +  forceReauthorization?: boolean
  }
  
  type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
-@@ -580,7 +586,12 @@
+@@ -580,6 +587,10 @@
      const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
      authority()
      throwIfAborted(signal)
--    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
-+    const result = await abortable(runSdkAuth(authProvider, {
-+      serverUrl,
-+      ...discovery,
-+      fetchFn,
-+      forceReauthorization: options.forceReauthorization === true,
-+    }), signal)
++    if (options.forceReauthorization === true) {
++      await authProvider.skipStoredSession()
++      authority()
++    }
+     const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
      authority()
      throwIfAborted(signal)
-     if (result === "AUTHORIZED") {
+--- a/pi-mcp-adapter/mcp-oauth-provider.ts
++++ b/pi-mcp-adapter/mcp-oauth-provider.ts
+@@ -512,6 +512,26 @@
+   }
+ 
+   /**
++   * Explicit /mcp-auth: ignore the saved session for this flow only. The SDK
++   * would otherwise refresh it and return no browser URL, or send a dynamic
++   * client registered for an earlier callback port, which the authorization
++   * server rejects ("redirect_uri is not registered for this client"). Hiding
++   * the client makes the SDK register the current callback URI. Nothing is
++   * deleted, so an abandoned sign-in leaves the saved session usable.
++   */
++  async skipStoredSession(): Promise<void> {
++    this.throwIfInactive()
++    const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
++    this.throwIfInactive()
++    if (stored?.tokens) this.invalidatedAccessToken = stored.tokens.accessToken
++    const clientInfo = stored?.clientInfo
++    if (clientInfo && !this.config.clientId && this.redirectUrl !== undefined
++      && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))) {
++      this.invalidatedClientId = clientInfo.clientId
++    }
++  }
++
++  /**
+    * Save client information from dynamic registration.
+    */
+   async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
 --- a/pi-mcp-adapter/commands.ts
 +++ b/pi-mcp-adapter/commands.ts
 @@ -404,6 +404,7 @@

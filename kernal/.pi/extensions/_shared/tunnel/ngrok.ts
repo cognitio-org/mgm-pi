@@ -19,7 +19,10 @@
  *      installNgrok(): the pinned NGROK_PINNED release for this platform, its sha256 checked against
  *      the value recorded here before anything is unpacked (as package.sh checks pi's tarball);
  *   3. `ngrok` on PATH (Homebrew), when it is at least MIN_NGROK_VERSION.
- * Kernal's copy goes before PATH because it is the version the policy here was written against.
+ * Kernal's copy goes before PATH because it is the version the policy here was written against,
+ * and because the Local Host LaunchAgent does not inherit a login shell's PATH, so Homebrew is
+ * invisible there. `kernal local enable` installs the copy when it is missing even if this
+ * shell can already run `ngrok`. The service itself never downloads.
  * None of them, or a broken one, is a status of "unavailable" with a reason, never an exception
  * from status().
  *
@@ -340,7 +343,7 @@ export function ngrokProvider(deps: NgrokProviderDeps = {}): TunnelProvider {
         if (credentials) {
           try { checkCredentials(credentials); } catch (e: any) { return { ...base, runtime, reason: e.message }; }
         }
-        return { provider: "ngrok", available: true, runtime };
+        return { provider: "ngrok", available: true, runtime, source: r.found.source };
       } catch (e: any) {
         return { ...base, reason: `could not check for ngrok: ${e?.message ?? e}` };
       }

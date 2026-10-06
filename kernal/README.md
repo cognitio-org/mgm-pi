@@ -689,7 +689,7 @@ your Outfitter account through a tunnel, so cloud runs can use those models as
 `local/<you>-<machine>/<model>`. It needs `kernal login` and the `localHost.shareModels` setting
 turned on; `enable` prints that setting and where to change it. `kernal local status` shows the
 tunnel, models and last heartbeat; `kernal local disable` removes the service. `tunnel.sh` and
-`keepalive.mjs` are gone. `litellm/local-qwen-mlx` remains an alias for the old single model.
+`keepalive.mjs` are gone. The old `litellm/local-qwen-mlx` alias has been removed from the router.
 Details: [docs/local-host.md](docs/local-host.md).
 
 ## Reporting problems (`/report`)
@@ -812,8 +812,8 @@ teleported.
 
 Sessions record which provider/model they were using. `pickModelForHost` looks at the last
 `model_change` on the imported session: if that provider is available on this host (has configured
-auth), it's kept; otherwise the session falls back to `litellm/local-qwen-mlx` (the legacy alias;
-shared models are `local/<you>-<machine>/<model>`). `/teleport pull` notifies which model it picked.
+auth), it's kept; otherwise the session falls back to `litellm/gpt-5.4-nano`. Shared models are
+`local/<you>-<machine>/<model>`. `/teleport pull` notifies which model it picked.
 
 ### What doesn't travel
 
@@ -976,8 +976,8 @@ directory with any model (even a cloud one). Startup performs its two discovery 
 Studio `/v1/models`, router `/model/info`), both succeed, then pi stalls with no further network
 activity until LM Studio's generation finishes. It reproduces with all packages removed, so it is
 in pi itself or in this repo's extensions, not in an add-on. Not resolved yet. In practice it bites
-when two clients share the local model (e.g. an interactive session on `local/<you>-<machine>/<model>`,
-or the `litellm/local-qwen-mlx` alias, plus a second `kernal` launch). Thinking off by default keeps generations short, so
+when two clients share the local model (e.g. an interactive session on `local/<you>-<machine>/<model>`
+plus a second `kernal` launch). Thinking off by default keeps generations short, so
 the wait is seconds rather than minutes. If a launch sits silent, check `lms ps --json` for
 `generating`/`processingPrompt` and wait or `lms unload --all`.
 

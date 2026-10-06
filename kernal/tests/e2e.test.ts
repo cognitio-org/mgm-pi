@@ -28,9 +28,6 @@ describe("e2e (KERNAL_E2E=1)", { skip: !enabled && "set KERNAL_E2E=1 to run" }, 
   test("litellm cloud route answers", () => {
     assert.equal(run("litellm/claude-haiku-4-5", "Reply with exactly: ok").split("\n").at(-1), "ok");
   });
-  test("litellm local route with thinking on still answers", () => {
-    assert.match(run("litellm/local-qwen-mlx:low", "What is 17*23? Answer with the number only."), /391/);
-  });
   test("openrouter answers", { skip: !hasOpenRouterKey && "no OPENROUTER_API_KEY" }, () => {
     assert.equal(run("openrouter/anthropic/claude-sonnet-5", "Reply with exactly: ok").split("\n").at(-1), "ok");
   });

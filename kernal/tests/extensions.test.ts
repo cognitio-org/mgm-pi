@@ -155,7 +155,6 @@ describe("connect extension", async () => {
     assert.equal(pi.providers.find((p) => p.name === "litellm")!.config.apiKey, "sk-test");
     assert.ok(pi.unregistered.includes("openrouter"), "stale registration removed if any");
     assert.equal(modelsOf("lmstudio")[0].thinkingLevelMap.off, "none");
-    assert.equal(modelsOf("litellm").find((m: any) => m.id === "local-qwen-mlx").thinkingLevelMap.off, "none");
     assert.equal(modelsOf("litellm").find((m: any) => m.id === "claude-sonnet-5").thinkingLevelMap.off, undefined);
   });
 
@@ -465,8 +464,8 @@ describe("connect extension", async () => {
       await mod.default(p2 as any);
       const models = p2.providers.find((p) => p.name === "litellm")!.config.models;
       const ids = models.map((m: any) => m.id);
-      assert.ok(ids.includes("local-qwen-mlx"), "the router's own list stays");
-      assert.ok(ids.indexOf("local-qwen-mlx") < ids.indexOf("local/a-mbp/qwen"), "extras are appended");
+      assert.ok(ids.includes("gpt-5.4-nano"), "the router's own list stays");
+      assert.ok(ids.indexOf("gpt-5.4-nano") < ids.indexOf("local/a-mbp/qwen"), "extras are appended");
       assert.ok(ids.includes("local/a-mbp/qwen"));
       assert.ok(ids.includes("local/b-air/gemma"));
       assert.ok(!ids.includes("local/a-mbp/hidden"));
@@ -487,7 +486,7 @@ describe("connect extension", async () => {
       await p2.commands.get("connect")!.handler("litellm", ctx);
       assert.ok(options.includes("local/a-mbp/qwen  (offline)"));
       assert.ok(options.includes("local/b-air/gemma  (online)"));
-      assert.ok(options.includes("local-qwen-mlx"));
+      assert.ok(options.includes("gpt-5.4-nano"));
       assert.equal(p2.setModelCalls.at(-1).id, "local/a-mbp/qwen");
       assert.match(ctx.notices.at(-1)!.msg, /Could not switch/);
     } finally {

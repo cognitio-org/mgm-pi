@@ -58,7 +58,7 @@ counts executions of the configured Job with no `completionTime` yet (still star
 stubs in `cloudrun.test.ts` didn't need to grow a method they never call.
 
 **Config** (`src/config.ts`): `NGROK_API_KEY`, `LITELLM_BASE_URL` (default
-`https://litellm.augment-code.support/v1`, same var name as mgm's `.env.example`),
+`https://router.kernal.one/v1`, same var name as kernal's `.env.example`),
 `LITELLM_ADMIN_KEY` (already deployed as a secret per `deploy/service.sh`, just not read until
 now), `PROVIDER_POLL_MS` (default 300000).
 

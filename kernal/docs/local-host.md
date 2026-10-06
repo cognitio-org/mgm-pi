@@ -45,8 +45,8 @@ reported.
   router entries go at once rather than after the 16-minute stale window.
 
 `tunnel.sh` and `keepalive.mjs` are gone. Do not start another tunnel on the same reserved domain
-(ngrok refuses the second one with `ERR_NGROK_334`). `litellm/local-qwen-mlx` remains an alias for
-the old single laptop model; new shares are `local/<you>-<machine>/<model>`.
+(ngrok refuses the second one with `ERR_NGROK_334`). The old `litellm/local-qwen-mlx` alias has
+been removed from the router. Shares are `local/<you>-<machine>/<model>`.
 
 ## Commands
 
@@ -71,7 +71,9 @@ Exit codes: 0 done, 1 failed, 2 usage.
 
 The service runs under Node 22.18 or later (from a source checkout, or `node` on PATH). A release
 bundle without Node runs it with the bundled `pi` binary as Bun. `enable` refuses when neither is
-available. `enable` also installs the pinned, checksum-checked ngrok agent if it is missing.
+available. `enable` installs Kernal's pinned, checksum-checked ngrok into `~/.kernal/bin` when
+that copy is missing, including when some other `ngrok` is already on the shell's PATH. The
+service looks there first and does not download. A LaunchAgent's PATH does not include Homebrew.
 
 ## Files
 

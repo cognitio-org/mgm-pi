@@ -43,8 +43,8 @@ window is prefill (~500 tok/s: a cold 100k prompt is ~3 min; LM Studio's prompt 
 follow-up turns incremental) and long-context quality, not memory. Set 65536 if you want faster
 cold starts; the extension re-derives all budgets from whatever is declared.
 
-**Thinking is off by default for the local routes** (`modelThinkingLevels` for `litellm/local-qwen-mlx`,
-and the same for `local/<user>-<host>/<model>`).
+**Thinking is off by default for the local routes** (`local/<user>-<host>/<model>`, and the retired
+`litellm/local-qwen-mlx` name if a session still has it).
 With thinking on, Qwen reasons for thousands of tokens per turn at ~30 tok/s; turn it on per session
 with `/thinking` when a task needs it.
 
@@ -197,8 +197,7 @@ It would replace the `litellm` provider in `connect`. Extras it brings: model me
 from `/model/info`, native Anthropic `/v1/messages` transport for Claude deployments (better
 thinking-block and cache handling), `/login litellm` SSO, session-id headers for log grouping, and
 its own MCP + Skills discovery. The hand-written provider already does live discovery, thinking
-mapping and works with every route including `local/<user>-<host>/<model>` and the `local-qwen-mlx`
-alias. Switch if you want the native
+mapping and works with every route including `local/<user>-<host>/<model>`. Switch if you want the native
 Anthropic path or cost metadata; if so disable its MCP (`litellm.mcp.enabled: false`) to avoid
 double registration with pi-mcp-adapter.
 

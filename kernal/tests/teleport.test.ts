@@ -56,7 +56,7 @@ describe("pickModelForHost", () => {
     ];
     assert.deepEqual(pickModelForHost(entries, ["litellm", "openrouter"]), { provider: "litellm", modelId: "claude-sonnet-5" });
   });
-  test("falls back to local-qwen-mlx when the last model's provider is unavailable", () => {
+  test("falls back to the cloud default when the last model's provider is unavailable", () => {
     const entries = [{ type: "model_change", provider: "lmstudio", modelId: "qwen/qwen3.6-35b-a3b" }];
     assert.deepEqual(pickModelForHost(entries, ["litellm"]), FALLBACK_MODEL);
   });

@@ -101,6 +101,12 @@ export interface ProviderStatus {
   installable?: boolean;
   /** What would run, e.g. `ngrok 3.39.11 (/Users/x/.kernal/bin/ngrok)`. */
   runtime?: string;
+  /**
+   * Where that runtime was found. `path` is this process's PATH. A LaunchAgent does not
+   * inherit a login shell's PATH, so a Homebrew ngrok (`source: "path"`) is not one the
+   * service can run. `managed` is Kernal's own copy. `env` is `KERNAL_NGROK_BIN`.
+   */
+  source?: "env" | "managed" | "path";
 }
 
 export interface TunnelProvider {

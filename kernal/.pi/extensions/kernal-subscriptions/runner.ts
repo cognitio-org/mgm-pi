@@ -2,15 +2,16 @@
  * Kernal's one-shot Claude worker (subscriptions.md §5). Not the pi-subagents adapter: one
  * `claude -p`, no `--resume`, no session id, and the Anthropic API keys never reach the child.
  * The account secret is set only as `CLAUDE_CODE_OAUTH_TOKEN` on that child. It is not sent to
- * pi's model client or the router.
+ * pi's model client or the router. Claude applies a settings-file `env` after spawn, so a file
+ * that would set an API key, `apiKeyHelper`, or a non-default `ANTHROPIC_BASE_URL` is a refusal.
  *
  * Grok, Codex, and agy_acp_server implement `SubscriptionRunner` later and register in
  * `SUBSCRIPTION_RUNNERS`. Full-on-a-Drive (shell off, file tools only) is also a later slice;
  * `full` here is the laptop: project settings and the CLI's own approval prompts.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getValue, subscriptionPrefer } from "../_shared/central-config.ts";
 import { loadSubscriptionSecret, type SecretLookup } from "./client.ts";
@@ -61,6 +62,13 @@ export interface WorkerDeps {
   loadAccountSecret?: () => Promise<SecretLookup>;
   /** Writes the generated MCP config and returns its path. Tests capture the JSON. */
   writeMcpConfig?: (json: string) => string;
+  /** Home for `~/.claude/settings.json`. Defaults to `os.homedir()`. */
+  home?: string;
+  /**
+   * Text of one settings file this mode will load. Undefined means absent.
+   * A throw is a refusal, as is JSON that does not parse.
+   */
+  readSettingsFile?: (kind: "user" | "project", filePath: string) => string | undefined;
 }
 
 /** What a later runner implements. `deps` is the Claude runner's seam; another vendor can ignore it. */
@@ -109,6 +117,98 @@ export function claudeChildEnv(parent: NodeJS.ProcessEnv, secret?: string): Node
   delete env.ANTHROPIC_AUTH_TOKEN;
   if (secret) env.CLAUDE_CODE_OAUTH_TOKEN = secret;
   return env;
+}
+
+const ANTHROPIC_API_HOST = "api.anthropic.com";
+
+export interface ClaudeSettingsSource {
+  kind: "user" | "project";
+  /** Already parsed. A missing file is omitted, not passed as undefined. */
+  settings: unknown;
+}
+
+function settingsRole(kind: "user" | "project"): string {
+  return kind === "user" ? "user settings" : "project settings";
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/** True when the host is Anthropic's API. A trailing slash is the same host. Anything else is not. */
+function isAnthropicApiBase(value: string): boolean {
+  try {
+    return new URL(value.trim()).hostname === ANTHROPIC_API_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refusal text when a settings file Claude will load would bill an API key or send
+ * `CLAUDE_CODE_OAUTH_TOKEN` to another host. Undefined when none of those fields are set.
+ * Does not read the disk and does not include the secret, the helper, or the URL.
+ */
+export function claudeSettingsRefusal(sources: readonly ClaudeSettingsSource[]): string | undefined {
+  for (const source of sources) {
+    const field = settingsLeakField(source.settings);
+    if (field) return `${settingsRole(source.kind)} set ${field}`;
+  }
+  return undefined;
+}
+
+function settingsLeakField(settings: unknown): string | undefined {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return undefined;
+  const record = settings as { env?: unknown; apiKeyHelper?: unknown };
+  const env = record.env && typeof record.env === "object" && !Array.isArray(record.env)
+    ? record.env as Record<string, unknown>
+    : undefined;
+  if (env && nonEmptyString(env.ANTHROPIC_API_KEY)) return "env.ANTHROPIC_API_KEY";
+  if (env && nonEmptyString(env.ANTHROPIC_AUTH_TOKEN)) return "env.ANTHROPIC_AUTH_TOKEN";
+  if (nonEmptyString(record.apiKeyHelper)) return "apiKeyHelper";
+  if (env && nonEmptyString(env.ANTHROPIC_BASE_URL) && !isAnthropicApiBase(env.ANTHROPIC_BASE_URL)) return "env.ANTHROPIC_BASE_URL";
+  return undefined;
+}
+
+/** Undefined when the file is absent. Any other read error is a refusal for the caller. */
+function defaultReadSettingsFile(_kind: "user" | "project", filePath: string): string | undefined {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw e;
+  }
+}
+
+/**
+ * Reads only the sources this mode passes to `--setting-sources`. Sandboxed and full both load
+ * user settings. Full also loads `<cwd>/.claude/settings.json`. Not `settings.local.json`.
+ */
+function settingsBlock(mode: "sandboxed" | "full", cwd: string | undefined, deps: WorkerDeps): string | undefined {
+  const home = deps.home ?? homedir();
+  const read = deps.readSettingsFile ?? defaultReadSettingsFile;
+  const files: { kind: "user" | "project"; filePath: string }[] = [
+    { kind: "user", filePath: join(home, ".claude", "settings.json") },
+  ];
+  if (mode === "full") files.push({ kind: "project", filePath: join(cwd ?? process.cwd(), ".claude", "settings.json") });
+  const loaded: ClaudeSettingsSource[] = [];
+  for (const file of files) {
+    let text: string | undefined;
+    try {
+      text = read(file.kind, file.filePath);
+    } catch {
+      return `${settingsRole(file.kind)} could not be read`;
+    }
+    if (text === undefined) continue;
+    let settings: unknown;
+    try {
+      settings = JSON.parse(text);
+    } catch {
+      return `${settingsRole(file.kind)} are not valid JSON`;
+    }
+    loaded.push({ kind: file.kind, settings });
+  }
+  return claudeSettingsRefusal(loaded);
 }
 
 function promptFor(mode: "sandboxed" | "full", prompt: string, memoryBrief?: string): string {
@@ -178,6 +278,10 @@ export async function runClaudeWorker(input: WorkerInput, deps: WorkerDeps = {})
   if (!secret.ok) return { kind: "error", vendor: "claude", text: publicText(secret.error) };
   const local = secret.value ? false : (deps.localLogin ? deps.localLogin() : localVendorLogin("claude", { env: deps.env }));
   if (!secret.value && !local) return { kind: "connect", vendor: "claude", text: CONNECT_CLAUDE };
+
+  // Before the MCP file and spawn. Clearing the child env does not stop Claude from applying these.
+  const blocked = settingsBlock(mode, input.cwd, deps);
+  if (blocked) return { kind: "error", vendor: "claude", text: blocked };
 
   const prompt = promptFor(mode, input.prompt, input.memoryBrief);
   const servers = mode === "sandboxed" ? {} : claudeMcpServers(input.mcpServers);

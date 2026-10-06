@@ -257,7 +257,7 @@ describe("Claude runner", () => {
       { prompt: "read the file", cwd: "/work", memoryBrief: "memory brief", mcpServers: MCP },
       {
         spawn: cap.spawn, env: parent, mode: () => "sandboxed", localLogin: () => false,
-        secret: { ok: true, value: ACCOUNT_SECRET },
+        secret: { ok: true, value: ACCOUNT_SECRET }, readSettingsFile: () => undefined,
         writeMcpConfig: (text) => { json = text; return "/tmp/mcp.json"; },
       },
     );
@@ -292,7 +292,7 @@ describe("Claude runner", () => {
       { prompt: "edit it", memoryBrief: "brief", mcpServers: MCP },
       {
         spawn: cap.spawn, env: parent, mode: () => "full",
-        secret: { ok: true, value: ACCOUNT_SECRET },
+        secret: { ok: true, value: ACCOUNT_SECRET }, readSettingsFile: () => undefined,
         writeMcpConfig: (text) => { json = text; return "/tmp/mcp.json"; },
       },
     );
@@ -311,7 +311,7 @@ describe("Claude runner", () => {
 
   test("no secret and no local login does not spawn; off does not spawn; a lookup failure does not spawn", async () => {
     const cap = captureSpawn();
-    const deps = { spawn: cap.spawn, env: parent, writeMcpConfig: () => "/tmp/mcp.json" };
+    const deps = { spawn: cap.spawn, env: parent, writeMcpConfig: () => "/tmp/mcp.json", readSettingsFile: () => undefined };
     const connect = await runClaudeWorker({ prompt: "x" }, { ...deps, mode: () => "full", localLogin: () => false, secret: { ok: true } });
     assert.equal(connect.kind, "connect");
     assert.match(connect.text, /connect Claude/);
@@ -330,7 +330,7 @@ describe("Claude runner", () => {
     const calls: ClaudeSpawn[] = [];
     const script = async (result: ClaudeSpawnResult) => {
       const out = await runClaudeWorker({ prompt: "x" }, {
-        env: parent, mode: () => "full", secret: { ok: true, value: ACCOUNT_SECRET }, writeMcpConfig: () => "/tmp/mcp.json",
+        env: parent, mode: () => "full", secret: { ok: true, value: ACCOUNT_SECRET }, writeMcpConfig: () => "/tmp/mcp.json", readSettingsFile: () => undefined,
         spawn: async (req) => { calls.push(req); return result; },
       });
       return out;

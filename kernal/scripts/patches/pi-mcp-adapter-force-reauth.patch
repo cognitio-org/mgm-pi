@@ -8,36 +8,34 @@
 +   * Ignore the saved session and open the authorization server again.
 +   * Explicit /mcp-auth sets this. Reconnect must not: a gateway session that
 +   * still refreshes would otherwise never return a browser URL. The SDK has
-+   * no such option, so the provider hides the saved session for this flow.
++   * no such option, so the provider ignores the saved session for this flow.
 +   */
 +  forceReauthorization?: boolean
  }
  
  type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
-@@ -580,6 +587,10 @@
+@@ -580,6 +587,7 @@
      const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
      authority()
      throwIfAborted(signal)
-+    if (options.forceReauthorization === true) {
-+      await authProvider.skipStoredSession()
-+      authority()
-+    }
++    if (options.forceReauthorization === true) authProvider.skipStoredSession()
      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
      authority()
      throwIfAborted(signal)
 --- a/pi-mcp-adapter/mcp-oauth-provider.ts
 +++ b/pi-mcp-adapter/mcp-oauth-provider.ts
-@@ -256,6 +256,9 @@
+@@ -256,6 +256,10 @@
    private authFetch: OAuthFetch
    private active = true
    private flowClientInfo: StoredClientInfo | undefined
-+  // Explicit /mcp-auth: a client registered for this flow, persisted with its tokens.
++  // Explicit /mcp-auth: the saved session is ignored until this flow saves tokens, and a
++  // client registered for the flow is persisted only with those tokens.
 +  private skippingStoredSession = false
 +  private deferredClientInfo: StoredClientInfo | undefined
    private flowCodeVerifier: string | undefined
    private flowDiscoveryState: OAuthDiscoveryState | undefined
    private flowIssuerMismatch = false
-@@ -305,6 +308,8 @@
+@@ -305,6 +309,8 @@
  
    deactivate(): void {
      this.active = false
@@ -46,7 +44,26 @@
      this.invalidatedAccessToken = undefined
      this.invalidatedClientId = undefined
      this.staleRedirectClientId = undefined
-@@ -479,14 +484,15 @@
+@@ -432,6 +438,9 @@
+     // another runtime writes the shared persistent entry for the same name.
+     const clientInfo = this.flowClientInfo ?? stored?.clientInfo
+     if (clientInfo?.clientId === this.invalidatedClientId) return undefined
++    if (this.skippingStoredSession && clientInfo !== this.flowClientInfo && clientInfo && this.isRedirectStale(clientInfo)) {
++      return undefined
++    }
+ 
+     const clientMetadataUrl = this.clientMetadataUrl
+     const supportsClientMetadataDocument = this.flowDiscoveryState
+@@ -439,7 +448,7 @@
+     if (clientMetadataUrl !== undefined && supportsClientMetadataDocument !== undefined) {
+       if (supportsClientMetadataDocument === true
+         && clientInfo?.clientId !== clientMetadataUrl
+-        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined)) {
++        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined || this.skippingStoredSession)) {
+         // With no DCR refresh pair to preserve, let the SDK select CIMD now.
+         return undefined
+       }
+@@ -479,14 +488,15 @@
          clientInfo.issuer = issuer
          this.flowClientInfo = clientInfo
          this.throwIfInactive()
@@ -65,7 +82,7 @@
        this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
        // Return all registration metadata and the local issuer extension.
        // This keeps the SDK OAuth view and the stored issuer binding consistent.
-@@ -511,6 +517,33 @@
+@@ -511,6 +521,26 @@
      return undefined
    }
  
@@ -75,31 +92,24 @@
 +  }
 +
 +  /**
-+   * Explicit /mcp-auth: ignore the saved session for this flow only. The SDK
-+   * would otherwise refresh it and return no browser URL, or send a dynamic
-+   * client registered for an earlier callback port, which the authorization
-+   * server rejects ("redirect_uri is not registered for this client"). Hiding
-+   * the client makes the SDK register the current callback URI. That client is
-+   * kept in memory and persisted with its tokens, so an abandoned sign-in
-+   * leaves the saved client and refresh token paired and usable.
++   * Explicit /mcp-auth: ignore the saved session until this flow saves tokens.
++   * The SDK would otherwise refresh it and return no browser URL, or send a
++   * dynamic client registered for an earlier callback port, which the
++   * authorization server rejects ("redirect_uri is not registered for this
++   * client"). One flag rather than token snapshots, so a concurrent refresh or
++   * an SDK credential reset cannot bring the saved session back mid-flow. A
++   * client registered here is persisted only with its tokens, so an abandoned
++   * sign-in leaves the saved client and refresh token paired and usable.
 +   */
-+  async skipStoredSession(): Promise<void> {
-+    this.throwIfInactive()
-+    // Read again: startAuth may have just cleared a client it could not use.
-+    const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
++  skipStoredSession(): void {
 +    this.throwIfInactive()
 +    this.skippingStoredSession = true
-+    if (stored?.tokens) this.invalidatedAccessToken = stored.tokens.accessToken
-+    const clientInfo = stored?.clientInfo
-+    if (clientInfo && !this.config.clientId && this.isRedirectStale(clientInfo)) {
-+      this.invalidatedClientId = clientInfo.clientId
-+    }
 +  }
 +
    /**
     * Save client information from dynamic registration.
     */
-@@ -544,6 +577,10 @@
+@@ -544,6 +574,10 @@
      this.flowClientInfo = clientInfo
      this.invalidatedClientId = undefined
      this.lastObservedClientId = clientInfo.clientId
@@ -110,7 +120,15 @@
      updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
    }
  
-@@ -594,6 +631,10 @@
+@@ -553,6 +587,7 @@
+    */
+   async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
+     this.throwIfInactive()
++    if (this.skippingStoredSession) return undefined
+     // Once this provider rejects a token, bypass its process-local cache until
+     // another process replaces that token in shared secure storage.
+     if (this.invalidatedAccessToken !== undefined) {
+@@ -594,6 +629,11 @@
        ...(issuer !== undefined ? { issuer } : {}),
      }
      this.throwIfInactive()
@@ -118,9 +136,26 @@
 +      updateClientInfo(this.serverName, this.deferredClientInfo, this.serverUrl, this.storageOptions)
 +      this.deferredClientInfo = undefined
 +    }
++    this.skippingStoredSession = false
      updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
      this.invalidatedAccessToken = undefined
      this.lastSavedAccessToken = storedTokens.accessToken
+@@ -711,6 +751,7 @@
+     switch (type) {
+       case "all":
+         this.flowClientInfo = undefined
++        this.deferredClientInfo = undefined
+         this.flowCodeVerifier = undefined
+         this.flowDiscoveryState = undefined
+         this.flowIssuerMismatch = false
+@@ -730,6 +771,7 @@
+         this.invalidatedClientId = this.lastObservedClientId
+         this.lastObservedClientId = undefined
+         this.flowClientInfo = undefined
++        this.deferredClientInfo = undefined
+         invalidateAuthEntryCache(this.serverName)
+         break
+       case "tokens":
 --- a/pi-mcp-adapter/commands.ts
 +++ b/pi-mcp-adapter/commands.ts
 @@ -404,6 +404,7 @@

@@ -85,8 +85,8 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 # /mcp-auth never opens the browser, and it reuses a client registered for an earlier callback
 # port. npm ci replaces these files; reapply until the pin moves.
 MCP_REAUTH_PROVIDER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter/mcp-oauth-provider.ts"
-if ! grep -q 'async skipStoredSession()' "$MCP_REAUTH_PROVIDER"; then
-  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+if ! grep -q 'skipStoredSession(): void' "$MCP_REAUTH_PROVIDER"; then
+  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --fuzz=0 < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
 fi
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;

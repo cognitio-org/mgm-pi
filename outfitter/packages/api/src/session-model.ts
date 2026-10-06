@@ -98,13 +98,22 @@ export async function switchSessionModel(ctx: RouteContext, session: Session, gu
   await ctx.store.sessions.setModelOverride(session.id, stored, new Date().toISOString());
   const run = await ctx.store.runs.findActiveForSession(session.id);
   if (!takesLiveSwitch(run)) return { modelOverride: stored, model: stored ?? "", applied: "next-run" };
-  const laptopOnline = await ctx.laptopProbe.isOnline();
   // Two switches at once: whichever sends last must send what is stored now, or pi would stay on
-  // the older one while the floppy says the newer. So read the floppy again right before sending.
-  const current = (await ctx.store.sessions.findById(session.id))?.modelOverride ?? null;
-  // Null: the tape names no model, which leaves it to the owner's central settings (agentd's).
-  const wanted = current ?? "";
-  if (!wanted) return { modelOverride: current, model: wanted, applied: "next-run" };
+  // the older one while the floppy says the newer. A probe can outlive the next write, so read
+  // again after every probe and follow the stored id. Three passes covers a write during the
+  // second probe; a later one is its own request.
+  let wanted = stored ?? "";
+  let laptopOnline = false;
+  let current: string | null = stored;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    laptopOnline = await ctx.laptopProbe.isOnlineFor(wanted);
+    current = (await ctx.store.sessions.findById(session.id))?.modelOverride ?? null;
+    const latest = current ?? "";
+    // Null: the tape names no model, which leaves it to the owner's central settings (agentd's).
+    if (!latest) return { modelOverride: current, model: "", applied: "next-run" };
+    if (latest === wanted) break;
+    wanted = latest;
+  }
   const resolved = resolveRunModel({
     wanted,
     guruFallbackModel: guru?.fallbackModel,

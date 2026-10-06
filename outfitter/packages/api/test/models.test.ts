@@ -58,6 +58,19 @@ describe("mergeLocalModels", () => {
     assert.equal(byId.get("litellm/local-qwen-mlx")?.contextWindow, 32768); // untouched otherwise
     assert.deepEqual(byId.get("litellm/other-local"), { id: "litellm/other-local", auto: false, local: true });
   });
+
+  test("a local/ router name is local even when it is not in LOCAL_MODELS; the alias still is", () => {
+    const rows: ModelRow[] = [
+      { id: "litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b", auto: false, contextWindow: 32768 },
+      { id: "litellm/gpt-5-mini", auto: false },
+    ];
+    const merged = mergeLocalModels(rows, ["litellm/local-qwen-mlx"]);
+    const byId = new Map(merged.map((r) => [r.id, r]));
+    assert.equal(byId.get("litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b")?.local, true);
+    assert.equal(byId.get("litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b")?.contextWindow, 32768);
+    assert.equal(byId.get("litellm/gpt-5-mini")?.local, undefined);
+    assert.equal(byId.get("litellm/local-qwen-mlx")?.local, true);
+  });
 });
 
 describe("ModelsService", () => {

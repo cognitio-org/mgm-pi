@@ -16,7 +16,7 @@ const DEFAULT_CACHE_MS = 60_000;
 export interface LaptopProbeConfig {
   /** Domain the laptop's LM Studio is tunneled on, e.g. kernal-lmstudio.ngrok.app (no scheme). */
   tunnelDomain: string;
-  /** Bearer token tunnel.sh's traffic policy requires. */
+  /** Bearer token the legacy single-laptop tunnel requires. `local/...` names do not use it. */
   token: string;
   /** Probe request timeout in ms. Default 3000 per EPIC.md E2.8. */
   timeoutMs?: number;

@@ -18,7 +18,7 @@ import {
   KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, combineAccountFirst, configCachePath, describeSource, effectivePath,
   localOverridesPath, readShippedSettings, resolve, setLocalOverride, startBackgroundRefresh, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
-import { applyModelAtSessionStart, applyVoiceSettings, cliChoices, describeChanges, snapshot } from "../.pi/extensions/_shared/central-apply.ts";
+import { applyModelAtSessionStart, applyVoiceSettings, cliChoices, describeChanges, settingsThinkingFor, snapshot } from "../.pi/extensions/_shared/central-apply.ts";
 import { _setAdminCentralDeps, whenSaved } from "../.pi/extensions/kernal-admin/central.ts";
 import { maskingFrom, summarizerFrom } from "../.pi/extensions/compaction/index.ts";
 import { chosenMode, registerLaptopMemory } from "../.pi/extensions/outfitter-agentengine/laptop.ts";
@@ -459,6 +459,48 @@ describe("model and thinking at session start", () => {
     assert.equal(r.problem, undefined);
     const r2 = await applyModelAtSessionStart(piWithThinking(), { reason: "startup" }, makeCtx({ model: lmstudio, models: [litellmA, lmstudio] }), { argv: [] });
     assert.match(r2.problem!, /lmstudio\/model-b is not available here/);
+  });
+
+  test("a local/ model and the local-qwen-mlx alias start at thinking off; the account level does not override", async () => {
+    writeCache(response({ "model.thinking": { value: "high", source: "user" } }));
+    setup();
+    const local = { provider: "litellm", id: "local/mgm-mbp/qwen/qwen3.6-35b-a3b", contextWindow: 32_768, maxTokens: 8192 };
+    const pi = piWithThinking();
+    pi.thinking = "medium";
+    const r = await applyModelAtSessionStart(pi, { reason: "startup" }, makeCtx({ model: local, models: [local] }), { argv: [] });
+    assert.equal(pi.thinking, "off");
+    assert.equal(r.thinking, "off");
+    assert.equal(settingsThinkingFor({ provider: "litellm", id: "local-qwen-mlx" }), "off");
+    assert.equal(settingsThinkingFor({ provider: "litellm", id: "gpt-5-mini" }), undefined);
+  });
+
+  test("an exact modelThinkingLevels entry wins over the local/ default", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kernal-thinking-"));
+    const prev = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = dir;
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ modelThinkingLevels: { "litellm/local/mgm-mbp/qwen": "high", "litellm/local-qwen-mlx": "off" } }));
+    try {
+      assert.equal(settingsThinkingFor({ provider: "litellm", id: "local/mgm-mbp/qwen" }), "high");
+      assert.equal(settingsThinkingFor({ provider: "litellm", id: "local-qwen-mlx" }), "off");
+    } finally {
+      if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = prev;
+    }
+  });
+
+  test("switching onto a local route turns thinking off; a cloud model is left alone", async () => {
+    setup();
+    const pi = piWithThinking();
+    pi.thinking = "high";
+    configExtension(pi, { fetch: (async () => { throw new Error("no"); }) as typeof fetch, onRefresh: () => {} });
+    await pi.emit("model_select", { model: { provider: "litellm", id: "local/mgm-mbp/qwen" } }, {});
+    assert.equal(pi.thinking, "off");
+    pi.thinking = "high";
+    await pi.emit("model_select", { model: { provider: "litellm", id: "local-qwen-mlx" } }, {});
+    assert.equal(pi.thinking, "off");
+    pi.thinking = "high";
+    await pi.emit("model_select", { model: { provider: "litellm", id: "gpt-5-mini" } }, {});
+    assert.equal(pi.thinking, "high", "no modelThinkingLevels entry, so the session level stays");
   });
 
   test("model.default may name its backend: provider/id", async () => {

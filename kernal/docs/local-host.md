@@ -2,8 +2,8 @@
 
 `kernal local` runs a small background service that shares the model server on this machine (LM
 Studio, Ollama, llama.cpp, mlx-lm or vLLM) with your Outfitter account, so cloud runs and your
-team can use those models through the router as `local/<you>-<machine>/<model>`. It replaces
-`tunnel.sh` (#381; the design is `outfitter/docs/specs/local-host.md` §4).
+team can use those models through the router as `local/<you>-<machine>/<model>`. `tunnel.sh` and
+`keepalive.mjs` are gone (#387). The design is `outfitter/docs/specs/local-host.md` §4.
 
 ## Turning it on
 
@@ -37,15 +37,16 @@ reported.
 - **Signed in**: the tunnel credentials come from Outfitter and are kept in memory only. No key is
   stored on the laptop, and the router master key is never needed.
 - **Signed out**: no heartbeats. If `.env` still has the interim `NGROK_AUTHTOKEN`,
-  `TUNNEL_DOMAIN_LMSTUDIO` and `LOCAL_TUNNEL_TOKEN`, the tunnel runs on those as `tunnel.sh` did,
-  but the router gets no entries for it.
+  `TUNNEL_DOMAIN_LMSTUDIO` and `LOCAL_TUNNEL_TOKEN`, the tunnel runs on those (the same interim
+  credentials the removed `tunnel.sh` used), but the router gets no entries for it.
 - **Sleep and wake**: after a wake the tunnel is restarted and Outfitter is told at once. Failures
   are retried with backoff (5 s, 10 s, 20 s ... up to 5 minutes).
 - **Stop**: `kernal local disable`, or a SIGTERM/Ctrl-C, sends a last "stop" heartbeat so the
   router entries go at once rather than after the 16-minute stale window.
 
-Do not run `tunnel.sh` and this service at the same time on the same reserved domain (ngrok
-refuses the second one with `ERR_NGROK_334`).
+`tunnel.sh` and `keepalive.mjs` are gone. Do not start another tunnel on the same reserved domain
+(ngrok refuses the second one with `ERR_NGROK_334`). `litellm/local-qwen-mlx` remains an alias for
+the old single laptop model; new shares are `local/<you>-<machine>/<model>`.
 
 ## Commands
 

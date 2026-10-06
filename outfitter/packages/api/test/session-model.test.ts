@@ -212,6 +212,48 @@ describe("PUT /api/sessions/:id/model", () => {
     await app.fastify.close();
   });
 
+  test("a local/ model follows the host registry, not the legacy tunnel the alias still uses", async () => {
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+    app.laptopProbe.setOnline(false);
+    const wanted = "litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b";
+    app.laptopProbe.isOnlineFor = async (model: string) => model === wanted;
+    const res = await putModel(app, session.id, wanted);
+    assert.equal(res.json().model, wanted);
+    assert.equal(res.json().modelFallback, undefined);
+    assert.deepEqual((await app.store.runs.findById(runId))?.pending, [
+      { t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "local/mgm-mbp/qwen/qwen3.6-35b-a3b" } },
+    ]);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("a write during the second probe is what pi is left on", async () => {
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+    let releaseLegacy!: () => void;
+    const gate = new Promise<void>((r) => (releaseLegacy = r));
+    const seen: string[] = [];
+    app.laptopProbe.isOnlineFor = async (model: string) => {
+      seen.push(model);
+      if (model === "litellm/local-qwen-mlx") await gate;
+      return model.startsWith("litellm/local/");
+    };
+    const first = putModel(app, session.id, "litellm/local/mgm-mbp/qwen");
+    while (!seen.includes("litellm/local/mgm-mbp/qwen")) await new Promise((r) => setTimeout(r, 5));
+    const second = putModel(app, session.id, "litellm/local-qwen-mlx");
+    while (!seen.includes("litellm/local-qwen-mlx")) await new Promise((r) => setTimeout(r, 5));
+    const third = await putModel(app, session.id, "litellm/local/mgm-mbp/gemma");
+    assert.equal(third.json().model, "litellm/local/mgm-mbp/gemma");
+    releaseLegacy();
+    await first;
+    await second;
+    const pending = (await app.store.runs.findById(runId))?.pending ?? [];
+    assert.deepEqual(pending.at(-1), { t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "local/mgm-mbp/gemma" } });
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("two switches at once leave pi on what the floppy stores", async () => {
     const app = await buildTestApp();
     const { session, runId } = await makeRunningSession(app);

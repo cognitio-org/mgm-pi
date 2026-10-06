@@ -1224,8 +1224,8 @@ export class AgentLink {
     // The floppy's own model (session-model.ts): pinned at creation, then whatever was switched to.
     // A floppy from before the pin is pinned on its first spec here, from its transcript.
     const wanted = await floppyModel(this.store, session, guru);
-    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
-    // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
+    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model (`local/...`, or the
+    // `local-qwen-mlx` alias) for the guru's cloud fallback when that model is offline.
     const online = await this.laptopProbe.isOnlineFor(wanted);
     const resolved = resolveRunModel({
       wanted,

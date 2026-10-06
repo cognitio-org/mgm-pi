@@ -208,9 +208,12 @@ describe("Ctrl+S saves the default to the account", () => {
     const calls = outfitter();
     const pi = makePi();
     configExtension(pi as any, {});
-    assert.equal(pi.handlers.get("model_select"), undefined);
+    // The local-model thinking hook listens here. It does not write settings or the account.
+    assert.ok(pi.handlers.get("model_select")?.length);
     assert.equal(pi.handlers.get("agent_start"), undefined);
     piWrites({ defaultModel: "in-drive" });
+    await pi.emit("model_select", { model: { provider: "litellm", id: "local/ada-mbp/qwen" } });
+    assert.equal(JSON.parse(readFileSync(join(agent.dir, "settings.json"), "utf8")).defaultModel, "in-drive");
     assert.match((await syncDefaults()).skipped!, /Drive/);
     assert.equal(calls.length, 0);
   });

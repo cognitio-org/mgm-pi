@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,14 +46,19 @@ const canRun = existsSync(adapterPath) && existsSync(jitiPath);
 function patchedAdapter(): { dir: string; adapter: string } | undefined {
   // A killed run skips its finally block. Clear its copies, but not a concurrent run's.
   for (const name of readdirSync(modules)) {
+    if (!name.startsWith(".mcp-reauth-")) continue;
     const path = join(modules, name);
-    if (name.startsWith(".mcp-reauth-") && Date.now() - statSync(path).mtimeMs > 10 * 60_000) {
-      rmSync(path, { recursive: true, force: true });
-    }
+    const mtime = statSync(path, { throwIfNoEntry: false })?.mtimeMs;
+    if (mtime !== undefined && Date.now() - mtime > 10 * 60_000) rmSync(path, { recursive: true, force: true });
   }
   const dir = mkdtempSync(join(modules, ".mcp-reauth-"));
   const adapter = join(dir, "pi-mcp-adapter");
-  cpSync(adapterPath, adapter, { recursive: true });
+  // Source only: the docs, examples, bundled skills and dist build are not imported.
+  const skip = new Set(["dist", "examples", "skills", "node_modules"]);
+  cpSync(adapterPath, adapter, {
+    recursive: true,
+    filter: (src) => src === adapterPath || !(skip.has(basename(src)) || /\.(md|png)$/.test(src)),
+  });
   const patch = readFileSync(patchPath);
   try {
     // A local checkout may already be patched. CI's npm ci copy is the published package.
@@ -125,6 +130,10 @@ test("a forced sign-in hides the saved session and a client registered for an ol
     await abandoned.invalidateCredentials("tokens");
     await abandoned.invalidateCredentials("client");
     out.afterSdkResets = await view(abandoned);
+    // The server rejects the new client (invalid_client): the SDK resets everything. The saved
+    // session is the last good one and stays on disk.
+    await abandoned.invalidateCredentials("all");
+    out.afterRejectedClient = saved();
     abandoned.deactivate();
     out.afterAbandon = saved();
     // Completing the flow saves the new client and its tokens together.
@@ -151,6 +160,7 @@ test("a forced sign-in hides the saved session and a client registered for an ol
     assert.deepEqual(out.forcedAfterRegister, { client: "new-client", token: null });
     assert.deepEqual(out.afterConcurrentRefresh, { client: "new-client", token: null });
     assert.deepEqual(out.afterSdkResets, { client: null, token: null });
+    assert.deepEqual(out.afterRejectedClient, { client: "old-client", refresh: "saved-refresh" });
     // An abandoned sign-in keeps the saved client paired with the refresh token it was issued.
     assert.deepEqual(out.afterAbandon, { client: "old-client", refresh: "saved-refresh" });
     assert.deepEqual(out.afterComplete, { client: "new-client", refresh: "new-refresh" });

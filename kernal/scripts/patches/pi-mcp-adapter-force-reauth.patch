@@ -24,7 +24,16 @@
      throwIfAborted(signal)
 --- a/pi-mcp-adapter/mcp-oauth-provider.ts
 +++ b/pi-mcp-adapter/mcp-oauth-provider.ts
-@@ -256,6 +256,10 @@
+@@ -20,6 +20,8 @@
+ } from "@modelcontextprotocol/client"
+ import {
+   getAuthForUrl,
++  getAuthEntry,
++  saveAuthEntry,
+   updateTokens,
+   updateClientInfo,
+   clearAllCredentials,
+@@ -256,6 +258,10 @@
    private authFetch: OAuthFetch
    private active = true
    private flowClientInfo: StoredClientInfo | undefined
@@ -35,7 +44,7 @@
    private flowCodeVerifier: string | undefined
    private flowDiscoveryState: OAuthDiscoveryState | undefined
    private flowIssuerMismatch = false
-@@ -305,6 +309,8 @@
+@@ -305,6 +311,8 @@
  
    deactivate(): void {
      this.active = false
@@ -44,7 +53,7 @@
      this.invalidatedAccessToken = undefined
      this.invalidatedClientId = undefined
      this.staleRedirectClientId = undefined
-@@ -432,6 +438,9 @@
+@@ -432,6 +440,9 @@
      // another runtime writes the shared persistent entry for the same name.
      const clientInfo = this.flowClientInfo ?? stored?.clientInfo
      if (clientInfo?.clientId === this.invalidatedClientId) return undefined
@@ -54,7 +63,7 @@
  
      const clientMetadataUrl = this.clientMetadataUrl
      const supportsClientMetadataDocument = this.flowDiscoveryState
-@@ -439,7 +448,7 @@
+@@ -439,7 +450,7 @@
      if (clientMetadataUrl !== undefined && supportsClientMetadataDocument !== undefined) {
        if (supportsClientMetadataDocument === true
          && clientInfo?.clientId !== clientMetadataUrl
@@ -63,7 +72,7 @@
          // With no DCR refresh pair to preserve, let the SDK select CIMD now.
          return undefined
        }
-@@ -479,14 +488,15 @@
+@@ -479,14 +490,15 @@
          clientInfo.issuer = issuer
          this.flowClientInfo = clientInfo
          this.throwIfInactive()
@@ -82,7 +91,7 @@
        this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
        // Return all registration metadata and the local issuer extension.
        // This keeps the SDK OAuth view and the stored issuer binding consistent.
-@@ -511,6 +521,26 @@
+@@ -511,6 +523,26 @@
      return undefined
    }
  
@@ -109,7 +118,7 @@
    /**
     * Save client information from dynamic registration.
     */
-@@ -544,6 +574,10 @@
+@@ -544,6 +576,10 @@
      this.flowClientInfo = clientInfo
      this.invalidatedClientId = undefined
      this.lastObservedClientId = clientInfo.clientId
@@ -120,7 +129,7 @@
      updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
    }
  
-@@ -553,6 +587,7 @@
+@@ -553,6 +589,7 @@
     */
    async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
      this.throwIfInactive()
@@ -128,19 +137,30 @@
      // Once this provider rejects a token, bypass its process-local cache until
      // another process replaces that token in shared secure storage.
      if (this.invalidatedAccessToken !== undefined) {
-@@ -594,6 +629,11 @@
+@@ -594,7 +631,21 @@
        ...(issuer !== undefined ? { issuer } : {}),
      }
      this.throwIfInactive()
+-    updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
 +    if (this.deferredClientInfo !== undefined) {
-+      updateClientInfo(this.serverName, this.deferredClientInfo, this.serverUrl, this.storageOptions)
++      // One write, so no reader or failed write sees the new client with the old tokens.
++      const entry: AuthEntry = getAuthEntry(this.serverName, this.storageOptions) ?? {}
++      if (entry.serverUrl !== this.serverUrl) {
++        delete entry.codeVerifier
++        delete entry.oauthState
++      }
++      entry.clientInfo = this.deferredClientInfo
++      entry.tokens = storedTokens
++      saveAuthEntry(this.serverName, entry, this.serverUrl, this.storageOptions)
 +      this.deferredClientInfo = undefined
++    } else {
++      updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
 +    }
 +    this.skippingStoredSession = false
-     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
      this.invalidatedAccessToken = undefined
      this.lastSavedAccessToken = storedTokens.accessToken
-@@ -711,6 +751,7 @@
+     // Discovery must survive the browser redirect so the callback can verify
+@@ -711,6 +762,7 @@
      switch (type) {
        case "all":
          this.flowClientInfo = undefined
@@ -148,7 +168,18 @@
          this.flowCodeVerifier = undefined
          this.flowDiscoveryState = undefined
          this.flowIssuerMismatch = false
-@@ -730,6 +771,7 @@
+@@ -721,7 +773,9 @@
+         this.lastObservedClientId = undefined
+         this.lastSavedAccessToken = undefined
+         this.pendingAuthAccessToken = undefined
+-        clearAllCredentials(this.serverName, this.storageOptions)
++        // A forced sign-in persists nothing until it saves tokens. If the server rejects the
++        // client this flow registered, the saved session is still the last good one: keep it.
++        if (!this.skippingStoredSession) clearAllCredentials(this.serverName, this.storageOptions)
+         break
+       case "client":
+         // Dynamic client registrations share the same credential-store entry as
+@@ -730,6 +784,7 @@
          this.invalidatedClientId = this.lastObservedClientId
          this.lastObservedClientId = undefined
          this.flowClientInfo = undefined

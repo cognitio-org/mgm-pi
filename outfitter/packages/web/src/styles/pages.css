@@ -1328,3 +1328,48 @@ a.chip.github-fact {
   color: var(--text-dim);
   font-size: 0.75rem;
 }
+
+/* Modems (#388): owners, then hosts, then loaded and not-loaded models. Wraps on a phone. */
+.local-host-owner {
+  margin: 1.25rem 0 0;
+}
+
+.local-host-owner h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.local-host-card {
+  margin-bottom: 0.75rem;
+}
+
+.local-host-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.local-model-block h4 {
+  margin: 0.7rem 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.local-model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  padding: 0.35rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.local-model-name {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.local-model-warn {
+  color: var(--warn);
+}

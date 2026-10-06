@@ -240,6 +240,38 @@ h2.panel-title {
   border-color: var(--danger);
 }
 
+/* Local host listing (#388). Not the running pill: online is steady, stale warns, offline is down. */
+.status-pill.online {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.status-pill.online::before {
+  content: "\25CF";
+}
+.status-pill.stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.status-pill.stale::before {
+  content: "\26A0";
+}
+.status-pill.offline,
+.status-pill.revoked {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.status-pill.offline::before,
+.status-pill.revoked::before {
+  content: "\25A0";
+}
+.status-pill.not-sharing {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+.status-pill.not-sharing::before {
+  content: "\23F8";
+}
+
 /* ---------- tables ---------- */
 
 /* Wrap table.data-table/table.table in a .table-scroll div so an unavoidably wide table (many

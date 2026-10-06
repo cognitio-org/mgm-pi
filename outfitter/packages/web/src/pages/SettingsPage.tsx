@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppVersion } from "../hooks/useAppVersion.ts";
+import { HostRemoveList } from "../components/account/HostRemoveList.tsx";
+import { useLocalHosts } from "../hooks/useLocalHosts.ts";
 import {
   api,
   ApiError,
@@ -468,6 +471,28 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
   );
 }
 
+/** Operator remove list (#385). The catalogue and the owner's share switch live on Modems and Account. */
+function LocalHostsSection() {
+  const hosts = useLocalHosts();
+  return (
+    <>
+      <h3>Local hosts</h3>
+      <p className="session-meta">
+        <Link to="/local-models">{vocabulary.modem.many}</Link> lists who is sharing which models.
+        The share switch for this account is on <Link to="/account">Account</Link>.
+        Removing a host takes its models off the router. If that computer is still sharing, its next heartbeat brings it back.
+      </p>
+      {hosts.error && (
+        <p className="syntax-error" role="alert">
+          {hosts.error}
+        </p>
+      )}
+      {hosts.loaded && hosts.hosts.length === 0 && !hosts.error && <p className="session-meta">No hosts listed.</p>}
+      <HostRemoveList hosts={hosts.hosts} operator onRemoved={hosts.reload} />
+    </>
+  );
+}
+
 export function SettingsPage() {
   const { version } = useAppVersion();
   const [settings, setSettings] = useState<OperatorSettings | null>(null);
@@ -585,6 +610,8 @@ export function SettingsPage() {
 
       <h3 id="agent-engine-agents">Agent Engine agents</h3>
       <AeAgentsPanel />
+
+      <LocalHostsSection />
     </div>
   );
 }

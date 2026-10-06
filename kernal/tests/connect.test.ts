@@ -4,6 +4,7 @@ import {
   parseEnvText, parseModelInfo, parseLmStudioModels, backends, normalizeBaseUrl, rootUrl, parseSpendHeaders, sessionEstimate,
   money, pctText, price, fit, bar, budgetRows, renderPanel, footerStatus, plainLen, QWEN_THINKING_MAP, DEFAULT_OPENROUTER_MODELS,
   cleanKey, keyCheckUrl, authFailureText, FREE, DEFAULT_PAID, keepListed, parseIdList, curateOpenRouter, NO_CURATION,
+  isLocalRoute, localHostFooter, localModelIdFromLabel, localModelLabel, localModelsFromHosts, mergeLitellmModels,
 } from "../.pi/extensions/connect/lib.ts";
 
 const id = (_c: string, t: string) => t;   // identity painter
@@ -62,6 +63,25 @@ describe("backends", () => {
     assert.equal(ll.model("local-qwen-mlx").thinkingLevelMap?.off, "none");
     assert.equal(ll.model("claude-sonnet-5").thinkingLevelMap?.off, undefined);
     assert.deepEqual(lm.model("x").thinkingLevelMap, QWEN_THINKING_MAP);
+    assert.equal(isLocalRoute("local/mgm-host/qwen"), true);
+    assert.equal(ll.model("local/mgm-host/qwen").thinkingLevelMap?.off, undefined, "unknown server kind does not send reasoning_effort none");
+    const studio = backends({}, meta, new Map(), new Map([["local/mgm-host/qwen", { online: true, kind: "lmstudio" }]])).find((b) => b.id === "litellm")!;
+    assert.equal(studio.model("local/mgm-host/qwen").thinkingLevelMap?.off, "none");
+    const vllm = backends({}, meta, new Map(), new Map([["local/mgm-host/qwen", { online: true, kind: "vllm" }]])).find((b) => b.id === "litellm")!;
+    assert.equal(vllm.model("local/mgm-host/qwen").thinkingLevelMap?.off, undefined);
+    assert.equal(ll.model("local/mgm-host/qwen").cost.output, 0);
+  });
+
+  test("shared-host facts fill context and vision when /model/info has none, and never override it", () => {
+    const facts = new Map([["local/mgm-host/qwen", { contextWindow: 131072, vision: false, online: false }]]);
+    const bare = backends({}, new Map(), new Map(), facts).find((b) => b.id === "litellm")!;
+    const m = bare.model("local/mgm-host/qwen");
+    assert.equal(m.contextWindow, 131072);
+    assert.deepEqual(m.input, ["text"]);
+    const meta = new Map([["local/mgm-host/qwen", { cost: FREE, contextWindow: 1000, vision: true }]]);
+    const priced = backends({}, meta, new Map(), facts).find((b) => b.id === "litellm")!;
+    assert.equal(priced.model("local/mgm-host/qwen").contextWindow, 1000);
+    assert.deepEqual(priced.model("local/mgm-host/qwen").input, ["text", "image"]);
   });
 
   test("proxied providers disable the OpenAI store flag and keep pi's strict finish_reason check", () => {
@@ -110,6 +130,50 @@ describe("backends", () => {
     const meta = new Map([["claude-auto-llm", { cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } }]]);
     const ll = backends({}, meta).find((b) => b.id === "litellm")!;
     assert.equal(ll.model("claude-auto-llm").cost.input, 2);
+  });
+
+  test("shared host models merge without reordering the router's list", () => {
+    const body = {
+      hosts: [
+        { status: "offline", tunnel: { managed: true }, models: [
+          { shared: true, routerModel: "local/a-mbp/qwen", contextLength: 8192, vision: false, kind: "ollama" },
+          { shared: false, routerModel: "local/a-mbp/hidden" },
+          { shared: true, routerModel: "litellm/local/b-air/gemma", vision: true },
+          { shared: true, routerModel: "local/a-mbp/embed", type: "embeddings" },
+        ] },
+        { status: "online", tunnel: { managed: true }, models: [{ shared: true, routerModel: "local/a-mbp/qwen", vision: true }] },
+        { status: "online", tunnel: { managed: false }, models: [{ shared: true, routerModel: "local/interim/x" }] },
+      ],
+    };
+    const found = localModelsFromHosts(body);
+    assert.equal(found.get("local/a-mbp/qwen")?.online, false, "first host wins");
+    assert.equal(found.get("local/a-mbp/qwen")?.contextWindow, 8192);
+    assert.equal(found.get("local/a-mbp/qwen")?.vision, false);
+    assert.equal(found.get("local/a-mbp/qwen")?.kind, "ollama");
+    assert.equal(found.has("local/a-mbp/hidden"), false);
+    assert.equal(found.has("local/a-mbp/embed"), false);
+    assert.equal(found.has("local/interim/x"), false, "an interim tunnel has no router deployment");
+    assert.equal(found.get("local/b-air/gemma")?.online, false);
+    assert.deepEqual(mergeLitellmModels(["b", "a"], []), ["b", "a"]);
+    assert.deepEqual(mergeLitellmModels(["b", "a"], ["a", "c", "d"]), ["b", "a", "c", "d"]);
+    assert.equal(localModelLabel("local/a-mbp/qwen", false), "local/a-mbp/qwen  (offline)");
+    assert.equal(localModelIdFromLabel("local/a-mbp/qwen  (online)"), "local/a-mbp/qwen");
+    assert.equal(localModelIdFromLabel("local-qwen-mlx"), "local-qwen-mlx");
+  });
+
+  test("the local-host footer counts accepted models while sharing, and stays quiet otherwise", () => {
+    const state = {
+      shareModels: { value: true },
+      models: { total: 4 },
+      tunnel: { provider: "ngrok" },
+      heartbeat: { ok: true, routerModels: ["local/a/m", "local/a/n", "local/a/o"] },
+    };
+    assert.equal(localHostFooter(state, true), "sharing 3 models via ngrok");
+    assert.equal(localHostFooter({ ...state, heartbeat: { ok: true, routerModels: ["only"] } }, true), "sharing 1 model via ngrok");
+    assert.equal(localHostFooter({ ...state, heartbeat: { ok: false, routerModels: [] }, tunnel: { provider: null } }, true), "sharing 4 models");
+    assert.equal(localHostFooter({ ...state, shareModels: { value: false } }, true), undefined);
+    assert.equal(localHostFooter(state, false), undefined);
+    assert.equal(localHostFooter(undefined, true), undefined);
   });
 
   test("lmstudio discovery filter drops embedding models", () => {

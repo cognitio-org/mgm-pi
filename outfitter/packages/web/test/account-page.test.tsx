@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { AccountPage } from "../src/pages/AccountPage.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -62,6 +63,7 @@ interface Options {
   operatorSpendStatus?: number;
   /** Answer a profile's PUT, PATCH or DELETE with this status instead (a 409 stale_version). */
   profileWriteStatus?: Partial<Record<"PUT" | "PATCH" | "DELETE", number>>;
+  hosts?: unknown[];
 }
 
 function stubFetch(opts: Options = {}) {
@@ -153,6 +155,8 @@ function stubFetch(opts: Options = {}) {
         }
         return json({ month: "2026-10", total: 40, users: [{ userId: "u_abc", email: "dev@localhost", total: 12.5 }, { userId: "u_def", email: "matej@example.com", total: 27.5 }] });
       }
+      if (url === "/api/local-hosts" && method === "GET") return json({ hosts: opts.hosts ?? [] });
+      if (url.startsWith("/api/local-hosts/") && method === "DELETE") return new Response(null, { status: 204 });
       return json({ error: "not found" }, 404);
     }),
   );
@@ -163,7 +167,7 @@ async function render() {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root!.render(<AccountPage />));
+  await act(async () => root!.render(<MemoryRouter><AccountPage /></MemoryRouter>));
   await flush();
 }
 
@@ -424,7 +428,52 @@ describe("AccountPage: local models", () => {
     expect(put?.headers["If-Match"]).toBe('W/"3"');
     expect(box.checked).toBe(true);
   });
+
+  it("links to Modems and lets the owner remove their own host", async () => {
+    const calls = stubFetch({
+      hosts: [
+        hostRow({ id: "h1", hostName: "mbp", mine: true }),
+        hostRow({ id: "h2", hostName: "air", email: "other@example.com" }),
+      ],
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    await render();
+    const s = section("account-local");
+    expect(s.querySelector('a[href="/local-models"]')?.textContent).toBe("Modems");
+    expect(s.textContent).not.toContain("other@example.com");
+    await click(button(s, "Remove"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/your host mbp/));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/heartbeat/));
+    expect(calls.some((c) => c.method === "DELETE" && c.url === "/api/local-hosts/h1")).toBe(true);
+  });
+
+  it("lets a Sysop remove someone else's host", async () => {
+    const calls = stubFetch({ operator: true, hosts: [hostRow({ id: "h2", hostName: "air", email: "other@example.com" })] });
+    vi.stubGlobal("confirm", () => true);
+    await render();
+    const s = section("account-local");
+    expect(s.textContent).toContain("other@example.com");
+    await click(button(s, "Remove"));
+    expect(calls.some((c) => c.method === "DELETE" && c.url === "/api/local-hosts/h2")).toBe(true);
+  });
 });
+
+function hostRow(over: { id: string; hostName: string; email?: string; mine?: boolean }) {
+  return {
+    id: over.id,
+    hostName: over.hostName,
+    owner: { email: over.email ?? "dev@localhost", mine: !!over.mine },
+    status: "online",
+    shareModels: true,
+    accessGroup: "everyone",
+    routerPrefix: "dev-mbp",
+    lastSeenAt: "2026-10-06T12:00:00.000Z",
+    tunnel: { provider: "ngrok", managed: true, state: "up" },
+    servers: [],
+    models: [],
+  };
+}
 
 describe("AccountPage: spend", () => {
   it("shows this month by device and by model, without the operator view for a person", async () => {

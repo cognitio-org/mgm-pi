@@ -11,6 +11,8 @@ import { ThemeToggle } from "../components/ThemeToggle.tsx";
 import { TourOffer } from "../components/tour/TourOffer.tsx";
 import { openEasterEgg } from "../easter/openEasterEgg.tsx";
 import { createDoubleActivate } from "../easter/triggers.ts";
+import { useLocalHosts } from "../hooks/useLocalHosts.ts";
+import { anyHostOnline } from "../lib/local-hosts.ts";
 import {
   ControlPanelIcon,
   DiskBoxIcon,
@@ -18,6 +20,7 @@ import {
   DriveIcon,
   GithubIcon,
   ManualIcon,
+  ModemIcon,
   NewFloppyIcon,
   PeripheralsIcon,
   TapesIcon,
@@ -85,6 +88,8 @@ export function DeskPage() {
 
   const status = useMemo(() => deriveDeskStatus(sessions, providers, now), [sessions, providers, now]);
   const stoppedCount = useMemo(() => stoppedSessionCount(sessions), [sessions]);
+  const { hosts: localHosts } = useLocalHosts();
+  const modemsLit = anyHostOnline(localHosts);
 
   const icons: DeskIconDef[] = useMemo(() => {
     const list: DeskIconDef[] = [
@@ -124,6 +129,13 @@ export function DeskPage() {
         onOpen: () => navigate("/providers"),
       },
       {
+        id: "modems",
+        label: vocabulary.modem.many,
+        hint: vocabulary.modem.hint,
+        icon: (size) => <ModemIcon size={size} lit={modemsLit} />,
+        onOpen: () => navigate("/local-models"),
+      },
+      {
         id: "dongles",
         label: vocabulary.token.many,
         hint: vocabulary.token.hint,
@@ -148,7 +160,7 @@ export function DeskPage() {
       onOpen: () => navigate("/manual"),
     });
     return list;
-  }, [operator, navigate]);
+  }, [operator, navigate, modemsLit]);
 
   function handleGridKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (!GRID_KEYS.includes(e.key as GridKey)) return;
@@ -280,6 +292,11 @@ export function DeskPage() {
               <li role="menuitem">
                 <button type="button" onClick={() => navigate("/providers")}>
                   {vocabulary.provider.many}
+                </button>
+              </li>
+              <li role="menuitem">
+                <button type="button" onClick={() => navigate("/local-models")}>
+                  {vocabulary.modem.many}
                 </button>
               </li>
               <li role="menuitem">

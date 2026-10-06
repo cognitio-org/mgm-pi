@@ -1,0 +1,39 @@
+--- a/pi-mcp-adapter/mcp-auth-flow.ts
++++ b/pi-mcp-adapter/mcp-auth-flow.ts
+@@ -68,6 +68,12 @@
+   runtime?: McpOAuthRuntime
+   skipIssuerMetadataValidation?: boolean
+   definition?: Pick<ServerEntry, "headers" | "oauth">
++  /**
++   * Skip a stored refresh token and open the authorization server again.
++   * Explicit /mcp-auth sets this. Reconnect must not: a gateway session that
++   * still refreshes would otherwise never return a browser URL.
++   */
++  forceReauthorization?: boolean
+ }
+ 
+ type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
+@@ -580,7 +586,12 @@
+     const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
+     authority()
+     throwIfAborted(signal)
+-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
++    const result = await abortable(runSdkAuth(authProvider, {
++      serverUrl,
++      ...discovery,
++      fetchFn,
++      forceReauthorization: options.forceReauthorization === true,
++    }), signal)
+     authority()
+     throwIfAborted(signal)
+     if (result === "AUTHORIZED") {
+--- a/pi-mcp-adapter/commands.ts
++++ b/pi-mcp-adapter/commands.ts
+@@ -404,6 +404,7 @@
+     ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
+     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd, config.settings?.oauthCredentialStore);
+     const status = await authenticate(serverName, serverUrl, definition, {
++      forceReauthorization: true,
+       ...(Object.keys(authStorageOptions).length > 0 ? { authStorageOptions } : {}),
+       onAuthorizationUrl: () => {},
+       onAuthorizationInput: async (authorizationUrl, inputSignal) => {

@@ -81,6 +81,12 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 #    packages, which the pi binary provides at runtime (no copy needed). Then drop native binaries
 #    built for other platforms (open-codebase-index ships all six in one package, ~250 MB).
 (cd "$STAGE/.pi/npm" && npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
+# pi-mcp-adapter 2.37.0 treats a stored refresh token as already signed in, so explicit
+# /mcp-auth never opens the browser. npm ci replaces this file; reapply until the pin moves.
+MCP_REAUTH_FLOW="$STAGE/.pi/npm/node_modules/pi-mcp-adapter/mcp-auth-flow.ts"
+if ! grep -q 'forceReauthorization: options.forceReauthorization === true' "$MCP_REAUTH_FLOW"; then
+  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+fi
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;
   darwin-x64)   keep='darwin[-_]x64|x64[-_]darwin|x86_64[-_]apple' ;;

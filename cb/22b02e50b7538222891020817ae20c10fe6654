@@ -1,0 +1,49 @@
+kernal/docs/local-host.md
+  s_d165100a34bc2d::t_c4fdf87671ef9f 48-49,74-76
+kernal/docs/architecture.md
+  s_d165100a34bc2d::t_c4fdf87671ef9f 46-47,200
+kernal/.pi/extensions/_shared/tunnel/ngrok.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 22-25,346
+outfitter/docs/reports/providers-status.md
+  s_d165100a34bc2d::t_c4fdf87671ef9f 61
+kernal/tests/extensions.test.ts
+  s_d165100a34bc2d::t_e5e707c0c46d74 467-468,489
+kernal/.pi/extensions/connect/lib.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 121,288,310
+kernal/.pi/extensions/teleport/lib.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 285,288
+outfitter/deploy/test/guards.test.sh
+  s_d165100a34bc2d::t_c4fdf87671ef9f 22,76-82
+kernal/README.md
+  s_d165100a34bc2d::t_c4fdf87671ef9f 692,815-816,979-980
+kernal/tests/local-cli.test.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 208-228
+kernal/.pi/extensions/kernal-local/commands.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 130-134,138-143,146
+outfitter/deploy/config.env
+  s_d165100a34bc2d::t_c4fdf87671ef9f 13-15
+outfitter/deploy/env.sh
+  s_d165100a34bc2d::t_c4fdf87671ef9f 82-91
+kernal/.pi/extensions/_shared/tunnel/types.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 104-109
+kernal/tests/teleport.test.ts
+  s_d165100a34bc2d::t_c4fdf87671ef9f 59
+README.md
+  s_d165100a34bc2d::t_a1fbc4b6bee55f 76-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cb22b02e50b7538222891020817ae20c10fe6654",
+  "prompts": {},
+  "sessions": {
+    "s_d165100a34bc2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c0983db-ab0b-4aa5-85d0-cd5c30f32e10",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

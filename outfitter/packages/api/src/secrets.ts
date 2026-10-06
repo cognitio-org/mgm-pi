@@ -385,10 +385,14 @@ export interface SecretAdmin {
   /** Disables every currently-enabled version (does not destroy anything, so it's recoverable from
    * the console). A no-op if the secret doesn't exist or has no enabled versions. */
   disableAllEnabled(secretName: string): Promise<void>;
+  /** Disables one version. A missing version is a no-op. Other versions stay as they are. */
+  disableVersion(secretName: string, version: number): Promise<void>;
   /** The latest enabled version's plaintext, or undefined if the secret doesn't exist / has no
    * enabled version. Used for masking and as the "test the stored value" fallback when
    * POST /api/operator/secrets/:name/test is called with no explicit value. */
   accessLatest(secretName: string): Promise<string | undefined>;
+  /** That version's plaintext, or undefined when it is missing or not enabled. */
+  accessVersion(secretName: string, version: number): Promise<string | undefined>;
 }
 
 /** Only the last 4 characters, and only past a length where a partial reveal isn't itself most of
@@ -424,7 +428,7 @@ export class GcpSecretAdmin implements SecretAdmin {
     const versions = await this.listEnabledVersionsDesc(secretName);
     const latest = versions[0];
     if (!latest) return { set: false };
-    const value = await this.accessVersion(secretName, versionNumber(latest.name));
+    const value = await this.readVersion(secretName, versionNumber(latest.name));
     return { set: true, masked: maskTail(value), updatedAt: latest.createTime };
   }
 
@@ -452,11 +456,33 @@ export class GcpSecretAdmin implements SecretAdmin {
     }
   }
 
+  async disableVersion(secretName: string, version: number): Promise<void> {
+    const client = await this.getAuthClient();
+    try {
+      await client.request({
+        url: `${this.secretUrl(secretName)}/versions/${version}:disable`,
+        method: "POST",
+      });
+    } catch (err) {
+      if (isSecretNotFoundError(err)) return;
+      throw err;
+    }
+  }
+
   async accessLatest(secretName: string): Promise<string | undefined> {
     const versions = await this.listEnabledVersionsDesc(secretName);
     const latest = versions[0];
     if (!latest) return undefined;
-    return this.accessVersion(secretName, versionNumber(latest.name));
+    return this.readVersion(secretName, versionNumber(latest.name));
+  }
+
+  async accessVersion(secretName: string, version: number): Promise<string | undefined> {
+    try {
+      return await this.readVersion(secretName, version);
+    } catch (err) {
+      if (isSecretAbsentError(err)) return undefined;
+      throw err;
+    }
   }
 
   private secretUrl(secretName: string): string {
@@ -479,7 +505,7 @@ export class GcpSecretAdmin implements SecretAdmin {
     }
   }
 
-  private async accessVersion(secretName: string, version: number): Promise<string> {
+  private async readVersion(secretName: string, version: number): Promise<string> {
     const client = await this.getAuthClient();
     const res = await client.request<{ payload: { data: string } }>({
       url: `${this.secretUrl(secretName)}/versions/${version}:access`,
@@ -543,8 +569,20 @@ export class MemorySecretAdmin implements SecretAdmin {
     for (const version of this.secrets.get(secretName) ?? []) version.enabled = false;
   }
 
+  async disableVersion(secretName: string, version: number): Promise<void> {
+    const found = this.secrets.get(secretName)?.[version - 1];
+    if (!found) return;
+    found.enabled = false;
+  }
+
   async accessLatest(secretName: string): Promise<string | undefined> {
     return this.latestEnabled(secretName)?.value;
+  }
+
+  async accessVersion(secretName: string, version: number): Promise<string | undefined> {
+    const found = this.secrets.get(secretName)?.[version - 1];
+    if (!found?.enabled) return undefined;
+    return found.value;
   }
 
   private latestEnabled(secretName: string): MemorySecretVersion | undefined {
@@ -571,9 +609,10 @@ interface CachedSecretAccess {
 }
 
 /** Short TTL for the four GitHub App secret names the session page reads on every GET.
- * Other names always hit `inner` (per-session PATs and LiteLLM keys stay fresh). A throw is not
- * stored. `addVersion` and `disableAllEnabled` drop that name first, so the next read sees the
- * write. `info` stays live for the operator page. */
+ * Other names always hit `inner` (per-session PATs, LiteLLM keys, and subscription secrets stay
+ * fresh). Subscription plaintext is never cached. A throw is not stored. `addVersion`,
+ * `disableAllEnabled`, and `disableVersion` drop that name first, so the next read sees the
+ * write. `info` and `accessVersion` stay uncached. */
 export class AppSecretCache implements SecretAdmin {
   private readonly inner: SecretAdmin;
   private readonly now: () => number;
@@ -596,6 +635,15 @@ export class AppSecretCache implements SecretAdmin {
   async disableAllEnabled(secretName: string): Promise<void> {
     this.cache.delete(secretName);
     await this.inner.disableAllEnabled(secretName);
+  }
+
+  async disableVersion(secretName: string, version: number): Promise<void> {
+    this.cache.delete(secretName);
+    await this.inner.disableVersion(secretName, version);
+  }
+
+  accessVersion(secretName: string, version: number): Promise<string | undefined> {
+    return this.inner.accessVersion(secretName, version);
   }
 
   async accessLatest(secretName: string): Promise<string | undefined> {

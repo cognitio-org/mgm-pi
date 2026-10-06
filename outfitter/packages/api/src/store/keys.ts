@@ -164,6 +164,10 @@ export interface SubscriptionSecretsCollection {
   listForUser(userId: string): Promise<SubscriptionSecretMeta[]>;
   get(id: string): Promise<SubscriptionSecretMeta | null>;
   upsert(meta: SubscriptionSecretMeta): Promise<void>;
+  /** Writes `meta` only when the stored version is still `expectedVersion`. `null` means no
+   * document yet: success only if this call inserts, and a concurrent insert loses. Never stores
+   * a version number lower than or equal to the one already stored. */
+  compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean>;
   delete(id: string): Promise<boolean>;
 }
 
@@ -182,6 +186,17 @@ export class MemorySubscriptionSecrets implements SubscriptionSecretsCollection 
   }
   async upsert(meta: SubscriptionSecretMeta): Promise<void> {
     this.metas.set(meta.id, { ...meta });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const current = this.metas.get(meta.id);
+    if (expectedVersion === null) {
+      if (current) return false;
+      this.metas.set(meta.id, { ...meta });
+      return true;
+    }
+    if (!current || current.version !== expectedVersion || meta.version <= current.version) return false;
+    this.metas.set(meta.id, { ...meta });
+    return true;
   }
   async delete(id: string): Promise<boolean> {
     return this.metas.delete(id);
@@ -297,6 +312,23 @@ export class MongoSubscriptionSecrets implements SubscriptionSecretsCollection {
   async upsert(meta: SubscriptionSecretMeta): Promise<void> {
     const { id, ...rest } = meta;
     await this.col.replaceOne({ _id: id }, rest, { upsert: true });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const { id, ...rest } = meta;
+    if (expectedVersion === null) {
+      try {
+        await this.col.insertOne({ _id: id, ...rest });
+        return true;
+      } catch (err) {
+        if (typeof err === "object" && err !== null && (err as { code?: number }).code === 11000) return false;
+        throw err;
+      }
+    }
+    // Filter on `_id` and `version`, not an unconditional replace: a stale writer must not move
+    // the stored version backward. `version <= expected` loses even when the filter would match.
+    if (meta.version <= expectedVersion) return false;
+    const result = await this.col.replaceOne({ _id: id, version: expectedVersion }, rest);
+    return result.matchedCount === 1;
   }
   async delete(id: string): Promise<boolean> {
     const result = await this.col.deleteOne({ _id: id });

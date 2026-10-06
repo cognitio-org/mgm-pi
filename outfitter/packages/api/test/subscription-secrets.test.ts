@@ -19,6 +19,7 @@ import {
 import { registerKeyRoutes } from "../src/routes/keys.ts";
 import type { RouteContext } from "../src/routes/context.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import type { SubscriptionSecretMeta } from "../src/store/keys.ts";
 import { MemorySecretAdmin, type SecretAdmin } from "../src/secrets.ts";
 import type { Identity } from "../src/auth.ts";
 import type { Device } from "../src/store/devices.ts";
@@ -156,12 +157,26 @@ describe("/api/me/subscription-secrets (a person on web)", () => {
   });
 
   test("version conflict does not write", async () => {
-    const app = await buildTestApp();
+    const inner = new MemorySecretAdmin();
+    let adds = 0;
+    const counting: SecretAdmin = {
+      info: (name) => inner.info(name),
+      addVersion: async (name, value) => {
+        adds += 1;
+        return inner.addVersion(name, value);
+      },
+      disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      disableVersion: (name, version) => inner.disableVersion(name, version),
+      accessLatest: (name) => inner.accessLatest(name),
+      accessVersion: (name, version) => inner.accessVersion(name, version),
+    };
+    const app = await buildTestApp({}, { secretAdmin: counting });
     const name = subscriptionSecretName(userIdFor(DEV_EMAIL), "claude");
     const early = await app.fastify.inject({ method: "PUT", url: "/api/me/subscription-secrets/claude", payload: { value: CLAUDE, ifVersion: 1 } });
     assert.equal(early.statusCode, 409, early.body);
     assert.deepEqual(early.json(), { error: "version_conflict", version: null });
     assert.equal(await app.secretAdmin.accessLatest(name), undefined);
+    assert.equal(adds, 0);
 
     const first = await app.fastify.inject({ method: "PUT", url: "/api/me/subscription-secrets/claude", payload: { value: CLAUDE } });
     assert.equal(first.statusCode, 200, first.body);
@@ -176,6 +191,8 @@ describe("/api/me/subscription-secrets (a person on web)", () => {
     assert.equal(conflict.statusCode, 409, conflict.body);
     assert.deepEqual(conflict.json(), { error: "version_conflict", version: 2 });
     assert.ok(!conflict.body.includes(CLAUDE_C));
+    assert.equal(adds, 2);
+    assert.equal(await app.secretAdmin.accessVersion(name, 3), undefined);
     assert.equal(await app.secretAdmin.accessLatest(name), CLAUDE_B);
     const [meta] = await app.store.subscriptionSecrets.listForUser(userIdFor(DEV_EMAIL));
     assert.equal(meta.version, 2);
@@ -289,9 +306,9 @@ describe("POST /api/device/subscription-secrets (delivery)", () => {
     await setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE, setBy: "a" });
     await setSubscriptionSecret(deps, { userId, vendor: "grok", value: GROK_JSON, setBy: "a" });
     const flaky: SecretAdmin = Object.assign(Object.create(inner), {
-      accessLatest: async (name: string) => {
+      accessVersion: async (name: string, version: number) => {
         if (name.endsWith("-subscription-grok")) throw new Error("PERMISSION_DENIED");
-        return inner.accessLatest(name);
+        return inner.accessVersion(name, version);
       },
     });
     const logged: string[] = [];
@@ -303,5 +320,177 @@ describe("POST /api/device/subscription-secrets (delivery)", () => {
     assert.equal(logged.length, 1);
     assert.ok(!logged[0]!.includes(GROK_JSON));
     assert.ok(!logged[0]!.includes(CLAUDE));
+  });
+
+  test("delivery returns the metadata version even when a newer one is enabled", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretAdmin();
+    const userId = userIdFor("a@example.com");
+    const deps = { subscriptionSecrets: store.subscriptionSecrets, secrets };
+    await setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE, setBy: "a" });
+    const name = subscriptionSecretName(userId, "claude");
+    assert.equal(await secrets.addVersion(name, CLAUDE_B), 2);
+    const delivered = await deliverSubscriptionSecrets(deps, userId);
+    assert.deepEqual(delivered, { claude: { value: CLAUDE, version: 1 } });
+    assert.equal(await secrets.accessLatest(name), CLAUDE_B);
+  });
+});
+
+describe("subscription secret compare-and-swap", () => {
+  test("two overlapping puts with the same ifVersion keep only the winner", async () => {
+    const store = new MemoryStore();
+    const inner = new MemorySecretAdmin();
+    const userId = userIdFor(DEV_EMAIL);
+    await setSubscriptionSecret(
+      { subscriptionSecrets: store.subscriptionSecrets, secrets: inner },
+      { userId, vendor: "claude", value: CLAUDE, setBy: DEV_EMAIL },
+    );
+    let entered = 0;
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const secrets: SecretAdmin = Object.assign(Object.create(inner), {
+      addVersion: async (name: string, value: string) => {
+        entered += 1;
+        if (entered === 2) openGate();
+        await gate;
+        return inner.addVersion(name, value);
+      },
+    });
+    const deps = { subscriptionSecrets: store.subscriptionSecrets, secrets };
+    const first = setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE_B, setBy: "a", ifVersion: 1 });
+    const second = setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE_C, setBy: "b", ifVersion: 1 });
+    await gate;
+    const [winner, loser] = await Promise.all([first, second]);
+    assert.equal(winner.ok, true);
+    assert.equal(loser.ok, false);
+    if (!winner.ok || loser.ok) return;
+    assert.equal(winner.view.version, 2);
+    assert.equal(winner.view.last4, shaLast4(CLAUDE_B));
+    assert.deepEqual(loser, { ok: false, error: "version_conflict", version: 2 });
+    const name = subscriptionSecretName(userId, "claude");
+    assert.equal(await secrets.accessVersion(name, 1), CLAUDE);
+    assert.equal(await secrets.accessVersion(name, 2), CLAUDE_B);
+    assert.equal(await secrets.accessVersion(name, 3), undefined);
+    const delivered = await deliverSubscriptionSecrets(deps, userId);
+    assert.deepEqual(delivered, { claude: { value: CLAUDE_B, version: 2 } });
+    assert.ok(!JSON.stringify(loser).includes(CLAUDE_C));
+  });
+
+  test("a metadata failure disables only the version just added", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretAdmin();
+    const userId = userIdFor(DEV_EMAIL);
+    let fail = false;
+    const real = store.subscriptionSecrets;
+    const subscriptionSecrets = Object.assign(Object.create(real), {
+      compareAndSwap: async (meta: SubscriptionSecretMeta, expected: number | null) => {
+        if (fail) {
+          fail = false;
+          throw Object.assign(new Error("mongo unavailable"), {
+            config: { data: { payload: { data: Buffer.from(CLAUDE_B, "utf8").toString("base64") } }, body: CLAUDE_B },
+          });
+        }
+        return real.compareAndSwap(meta, expected);
+      },
+    });
+    Object.assign(store, { subscriptionSecrets });
+    const logs: string[] = [];
+    const { app } = await bareApp({ role: "web", identity: { email: DEV_EMAIL, operator: false }, store, secrets, logs });
+    const seeded = await app.inject({ method: "PUT", url: "/api/me/subscription-secrets/claude", payload: { value: CLAUDE } });
+    assert.equal(seeded.statusCode, 200, seeded.body);
+    const [before] = await store.subscriptionSecrets.listForUser(userId);
+    fail = true;
+    const failed = await app.inject({ method: "PUT", url: "/api/me/subscription-secrets/claude", payload: { value: CLAUDE_B, ifVersion: 1 } });
+    assert.equal(failed.statusCode, 502, failed.body);
+    assert.deepEqual(failed.json(), { error: "secret_write_failed" });
+    const name = subscriptionSecretName(userId, "claude");
+    assert.equal(await secrets.accessVersion(name, 2), undefined);
+    assert.equal(await secrets.accessLatest(name), CLAUDE);
+    const [after] = await store.subscriptionSecrets.listForUser(userId);
+    assert.deepEqual(after, before);
+    const delivered = await deliverSubscriptionSecrets({ subscriptionSecrets: store.subscriptionSecrets, secrets }, userId);
+    assert.deepEqual(delivered, { claude: { value: CLAUDE, version: 1 } });
+    const logged = logs.join("\n");
+    assert.ok(logged.includes("subscription secret write failed"), logged);
+    for (const secret of [CLAUDE_B, Buffer.from(CLAUDE_B, "utf8").toString("base64")]) {
+      assert.ok(!logged.includes(secret), "the value is not logged");
+      assert.ok(!failed.body.includes(secret));
+    }
+
+    const retry = await app.inject({ method: "PUT", url: "/api/me/subscription-secrets/claude", payload: { value: CLAUDE_B, ifVersion: 1 } });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal(retry.json().version, 3);
+    assert.equal(retry.json().last4, shaLast4(CLAUDE_B));
+    assert.equal(await secrets.accessVersion(name, 3), CLAUDE_B);
+    const again = await deliverSubscriptionSecrets({ subscriptionSecrets: store.subscriptionSecrets, secrets }, userId);
+    assert.deepEqual(again, { claude: { value: CLAUDE_B, version: 3 } });
+    await app.close();
+  });
+
+  test("two unconditional writes keep the higher version and disable the lower one", async () => {
+    const store = new MemoryStore();
+    const secrets = new MemorySecretAdmin();
+    const userId = userIdFor(DEV_EMAIL);
+    let releaseLow!: () => void;
+    const lowWaiting = new Promise<void>((resolve) => {
+      releaseLow = resolve;
+    });
+    let lowEntered!: () => void;
+    const lowIsWaiting = new Promise<void>((resolve) => {
+      lowEntered = resolve;
+    });
+    const real = store.subscriptionSecrets;
+    const subscriptionSecrets = Object.assign(Object.create(real), {
+      compareAndSwap: async (meta: SubscriptionSecretMeta, expected: number | null) => {
+        if (meta.version === 1) {
+          lowEntered();
+          await lowWaiting;
+        }
+        return real.compareAndSwap(meta, expected);
+      },
+    });
+    const deps = { subscriptionSecrets, secrets };
+    const low = setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE_B, setBy: "low" });
+    const high = setSubscriptionSecret(deps, { userId, vendor: "claude", value: CLAUDE_C, setBy: "high" });
+    await lowIsWaiting;
+    const highResult = await high;
+    releaseLow();
+    const lowResult = await low;
+    assert.equal(highResult.ok, true);
+    assert.equal(lowResult.ok, false);
+    if (!highResult.ok || lowResult.ok) return;
+    assert.equal(highResult.view.version, 2);
+    assert.equal(highResult.view.last4, shaLast4(CLAUDE_C));
+    assert.deepEqual(lowResult, { ok: false, error: "version_conflict", version: 2 });
+    const name = subscriptionSecretName(userId, "claude");
+    assert.equal(await secrets.accessVersion(name, 2), CLAUDE_C);
+    assert.equal(await secrets.accessVersion(name, 1), undefined);
+    const delivered = await deliverSubscriptionSecrets(deps, userId);
+    assert.deepEqual(delivered, { claude: { value: CLAUDE_C, version: 2 } });
+    const [meta] = await real.listForUser(userId);
+    assert.equal(meta.version, 2);
+    assert.equal(meta.last4, shaLast4(CLAUDE_C));
+  });
+
+  test("compareAndSwap does not insert twice or move the version backward", async () => {
+    const col = new MemoryStore().subscriptionSecrets;
+    const meta = (version: number) => ({
+      id: "u:subscription:claude",
+      userId: "u",
+      vendor: "claude",
+      secretName: "s",
+      version,
+      last4: "abcd",
+      setAt: "t",
+      setBy: "a",
+    });
+    assert.equal(await col.compareAndSwap(meta(1), null), true);
+    assert.equal(await col.compareAndSwap(meta(1), null), false);
+    assert.equal(await col.compareAndSwap(meta(2), 1), true);
+    assert.equal(await col.compareAndSwap(meta(2), 2), false);
+    assert.equal(await col.compareAndSwap(meta(1), 2), false);
+    assert.equal((await col.get("u:subscription:claude"))?.version, 2);
   });
 });

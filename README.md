@@ -73,5 +73,5 @@ kernal local status
 Keep the laptop awake (`caffeinate -s`) while the model should be reachable.
 
 `tunnel.sh`, `keepalive.mjs`, and `apply-local.sh` are gone. The service's guard proxy keeps long
-streams alive, which is what `keepalive.mjs` used to do. `litellm/local-qwen-mlx` remains an alias
-for the old single laptop model; new shares use the `local/...` names above.
+streams alive, which is what `keepalive.mjs` used to do. The old `litellm/local-qwen-mlx` alias
+has been removed from the router. Shares use the `local/...` names above.

@@ -127,16 +127,23 @@ async function enable(p: Parsed, io: LocalIo, env: Env): Promise<number> {
   const home = kernalHome(env);
   const profile = p.profile ?? (env.KERNAL_PROFILE?.trim() || undefined);
 
-  // The tunnel's runtime: the pinned ngrok agent, installed now when it's missing (enable is the
-  // one command a person runs on purpose; the service itself never downloads anything).
+  // The tunnel's runtime: Kernal's own pinned ngrok, installed now when the service would not
+  // find one. enable is the one command a person runs on purpose; the service never downloads.
+  // A ngrok on this shell's PATH is not enough: the LaunchAgent's PATH is the node directory
+  // plus the system directories, so Homebrew is invisible there. findNgrok runs Kernal's copy
+  // (KERNAL_HOME/bin/ngrok) before PATH.
   const choice = parseTunnelChoice(env.KERNAL_LOCAL_TUNNEL);
   if (choice !== "cloudflare") {
     const status = await (io.ngrokStatus ?? (() => ngrokProvider().status()))();
-    if (status.available) io.out(`Tunnel: ${status.runtime ?? "ngrok"}`);
-    else if (status.installable) {
-      io.out("Tunnel: installing the ngrok agent (pinned version, checksum checked) ...");
+    const needsManaged = status.source === "path" || (!status.available && !!status.installable);
+    if (!needsManaged && status.available) io.out(`Tunnel: ${status.runtime ?? "ngrok"}`);
+    else if (needsManaged) {
+      io.out(status.source === "path"
+        ? "Tunnel: installing Kernal's ngrok agent (this shell's ngrok is not on the service's PATH) ..."
+        : "Tunnel: installing the ngrok agent (pinned version, checksum checked) ...");
       const r = await (io.installNgrok ?? (() => installNgrok()))();
       if (r.ok) io.out(`Tunnel: ngrok ${r.version} (${r.path})`);
+      else if (status.available) io.err(`kernal local: could not install Kernal's ngrok (${r.detail}); this shell can see ${status.runtime ?? "ngrok"}, but the service cannot`);
       else io.err(`kernal local: could not install ngrok (${r.detail}); the service runs, but no tunnel opens until it is installed`);
     } else io.err(`kernal local: ${status.reason ?? "ngrok is unavailable"}; the service runs, but no tunnel opens until that is fixed`);
   }

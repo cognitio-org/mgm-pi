@@ -205,6 +205,27 @@ describe("enable and disable (§4.2, §4.5)", () => {
     assert.match(t.err.join("\n"), /could not install ngrok \(not in tests\)/);
   });
 
+  test("enable: a PATH ngrok is not enough; Kernal's own copy is installed for the service", async () => {
+    const t = io();
+    t.io.ngrokStatus = async () => ({ provider: "ngrok", available: true, source: "path", runtime: "ngrok 3.39.11 (/opt/homebrew/bin/ngrok)" });
+    t.io.installNgrok = async () => ({ ok: true, path: "/Users/a/.kernal/bin/ngrok", version: "3.39.11" });
+    assert.equal(await main(["enable"], t.io), 0, t.err.join("\n"));
+    const out = t.out.join("\n");
+    assert.match(out, /not on the service's PATH/);
+    assert.match(out, /Tunnel: ngrok 3\.39\.11 \(\/Users\/a\/\.kernal\/bin\/ngrok\)/);
+    assert.equal(t.err.join("\n"), "");
+  });
+
+  test("enable: KERNAL_NGROK_BIN is left as the only candidate", async () => {
+    const t = io();
+    let installed = false;
+    t.io.ngrokStatus = async () => ({ provider: "ngrok", available: true, source: "env", runtime: "ngrok 3.39.11 (/opt/ngrok)" });
+    t.io.installNgrok = async () => { installed = true; return { ok: true, path: "/opt/ngrok", version: "3.39.11" }; };
+    assert.equal(await main(["enable"], t.io), 0, t.err.join("\n"));
+    assert.equal(installed, false);
+    assert.match(t.out.join("\n"), /Tunnel: ngrok 3\.39\.11 \(\/opt\/ngrok\)/);
+  });
+
   test("enable: a failed bootstrap exits 1", async () => {
     const t = io({ answers: { "launchctl bootstrap": { status: 5, stderr: "Bootstrap failed: 5: Input/output error" } } });
     assert.equal(await main(["enable"], t.io), 1);

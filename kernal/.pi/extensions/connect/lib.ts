@@ -118,7 +118,7 @@ export function isZeroCost(cost: Cost | undefined): boolean {
 /** Qwen 3.6 reasoning knobs: pi's `off` must reach the server as reasoning_effort "none". */
 export const QWEN_THINKING_MAP = { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" };
 
-/** Laptop routes: the router's `local-qwen-mlx` and a shared host's `local/<user>-<host>/<model>`. */
+/** Laptop routes: a shared host's `local/<user>-<host>/<model>`, and the retired `local-qwen-mlx` name. */
 export function isLocalRoute(id: string): boolean {
   return id.startsWith("local-") || id.startsWith("local/");
 }
@@ -285,7 +285,7 @@ export function backends(
       apiKey: cleanKey(env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY),  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,
-      fallback: ["local-qwen-mlx", "gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
+      fallback: ["gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
       model: (id) => {
         const local = isLocalRoute(id);
         const claude = /claude/.test(id);
@@ -307,7 +307,7 @@ export function backends(
           maxTokens: Math.min(meta?.maxTokens ?? (local ? 8192 : 32000), 64000),
           reasoning: meta?.reasoning ?? true,
           // `none` is what LM Studio and Ollama read. vLLM rejects it, so only those kinds (and the
-          // local-qwen-mlx alias) send it. Every other local server keeps the generic map.
+          // retired local-qwen-mlx name) send it. Every other local server keeps the generic map.
           thinkingLevelMap: localThinkingMap(id, facts?.kind),
           compat: PROXY_COMPAT,
         };

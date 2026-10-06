@@ -79,6 +79,16 @@ deploy_fail() {
   exit 1
 }
 
+# litellm.augment-code.support is the retired Augment work proxy. config.env keeps an
+# already-exported LITELLM_BASE_URL, and a laptop .env used to export that host, so one
+# ./release.sh pointed production at a host that answers a Google HTML 500. The router is
+# https://router.kernal.one/v1. Refuse the retired host before any deploy reads the value.
+case "${LITELLM_BASE_URL}" in
+  *litellm.augment-code.support*)
+    deploy_fail "LITELLM_BASE_URL=${LITELLM_BASE_URL} is the retired Augment proxy. Unset it; deploys use https://router.kernal.one/v1."
+    ;;
+esac
+
 # deploy_guard <path>... -- paths are relative to the repo root: the build context the caller uploads.
 deploy_guard() {
   if [[ "${ALLOW_OFF_MAIN:-}" == 1 ]]; then

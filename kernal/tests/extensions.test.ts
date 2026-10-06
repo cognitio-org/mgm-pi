@@ -450,11 +450,13 @@ describe("connect extension", async () => {
     const restore = stubFetch({
       "/api/local-hosts": () => ({
         hosts: [
-          { status: "offline", models: [
-            { id: "qwen", routerModel: "local/a-mbp/qwen", shared: true, contextLength: 131072, vision: false },
+          { status: "offline", tunnel: { managed: true }, models: [
+            { id: "qwen", routerModel: "local/a-mbp/qwen", shared: true, contextLength: 131072, vision: false, kind: "lmstudio" },
             { id: "hidden", routerModel: "local/a-mbp/hidden", shared: false },
+            { id: "embed", routerModel: "local/a-mbp/embed", shared: true, type: "embeddings" },
           ] },
-          { status: "online", models: [{ id: "gemma", routerModel: "litellm/local/b-air/gemma", shared: true, vision: true }] },
+          { status: "online", tunnel: { managed: true }, models: [{ id: "gemma", routerModel: "litellm/local/b-air/gemma", shared: true, vision: true, kind: "ollama" }] },
+          { status: "online", tunnel: { managed: false }, models: [{ id: "x", routerModel: "local/interim/x", shared: true }] },
         ],
       }),
     });
@@ -468,6 +470,8 @@ describe("connect extension", async () => {
       assert.ok(ids.includes("local/a-mbp/qwen"));
       assert.ok(ids.includes("local/b-air/gemma"));
       assert.ok(!ids.includes("local/a-mbp/hidden"));
+      assert.ok(!ids.includes("local/a-mbp/embed"));
+      assert.ok(!ids.includes("local/interim/x"));
       assert.ok(!ids.includes("litellm/local/b-air/gemma"));
       const qwen = models.find((m: any) => m.id === "local/a-mbp/qwen");
       assert.equal(qwen.thinkingLevelMap.off, "none");

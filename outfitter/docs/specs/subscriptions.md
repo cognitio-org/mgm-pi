@@ -88,7 +88,7 @@ Connect for Claude can paste a setup-token. Grok, Codex, and Gemini cards can pa
 - `kernal subscriptions connect claude` runs `claude setup-token`, uploads the token with `PUT /api/me/subscription-secrets/claude`, and does not print the token.
 - `kernal subscriptions disconnect <vendor>` deletes the account secret.
 
-The runner is Kernal code. It does not edit `pi-subagents` and it does not widen the builtin Claude adapter. When `subscriptions.claude` is `sandboxed` or `full`, the coordinator's Claude worker is this runner:
+The runner is Kernal code. It does not edit `pi-subagents` and it does not widen the builtin Claude adapter. When `subscriptions.claude` is `sandboxed` or `full`, the coordinator's Claude worker is this runner, reached through the `subscription_worker` tool. A direct `subagent` launch of `claude-code` or `claude-code-writer` is blocked while that switch is on. A direct launch of `codex-exec` or `codex-exec-writer` is blocked while `subscriptions.codex` is on, and that block does not start Codex.
 
 - One `claude -p` invocation. No `--resume`. No session id stored.
 - The child environment drops `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`. When an account secret exists, set `CLAUDE_CODE_OAUTH_TOKEN` to it. Otherwise leave the local Claude login alone.

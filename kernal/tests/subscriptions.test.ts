@@ -397,3 +397,98 @@ describe("the command is dispatched before pi", () => {
     assert.equal(stderr, "");
   });
 });
+
+describe("the coordinator uses the Claude runner", () => {
+  test("a hidden builtin launch is blocked; inspection and other agents are not", async () => {
+    const { blockHiddenSubagent, subscriptionSystemNote, withSubscriptionNote, mcpServersFrom, followAfter, subscriptionToolText, executeSubscriptionWorker } = await import("../.pi/extensions/kernal-subscriptions/dispatch.ts");
+    const hidden = ["claude-code", "claude-code-writer", "codex-exec", "codex-exec-writer"];
+    const claude = blockHiddenSubagent({ agent: "claude-code", task: "edit it" }, hidden);
+    assert.equal(claude?.block, true);
+    assert.match(claude?.reason ?? "", /subscription_worker/);
+    assert.doesNotMatch(claude?.reason ?? "", /ANTHROPIC_API_KEY/);
+    const codex = blockHiddenSubagent({ agent: "codex-exec-writer", task: "edit it" }, ["codex-exec-writer"]);
+    assert.match(codex?.reason ?? "", /no Codex runner/);
+    assert.equal(blockHiddenSubagent({ agent: "scout", task: "look" }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({ action: "get", agent: "claude-code" }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({ action: "list" }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({ agent: "claude-code" }, []), undefined);
+    const script = blockHiddenSubagent({ workflowScript: 'return runs.run("k", { agent: "claude-code-writer", task: "x" })' }, hidden);
+    assert.equal(script?.block, true);
+    assert.match(script?.reason ?? "", /claude-code-writer/);
+    assert.equal(subscriptionSystemNote({ claude: "off", codex: "off" }), undefined);
+    const note = subscriptionSystemNote({ claude: "full", codex: "sandboxed" });
+    assert.match(note ?? "", /subscription_worker/);
+    assert.match(note ?? "", /codex-exec/);
+    assert.equal(withSubscriptionNote("already", note), `already\n\n${note}`);
+    assert.deepEqual(mcpServersFrom(['{"mcpServers":{"docs":{"url":"https://docs.example/mcp"}}}', "not json", '{"mcpServers":{"local":{"command":"node"}}}']), {
+      docs: { url: "https://docs.example/mcp" },
+      local: { command: "node" },
+    });
+    assert.deepEqual(followAfter("claude", "claude,grok,codex", { claude: "full", grok: "full", codex: "off" }, new Set(["claude"])), [
+      { vendor: "grok", action: "connect" },
+    ]);
+    const spent = subscriptionToolText(
+      { kind: "exhausted", vendor: "claude", text: "Claude's plan window is spent." },
+      [{ vendor: "grok", action: "connect" }],
+    );
+    assert.equal(spent.isError, true);
+    assert.match(spent.text, /plan window is spent/);
+    assert.match(spent.text, /Do not retry with an API key/);
+    assert.match(spent.text, /grok is next/);
+    assert.match(spent.text, /router subagent/);
+    const calls: string[] = [];
+    const ran = await executeSubscriptionWorker({ prompt: "  edit it  ", memoryBrief: "brief" }, {
+      cwd: "/work",
+      mcpServers: { docs: { url: "https://docs.example/mcp" } },
+      run: async (vendor, input) => {
+        calls.push(`${vendor}:${input.prompt}:${input.cwd}:${input.memoryBrief}`);
+        return { kind: "ok", vendor, text: "done" };
+      },
+    });
+    assert.deepEqual(calls, ["claude:edit it:/work:brief"]);
+    assert.equal(ran.isError, false);
+    assert.equal(ran.text, "done");
+    const other = await executeSubscriptionWorker({ prompt: "x", vendor: "grok" }, {
+      run: async (vendor) => {
+        calls.push(vendor);
+        return { kind: "unsupported", vendor, text: "grok has no runner in this slice" };
+      },
+    });
+    assert.equal(other.isError, true);
+    assert.match(other.text, /no runner/);
+    assert.equal((await executeSubscriptionWorker({ prompt: "  " }, { run: async () => { throw new Error("no"); } })).text, "subscription_worker needs a prompt.");
+  });
+
+  test("the extension registers the tool, blocks a hidden launch, and appends the note", async () => {
+    const { _resetCentralConfig, setLocalOverride } = await import("../.pi/extensions/_shared/central-config.ts");
+    const mod = await import("../.pi/extensions/kernal-subscriptions/index.ts");
+    const tools: { name: string; execute: Function }[] = [];
+    const handlers: Record<string, Function[]> = {};
+    mod.default({
+      registerTool: (tool: { name: string; execute: Function }) => { tools.push(tool); },
+      on: (ev: string, h: Function) => { (handlers[ev] ??= []).push(h); },
+    } as any);
+    assert.equal(tools[0]?.name, "subscription_worker");
+    assert.equal(handlers.tool_call?.length, 1);
+    assert.equal(handlers.before_agent_start?.length, 1);
+    try {
+      setLocalOverride("subscriptions.claude", "full");
+      setLocalOverride("subscriptions.codex", "off");
+      const blocked = await handlers.tool_call[0]({ toolName: "subagent", input: { agent: "claude-code", task: "edit" } });
+      assert.equal(blocked.block, true);
+      assert.equal(await handlers.tool_call[0]({ toolName: "subagent", input: { agent: "scout", task: "look" } }), undefined);
+      assert.equal(await handlers.tool_call[0]({ toolName: "bash", input: { command: "true" } }), undefined);
+      const event = { systemPromptOptions: { appendSystemPrompt: "base", forceSystemPrompt: undefined as string | undefined } };
+      await handlers.before_agent_start[0](event);
+      assert.match(event.systemPromptOptions.appendSystemPrompt, /subscription_worker/);
+      assert.equal(event.systemPromptOptions.forceSystemPrompt, undefined);
+      const forced = { systemPromptOptions: { appendSystemPrompt: undefined as string | undefined, forceSystemPrompt: "forced" } };
+      await handlers.before_agent_start[0](forced);
+      assert.match(forced.systemPromptOptions.forceSystemPrompt, /^forced\n\nsubscriptions\.claude is on/);
+    } finally {
+      setLocalOverride("subscriptions.claude", undefined);
+      setLocalOverride("subscriptions.codex", undefined);
+      _resetCentralConfig();
+    }
+  });
+});

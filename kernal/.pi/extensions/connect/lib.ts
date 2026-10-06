@@ -117,6 +117,69 @@ export function isZeroCost(cost: Cost | undefined): boolean {
 
 /** Qwen 3.6 reasoning knobs: pi's `off` must reach the server as reasoning_effort "none". */
 export const QWEN_THINKING_MAP = { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" };
+
+/** Laptop routes: the router's `local-qwen-mlx` and a shared host's `local/<user>-<host>/<model>`. */
+export function isLocalRoute(id: string): boolean {
+  return id.startsWith("local-") || id.startsWith("local/");
+}
+
+/** Context and vision for a shared model the router isn't listing right now (offline hosts drop out of /model/info). */
+export type LocalModelFact = { contextWindow?: number; vision?: boolean; online: boolean };
+
+/** Shared models from GET /api/local-hosts. First id wins. `litellm/` is stripped; unshared models are skipped. */
+export function localModelsFromHosts(body: unknown): Map<string, LocalModelFact> {
+  const hosts = (body as { hosts?: unknown } | null)?.hosts;
+  const out = new Map<string, LocalModelFact>();
+  if (!Array.isArray(hosts)) return out;
+  for (const h of hosts) {
+    const online = (h as { status?: string })?.status === "online";
+    const models = (h as { models?: unknown })?.models;
+    if (!Array.isArray(models)) continue;
+    for (const m of models) {
+      const row = m as { shared?: boolean; routerModel?: unknown; contextLength?: unknown; vision?: unknown };
+      if (row?.shared !== true || typeof row.routerModel !== "string" || !row.routerModel) continue;
+      const id = row.routerModel.startsWith("litellm/") ? row.routerModel.slice("litellm/".length) : row.routerModel;
+      if (out.has(id)) continue;
+      const fact: LocalModelFact = { online };
+      if (typeof row.contextLength === "number" && Number.isFinite(row.contextLength) && row.contextLength > 0) fact.contextWindow = row.contextLength;
+      if (typeof row.vision === "boolean") fact.vision = row.vision;
+      out.set(id, fact);
+    }
+  }
+  return out;
+}
+
+/** Append host models the router didn't list. The discovered order stays put when there is nothing to add. */
+export function mergeLitellmModels(discovered: string[], extras: Iterable<string>): string[] {
+  const have = new Set(discovered);
+  const add = [...extras].filter((id) => id && !have.has(id)).sort();
+  return add.length ? [...discovered, ...add] : discovered;
+}
+
+/** Picker label. The id pi registers stays clean; only the menu string carries online/offline. */
+export function localModelLabel(id: string, online: boolean): string {
+  return `${id}  (${online ? "online" : "offline"})`;
+}
+
+export function localModelIdFromLabel(label: string): string {
+  return label.replace(/\s+\((online|offline)\)$/, "");
+}
+
+/**
+ * Footer when this machine's `kernal local` service is up and sharing.
+ * A successful heartbeat counts the models the router accepted; otherwise the discovered total.
+ * Quiet (undefined) when the service isn't running or sharing is off.
+ */
+export function localHostFooter(
+  state: { shareModels?: { value?: boolean }; models?: { total?: number }; tunnel?: { provider?: string | null }; heartbeat?: { ok?: boolean | null; routerModels?: string[] } } | undefined,
+  running: boolean,
+): string | undefined {
+  if (!running || !state?.shareModels?.value) return undefined;
+  const n = state.heartbeat?.ok === true ? (state.heartbeat.routerModels?.length ?? 0) : (state.models?.total ?? 0);
+  const provider = state.tunnel?.provider;
+  const via = provider ? ` via ${provider}` : "";
+  return `sharing ${n} model${n === 1 ? "" : "s"}${via}`;
+}
 const GENERIC_THINKING_MAP = { minimal: "low", xhigh: "high", max: "high" };
 /** Proxies forward OpenAI-only `store` and the developer role to backends that reject them. */
 const PROXY_COMPAT = { supportsDeveloperRole: false, supportsReasoningEffort: true, thinkingFormat: "openai", supportsUsageInStreaming: true, supportsStore: false };
@@ -176,7 +239,12 @@ export function curateOpenRouter(base: string[], lists: CurationLists, replaced 
   return [...out];
 }
 
-export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
+export function backends(
+  env: Record<string, string>,
+  litellmMeta: Map<string, ModelMeta>,
+  lmstudioMeta: Map<string, LmStudioMeta> = new Map(),
+  localFacts: Map<string, { contextWindow?: number; vision?: boolean }> = new Map(),
+): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
   const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;
   return [
@@ -203,9 +271,11 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       discover: true,
       fallback: ["local-qwen-mlx", "gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
       model: (id) => {
-        const local = id.startsWith("local-");
+        const local = isLocalRoute(id);
         const claude = /claude/.test(id);
         const meta = litellmMeta.get(id);
+        const facts = localFacts.get(id);
+        const vision = meta?.vision ?? facts?.vision;
         // An auto-router group's own /model/info entry prices every field at 0 (its underlying
         // model is only picked per call -- see isZeroCost); showing that as $0/token in /budget
         // would tell the user an auto-routed model is free, which it isn't. Treat it as
@@ -215,9 +285,9 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
         // /budget panel already uses for any other unpriced model.
         const cost = local ? FREE : isZeroCost(meta?.cost) && id.includes("auto") ? DEFAULT_PAID : meta?.cost ?? DEFAULT_PAID;
         return {
-          id, name: id, input: meta?.vision === false ? ["text"] : ["text", "image"],
+          id, name: id, input: vision === false ? ["text"] : ["text", "image"],
           cost,
-          contextWindow: meta?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
+          contextWindow: meta?.contextWindow ?? facts?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
           maxTokens: Math.min(meta?.maxTokens ?? (local ? 8192 : 32000), 64000),
           reasoning: meta?.reasoning ?? true,
           thinkingLevelMap: local ? QWEN_THINKING_MAP : GENERIC_THINKING_MAP,

@@ -24,15 +24,18 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { env, inSandbox } from "../_shared/env.ts";
 import {
-  type Backend, type ModelMeta, type LmStudioMeta, backends, parseEnvText, parseModelInfo, lmStudioMeta, parseSpendHeaders, rootUrl, normalizeBaseUrl,
+  type Backend, type ModelMeta, type LmStudioMeta, type LocalModelFact, backends, parseEnvText, parseModelInfo, lmStudioMeta, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed, curateOpenRouter,
+  localHostFooter, localModelIdFromLabel, localModelLabel, localModelsFromHosts, mergeLitellmModels,
 } from "./lib.ts";
 import { canSaveToAccount, changeCuration, curationLists, type CurationTarget } from "./curation.ts";
 import { settingsPath, updateSettings } from "./settings.ts";
 import { noteOwnDefaultsWrite } from "../_shared/default-sync.ts";
 import { clearLocalOverrides, describeSource, layerCentralEnv, reresolve, webOrigin, type ConfigValue } from "../_shared/central-config.ts";
-import { loginState } from "../_shared/outfitter-session.ts";
+import { loginState, outfitterApi } from "../_shared/outfitter-session.ts";
+import { outfitterBearer, sendWithBearer } from "../_shared/outfitter-env.ts";
 import { probeServer } from "../_shared/local-discovery.ts";
+import { kernalHome, pidAlive, readLockPid, readState } from "../kernal-local/state.ts";
 
 /** The .env that /setup writes: next to the agent dir (bundle root or the kernal/ checkout). */
 export function envFilePath(): string {
@@ -168,6 +171,28 @@ async function discover(b: Backend, litellmMeta: Map<string, ModelMeta>, lmstudi
   return ids.length ? ids.sort() : b.fallback;
 }
 
+/** Other people's shared models (GET /api/local-hosts). Signed out: nothing, and no request. */
+async function fetchLocalHosts(): Promise<unknown> {
+  if (!loginState().signedIn) return undefined;
+  try {
+    const res = await sendWithBearer((rejected) => outfitterBearer(undefined, rejected), async (token) => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      try {
+        return await fetch(`${outfitterApi()}/api/local-hosts`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: ctl.signal });
+      } finally { clearTimeout(t); }
+    });
+    return res.ok ? await res.json() : undefined;
+  } catch { return undefined; }
+}
+
+/** "sharing N models via ngrok", or nothing when this laptop isn't sharing. */
+function sharingNow(): string | undefined {
+  const home = kernalHome();
+  const pid = readLockPid(home);
+  return localHostFooter(readState(home), pid !== undefined && pidAlive(pid));
+}
+
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
 // ~/.pi/agent), never into the repo pi happens to be running in. An upgrade carries the choice
 // forward (settings.ts: the installer merges the user's changes over the new release's defaults).
@@ -182,6 +207,7 @@ export function saveDefault(provider: string, model: string) {
 export default async function (pi: ExtensionAPI) {
   const litellmMeta = new Map<string, ModelMeta>();
   const lmstudioMeta = new Map<string, LmStudioMeta>();
+  const localFacts = new Map<string, LocalModelFact>();
   let defs: Backend[] = [];
   const models = new Map<string, string[]>();
   const registered = new Set<string>();   // backends whose provider is registered with pi right now
@@ -195,11 +221,11 @@ export default async function (pi: ExtensionAPI) {
   async function registerAll(envOverride?: Record<string, string>) {
     const env = { ...loadEnv(process.cwd()), ...(envOverride ?? {}) };
     registeredFrom = centralInputs();
-    litellmMeta.clear(); lmstudioMeta.clear(); reachable.clear(); keyRejected.clear(); notListed.clear(); registered.clear();
+    litellmMeta.clear(); lmstudioMeta.clear(); localFacts.clear(); reachable.clear(); keyRejected.clear(); notListed.clear(); registered.clear();
     // A cloud sandbox has no local model server: there the lmstudio backend is kept only when
     // LMSTUDIO_BASE_URL was set on purpose (a guru opting in to a tunnelled laptop model), and is
     // never probed on localhost by default.
-    defs = backends(env, litellmMeta, lmstudioMeta).filter((b) => !(b.id === "lmstudio" && inSandbox() && !env.LMSTUDIO_BASE_URL));
+    defs = backends(env, litellmMeta, lmstudioMeta, localFacts).filter((b) => !(b.id === "lmstudio" && inSandbox() && !env.LMSTUDIO_BASE_URL));
     const or = defs.find((d) => d.id === "openrouter");
     if (or) or.fallback = curateOpenRouter(or.fallback, curationLists(), !!env.OPENROUTER_MODELS);
     await Promise.all(defs.map(async (b) => {
@@ -218,8 +244,14 @@ export default async function (pi: ExtensionAPI) {
       if (b.id === "litellm") { if (usable) process.env.KERNAL_ROUTER_KEY = b.apiKey; else delete process.env.KERNAL_ROUTER_KEY; }
       if (!usable) { models.set(b.id, []); try { pi.unregisterProvider?.(b.id); } catch {} return; }
       const ids = await discover(b, litellmMeta, lmstudioMeta);
-      models.set(b.id, ids);
-      pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: ids.map(b.model) as any });
+      let listed = ids;
+      if (b.id === "litellm") {
+        const shared = localModelsFromHosts(await fetchLocalHosts());
+        for (const [id, fact] of shared) localFacts.set(id, fact);
+        listed = mergeLitellmModels(ids, shared.keys());
+      }
+      models.set(b.id, listed);
+      pi.registerProvider(b.id, { name: b.label, baseUrl: b.baseUrl, apiKey: b.apiKey, api: "openai-completions", models: listed.map(b.model) as any });
       registered.add(b.id);
     }));
   }
@@ -292,7 +324,8 @@ export default async function (pi: ExtensionAPI) {
     let b = backendId ? byId(backendId) : undefined;
     if (!b) {
       if (backendId) { ctx.ui.notify(`Unknown backend "${backendId}". Use lmstudio, litellm or openrouter.`, "error"); return; }
-      const pick = await ctx.ui.select("Connect to", defs.map((d) => d.label));
+      const sharing = sharingNow();
+      const pick = await ctx.ui.select(sharing ? `Connect to — ${sharing}` : "Connect to", defs.map((d) => d.label));
       if (!pick) return;
       b = defs[defs.map((d) => d.label).indexOf(pick)];
     }
@@ -300,10 +333,13 @@ export default async function (pi: ExtensionAPI) {
     if (keyRejected.has(b.id)) { ctx.ui.notify(`${b.id} rejected the key (${keyRejected.get(b.id)}). Run /setup and paste it again. ${keyHint(b.id)}`, "error"); return; }
     const ids = models.get(b.id) ?? [];
     if (!modelId) {
-      const options = b.id === "openrouter" ? [...ids, BROWSE] : ids;
-      modelId = options.length === 1 ? options[0] : await ctx.ui.select(`Model on ${b.id}`, options);
-      if (!modelId) return;
-      if (modelId === BROWSE) { modelId = await browseOpenRouter(ctx); if (!modelId) return; }
+      const sharing = sharingNow();
+      const marked = (id: string) => { const fact = b!.id === "litellm" ? localFacts.get(id) : undefined; return fact ? localModelLabel(id, fact.online) : id; };
+      const options = (b.id === "openrouter" ? [...ids, BROWSE] : ids).map((id) => id === BROWSE ? id : marked(id));
+      const picked = options.length === 1 ? options[0] : await ctx.ui.select(sharing ? `Model on ${b.id} — ${sharing}` : `Model on ${b.id}`, options);
+      if (!picked) return;
+      if (picked === BROWSE) { modelId = await browseOpenRouter(ctx); if (!modelId) return; }
+      else modelId = localModelIdFromLabel(picked);
     }
     // Not on the list but OpenRouter has it: offer to add it first, so pi can switch to it.
     if (b.id === "openrouter" && !ids.includes(modelId) && (await loadCatalogue()).includes(modelId) && !(await offerToAdd(ctx, modelId))) return;
@@ -448,7 +484,10 @@ export default async function (pi: ExtensionAPI) {
     description: "Connect to lmstudio | litellm | openrouter [model]",
     getArgumentCompletions: (prefix) => {
       const [first, second] = prefix.split(/\s+/);
-      if (second !== undefined) return (models.get(first) ?? []).filter((m) => m.startsWith(second)).map((m) => ({ value: `${first} ${m}`, label: m }));
+      if (second !== undefined) return (models.get(first) ?? []).filter((m) => m.startsWith(second)).map((m) => {
+        const fact = first === "litellm" ? localFacts.get(m) : undefined;
+        return { value: `${first} ${m}`, label: m, ...(fact ? { description: fact.online ? "online" : "offline" } : {}) };
+      });
       return defs.filter((d) => d.id.startsWith(first ?? "")).map((d) => ({ value: d.id, label: d.id, description: d.label }));
     },
     handler: async (args, ctx) => {
@@ -513,6 +552,9 @@ export default async function (pi: ExtensionAPI) {
     if (key) { if (key.max_budget != null) keyMax = key.max_budget; if (key.spend != null) { spend.keySpend = key.spend; spend.keySpendStart ??= key.spend; } }
     budgetStatus(ctx);
   };
+  let hostCtx: { ui: { setStatus(key: string, text: string | undefined): void } } | undefined;
+  let hostWatch: ReturnType<typeof setInterval> | undefined;
+  const refreshLocalHost = () => hostCtx?.ui.setStatus("local-host", sharingNow());
   pi.on("session_start", async (_ev, ctx) => {
     // pi answers no RPC command until every session_start handler has returned, and this lookup only
     // feeds the footer, so a sandbox fills it in behind the first prompt instead of ahead of it.
@@ -520,6 +562,13 @@ export default async function (pi: ExtensionAPI) {
     else await seedKeySpend(ctx);
     const m = ctx.model;
     if (m && defs.some((d) => d.id === m.provider)) ctx.ui.setStatus("connect", `⇄ ${m.provider}/${m.id}`);
+    // Quiet when this laptop isn't sharing. The file is the service's own state; the UI does not start a tunnel.
+    hostCtx = ctx;
+    refreshLocalHost();
+    if (!hostWatch) {
+      hostWatch = setInterval(refreshLocalHost, 15_000);
+      hostWatch.unref?.();
+    }
   });
   pi.on("model_select", async (ev: any, ctx) => {
     budgetStatus(ctx);

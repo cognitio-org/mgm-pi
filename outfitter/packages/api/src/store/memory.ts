@@ -72,7 +72,7 @@ import type { VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
 import { MemoryDeviceCodes, MemoryDevices } from "./devices.ts";
 import { MemorySettings } from "./settings.ts";
-import { MemoryProviderKeys, MemoryRouterKeys } from "./keys.ts";
+import { MemoryProviderKeys, MemoryRouterKeys, MemorySubscriptionSecrets } from "./keys.ts";
 import { MemoryLocalHosts } from "./local-hosts.ts";
 import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
@@ -1398,6 +1398,7 @@ export class MemoryStore implements Store {
   readonly settings = new MemorySettings();
   readonly routerKeys = new MemoryRouterKeys();
   readonly providerKeys = new MemoryProviderKeys();
+  readonly subscriptionSecrets = new MemorySubscriptionSecrets();
   readonly localHosts = new MemoryLocalHosts();
 
   constructor() {

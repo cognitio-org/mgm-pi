@@ -77,10 +77,10 @@ import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
 import { MongoDeviceCodes, MongoDevices, ensureDeviceIndexes, type DeviceCodeDoc, type DeviceDoc } from "./devices.ts";
 import { MongoSettings, ensureSettingsIndexes, type SettingsDocMongo } from "./settings.ts";
-import { MongoProviderKeys, MongoRouterKeys, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc } from "./keys.ts";
+import { MongoProviderKeys, MongoRouterKeys, MongoSubscriptionSecrets, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc, type SubscriptionSecretDoc } from "./keys.ts";
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
-import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import type { ProviderKeysCollection, RouterKeysCollection, SubscriptionSecretsCollection } from "./keys.ts";
 import { MongoLocalHosts, ensureLocalHostIndexes, type LocalHostDoc, type LocalHostsCollection } from "./local-hosts.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
@@ -1799,6 +1799,7 @@ export class MongoStore implements Store {
   readonly settings: SettingsCollection;
   readonly routerKeys: RouterKeysCollection;
   readonly providerKeys: ProviderKeysCollection;
+  readonly subscriptionSecrets: SubscriptionSecretsCollection;
   readonly localHosts: LocalHostsCollection;
   private readonly client: MongoClient;
 
@@ -1838,6 +1839,7 @@ export class MongoStore implements Store {
     this.settings = new MongoSettings(db.collection<SettingsDocMongo>("settings"));
     this.routerKeys = new MongoRouterKeys(db.collection<RouterKeyDoc>("routerKeys"));
     this.providerKeys = new MongoProviderKeys(db.collection<ProviderKeyDoc>("providerKeys"));
+    this.subscriptionSecrets = new MongoSubscriptionSecrets(db.collection<SubscriptionSecretDoc>("subscriptionSecrets"));
     this.localHosts = new MongoLocalHosts(db.collection<LocalHostDoc>("localHosts"));
   }
 

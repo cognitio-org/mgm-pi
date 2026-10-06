@@ -55,7 +55,11 @@ export interface SettingDecl {
 }
 
 /** Bumped whenever a key is added or retired (§3.6). */
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
+
+/** Personal subscription workers (docs/specs/subscriptions.md §2). Also the secret-store vendors. */
+export const SUBSCRIPTION_VENDORS = ["claude", "grok", "codex", "gemini"] as const;
+export type SubscriptionVendor = (typeof SUBSCRIPTION_VENDORS)[number];
 
 const PERSONAL = ["fleet", "user", "profile", "device", "local"] as const;
 
@@ -70,6 +74,9 @@ const SENTRY_SIGNAL = { type: "boolean", secret: false, levels: ["fleet", "local
  * so the levels combine instead of the lowest level replacing the list. Kernal applies them from
  * the fleet's adds down to this machine's, the nearer level winning; a fleet removal always wins. */
 const OPENROUTER_LIST = { type: "string", secret: false, since: 3 } as const;
+
+/** Subscription mode and prefer order. Not fleet: an operator cannot turn a person's subscription on. */
+const SUBSCRIPTION = { secret: false, levels: ["user", "profile", "device", "local"] as const, override: "any" as const, since: 4 };
 
 /** The v1 keys (spec §3.2). */
 export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
@@ -315,6 +322,12 @@ export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
   { ...OPENROUTER_LIST, key: "openrouter.models.profileRemove", levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list, comma-separated." },
   { ...OPENROUTER_LIST, key: "openrouter.models.localAdd", levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list, comma-separated." },
   { ...OPENROUTER_LIST, key: "openrouter.models.localRemove", levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list, comma-separated." },
+  // v4 (docs/specs/subscriptions.md §2)
+  { ...SUBSCRIPTION, key: "subscriptions.claude", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Claude subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.grok", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Grok subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.codex", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Codex subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.gemini", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Antigravity subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.prefer", type: "string", default: SUBSCRIPTION_VENDORS.join(","), description: "Subscription vendors to try when a plan window is spent, comma-separated, no spaces. A subset is allowed." },
 ];
 
 export function settingDecl(key: string): SettingDecl | undefined {
@@ -334,6 +347,17 @@ export const MAX_PROFILES = 20;
 
 const MAX_STRING_LENGTH = 1024;
 const MAX_URL_LENGTH = 2048;
+
+/** `subscriptions.prefer`: comma-separated unique vendor ids, no spaces. A subset is valid; empty is not. */
+function isSubscriptionPrefer(value: string): boolean {
+  const ids = value.split(",");
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!(SUBSCRIPTION_VENDORS as readonly string[]).includes(id) || seen.has(id)) return false;
+    seen.add(id);
+  }
+  return true;
+}
 
 /** Options for coerceSettingValue and parseValueWrite. `allowHttp` (dev mode only) also accepts
  * http:// URLs; otherwise a `url` must be https, so a Kernal never sends its router key in clear. */
@@ -359,7 +383,10 @@ export function coerceSettingValue(decl: SettingDecl, value: unknown, opts: Coer
     case "string": {
       if (typeof value !== "string") return undefined;
       const v = value.trim();
-      return v && v.length <= MAX_STRING_LENGTH && !/[\u0000-\u001f\u007f]/.test(v) ? v : undefined;
+      if (!v || v.length > MAX_STRING_LENGTH || /[\u0000-\u001f\u007f]/.test(v)) return undefined;
+      // Other string keys stay "any non-empty trimmed string". Only prefer has a shape.
+      if (decl.key === "subscriptions.prefer" && !isSubscriptionPrefer(v)) return undefined;
+      return v;
     }
     case "url": {
       if (typeof value !== "string") return undefined;

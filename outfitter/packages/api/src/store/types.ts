@@ -8,7 +8,7 @@ import type { VoiceEngine, VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
-import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import type { ProviderKeysCollection, RouterKeysCollection, SubscriptionSecretsCollection } from "./keys.ts";
 import type { LocalHostsCollection } from "./local-hosts.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
@@ -1424,6 +1424,7 @@ export interface Store {
   settings: SettingsCollection;
   routerKeys: RouterKeysCollection;
   providerKeys: ProviderKeysCollection;
+  subscriptionSecrets: SubscriptionSecretsCollection;
   // Local Host (#378, docs/specs/local-host.md §1.5): owned by task A.
   localHosts: LocalHostsCollection;
   close(): Promise<void>;

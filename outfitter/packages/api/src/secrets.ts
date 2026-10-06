@@ -379,8 +379,9 @@ export interface SecretVersionInfo {
 export interface SecretAdmin {
   info(secretName: string): Promise<SecretVersionInfo>;
   /** Adds a new enabled version, creating the secret (automatic replication) first if it doesn't
-   * exist yet. `value` is the caller's responsibility to validate/trim -- this just stores it. */
-  addVersion(secretName: string, value: string): Promise<void>;
+   * exist yet. Returns that version's number (Secret Manager numbers from 1). `value` is the
+   * caller's responsibility to validate/trim -- this just stores it. */
+  addVersion(secretName: string, value: string): Promise<number>;
   /** Disables every currently-enabled version (does not destroy anything, so it's recoverable from
    * the console). A no-op if the secret doesn't exist or has no enabled versions. */
   disableAllEnabled(secretName: string): Promise<void>;
@@ -427,14 +428,17 @@ export class GcpSecretAdmin implements SecretAdmin {
     return { set: true, masked: maskTail(value), updatedAt: latest.createTime };
   }
 
-  async addVersion(secretName: string, value: string): Promise<void> {
+  async addVersion(secretName: string, value: string): Promise<number> {
     const client = await this.getAuthClient();
     await this.ensureSecretExists(client, secretName);
-    await client.request({
+    const res = await client.request<{ name?: string }>({
       url: `${this.secretUrl(secretName)}:addVersion`,
       method: "POST",
       data: { payload: { data: Buffer.from(value, "utf8").toString("base64") } },
     });
+    const version = versionNumber(res.data.name ?? "");
+    if (!version) throw new Error("secret manager addVersion returned no version");
+    return version;
   }
 
   async disableAllEnabled(secretName: string): Promise<void> {
@@ -517,7 +521,8 @@ interface MemorySecretVersion {
 }
 
 /** Dev/test SecretAdmin: an in-memory map, so operator-settings tests never touch GCP. Versions
- * are appended in order (last = newest), mirroring Secret Manager's own numbering. */
+ * are appended in order (last = newest) and numbered from 1, like Secret Manager. A disabled
+ * version keeps its number. */
 export class MemorySecretAdmin implements SecretAdmin {
   private readonly secrets = new Map<string, MemorySecretVersion[]>();
 
@@ -527,10 +532,11 @@ export class MemorySecretAdmin implements SecretAdmin {
     return { set: true, masked: maskTail(latest.value), updatedAt: latest.createdAt };
   }
 
-  async addVersion(secretName: string, value: string): Promise<void> {
+  async addVersion(secretName: string, value: string): Promise<number> {
     const versions = this.secrets.get(secretName) ?? [];
     versions.push({ value, enabled: true, createdAt: new Date().toISOString() });
     this.secrets.set(secretName, versions);
+    return versions.length;
   }
 
   async disableAllEnabled(secretName: string): Promise<void> {
@@ -582,9 +588,9 @@ export class AppSecretCache implements SecretAdmin {
     return this.inner.info(secretName);
   }
 
-  async addVersion(secretName: string, value: string): Promise<void> {
+  async addVersion(secretName: string, value: string): Promise<number> {
     this.cache.delete(secretName);
-    await this.inner.addVersion(secretName, value);
+    return this.inner.addVersion(secretName, value);
   }
 
   async disableAllEnabled(secretName: string): Promise<void> {

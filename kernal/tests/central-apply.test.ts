@@ -138,7 +138,9 @@ describe("precedence (#437): this machine → account → legacy → fleet → d
   }
 
   test("every personal key is accountFirst, and nothing else is", () => {
-    assert.deepEqual(KNOWN_SETTINGS.filter((d) => d.accountFirst).map((d) => d.key).sort(), KEYS.map((k) => k.key).sort());
+    // Subscription keys are accountFirst too, but they have no legacy local source, so they are not in KEYS.
+    const subscription = ["subscriptions.claude", "subscriptions.codex", "subscriptions.gemini", "subscriptions.grok", "subscriptions.prefer"];
+    assert.deepEqual(KNOWN_SETTINGS.filter((d) => d.accountFirst).map((d) => d.key).sort(), [...KEYS.map((k) => k.key), ...subscription].sort());
   });
 
   test("KERNAL_SUMMARY_MODEL is legacy: below the account, the shell above .env above settings.json", () => {

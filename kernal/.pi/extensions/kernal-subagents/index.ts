@@ -7,7 +7,22 @@
  * every other tool, passes through untouched. See lib.ts.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getValue } from "../_shared/central-config.ts";
+import { hiddenSubscriptionAgents } from "../kernal-subscriptions/vendors.ts";
 import { annotateSubagentText, discoverCliNames } from "./lib.ts";
+
+/** Builtins to drop while a subscription switch is not off. A settings failure hides nothing. */
+function hiddenNow(): string[] {
+  try {
+    const mode = (key: string) => {
+      const v = getValue(key);
+      return typeof v === "string" ? v : "off";
+    };
+    return hiddenSubscriptionAgents({ claude: mode("subscriptions.claude"), codex: mode("subscriptions.codex") });
+  } catch {
+    return [];
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event: any, ctx: any) => {
@@ -17,10 +32,11 @@ export default function (pi: ExtensionAPI) {
     if (!Array.isArray(event.content)) return;
     // models output never says which agents run another tool, so ask the package's discovery.
     const cli = action === "models" ? await discoverCliNames(ctx?.cwd ?? process.cwd()) : undefined;
+    const hide = hiddenNow();
     let changed = false;
     const content = event.content.map((part: any) => {
       if (part?.type !== "text" || typeof part.text !== "string") return part;
-      const text = annotateSubagentText(part.text, cli);
+      const text = annotateSubagentText(part.text, cli, hide);
       if (text === part.text) return part;
       changed = true;
       return { ...part, text };

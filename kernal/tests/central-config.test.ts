@@ -11,8 +11,8 @@ import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, activeProfile, combine, configCachePath, describeSource,
-  displayValue, getValue, isCentralSource, layerCentralEnv, localOverridesPath, parseConfigResponse, providerKey,
+  KNOWN_SCHEMA_VERSION, KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, activeProfile, coerce, combine, configCachePath, describeSource,
+  displayValue, getValue, isCentralSource, layerCentralEnv, localOverridesPath, parseConfigResponse, providerKey, subscriptionPrefer,
   refreshConfig, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue, resolve, setLocalOverride, startBackgroundRefresh,
   webOrigin, MAX_CACHE_AGE_MS, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
@@ -581,5 +581,56 @@ describe("sentry from central settings", () => {
     assert.deepEqual(on, { telemetry: { sentry: { enabled: true, dsn: "https://k@o0.ingest.sentry.io/1", tracesSampleRate: 0.1 } } });
     assert.deepEqual(fleetFromConfig({ "telemetry.sentry.enabled": { value: true, source: "fleet", override: "opt-out", locked: false } }), { telemetry: { sentry: { enabled: false } } });
     assert.deepEqual(fleetFromConfig({}), { telemetry: { sentry: { enabled: false } } });
+  });
+});
+
+describe("subscription settings (schema 4)", () => {
+  test("five account-first keys, not fleet, session, with the spec defaults", () => {
+    assert.equal(KNOWN_SCHEMA_VERSION, 4);
+    const keys = ["subscriptions.claude", "subscriptions.grok", "subscriptions.codex", "subscriptions.gemini", "subscriptions.prefer"];
+    for (const key of keys) {
+      const d = decl(key);
+      assert.equal(d.accountFirst, true, key);
+      assert.equal(d.takesEffect, "session", key);
+      assert.equal(d.secret, false, key);
+      assert.equal(d.override, "any", key);
+      assert.deepEqual([...d.levels], ["user", "profile", "device", "local"], key);
+      assert.equal(d.levels.includes("fleet"), false, key);
+    }
+    for (const key of keys.slice(0, 4)) {
+      assert.equal(decl(key).type, "enum");
+      assert.deepEqual(decl(key).values, ["off", "sandboxed", "full"]);
+      assert.equal(decl(key).default, "off");
+    }
+    assert.equal(decl("subscriptions.prefer").default, "claude,grok,codex,gemini");
+    assert.equal(getValue("subscriptions.claude"), "off");
+    assert.equal(getValue("subscriptions.prefer"), "claude,grok,codex,gemini");
+  });
+
+  test("prefer accepts a subset in order and rejects spaces, duplicates, empty, and unknown ids", () => {
+    const d = decl("subscriptions.prefer");
+    assert.equal(coerce(d, "grok,codex"), "grok,codex");
+    assert.equal(coerce(d, "gemini"), "gemini");
+    assert.equal(subscriptionPrefer("claude,grok,codex,gemini"), "claude,grok,codex,gemini");
+    for (const bad of ["", "claude,grok,codex,gemini,claude", "claude, claude", "claude,grok ", "all", "claude,grok,codex,gemini,", "Claude"]) {
+      assert.equal(coerce(d, bad), undefined, bad);
+    }
+    assert.throws(() => setLocalOverride("subscriptions.prefer", "claude,claude"), /invalid value/);
+    setLocalOverride("subscriptions.prefer", "codex,claude");
+    assert.equal(getValue("subscriptions.prefer"), "codex,claude");
+    assert.equal(resolve().values["subscriptions.prefer"].source, "local");
+  });
+
+  test("a bad prefer from the server is dropped; an account value beats the default", () => {
+    writeCacheFile(response({
+      "subscriptions.prefer": { value: "claude,claude", source: "user" },
+      "subscriptions.claude": { value: "full", source: "user" },
+      "subscriptions.grok": { value: "sometimes", source: "profile" },
+    }));
+    setup();
+    assert.equal(getValue("subscriptions.prefer"), "claude,grok,codex,gemini");
+    assert.equal(resolve().values["subscriptions.prefer"].source, "default");
+    assert.equal(getValue("subscriptions.claude"), "full");
+    assert.equal(getValue("subscriptions.grok"), "off", "an unknown mode is not a value");
   });
 });

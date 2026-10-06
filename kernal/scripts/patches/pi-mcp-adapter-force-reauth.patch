@@ -27,33 +27,100 @@
      throwIfAborted(signal)
 --- a/pi-mcp-adapter/mcp-oauth-provider.ts
 +++ b/pi-mcp-adapter/mcp-oauth-provider.ts
-@@ -512,6 +512,26 @@
+@@ -256,6 +256,9 @@
+   private authFetch: OAuthFetch
+   private active = true
+   private flowClientInfo: StoredClientInfo | undefined
++  // Explicit /mcp-auth: a client registered for this flow, persisted with its tokens.
++  private skippingStoredSession = false
++  private deferredClientInfo: StoredClientInfo | undefined
+   private flowCodeVerifier: string | undefined
+   private flowDiscoveryState: OAuthDiscoveryState | undefined
+   private flowIssuerMismatch = false
+@@ -305,6 +308,8 @@
+ 
+   deactivate(): void {
+     this.active = false
++    this.skippingStoredSession = false
++    this.deferredClientInfo = undefined
+     this.invalidatedAccessToken = undefined
+     this.invalidatedClientId = undefined
+     this.staleRedirectClientId = undefined
+@@ -479,14 +484,15 @@
+         clientInfo.issuer = issuer
+         this.flowClientInfo = clientInfo
+         this.throwIfInactive()
+-        updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
++        if (clientInfo !== this.deferredClientInfo) {
++          updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
++        }
+       }
+       // Keep a stale dynamic registration available for its refresh attempt,
+       // but suppress it if that attempt invalidates the token and auth falls
+       // back to an interactive flow. The next clientInformation() call then
+       // makes the SDK register the current callback URI.
+-      const redirectUriIsStale = this.redirectUrl !== undefined
+-        && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))
++      const redirectUriIsStale = this.isRedirectStale(clientInfo)
+       this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
+       // Return all registration metadata and the local issuer extension.
+       // This keeps the SDK OAuth view and the stored issuer binding consistent.
+@@ -511,6 +517,33 @@
+     return undefined
    }
  
-   /**
++  private isRedirectStale(clientInfo: StoredClientInfo): boolean {
++    return this.redirectUrl !== undefined
++      && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))
++  }
++
++  /**
 +   * Explicit /mcp-auth: ignore the saved session for this flow only. The SDK
 +   * would otherwise refresh it and return no browser URL, or send a dynamic
 +   * client registered for an earlier callback port, which the authorization
 +   * server rejects ("redirect_uri is not registered for this client"). Hiding
-+   * the client makes the SDK register the current callback URI. Nothing is
-+   * deleted, so an abandoned sign-in leaves the saved session usable.
++   * the client makes the SDK register the current callback URI. That client is
++   * kept in memory and persisted with its tokens, so an abandoned sign-in
++   * leaves the saved client and refresh token paired and usable.
 +   */
 +  async skipStoredSession(): Promise<void> {
 +    this.throwIfInactive()
++    // Read again: startAuth may have just cleared a client it could not use.
 +    const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
 +    this.throwIfInactive()
++    this.skippingStoredSession = true
 +    if (stored?.tokens) this.invalidatedAccessToken = stored.tokens.accessToken
 +    const clientInfo = stored?.clientInfo
-+    if (clientInfo && !this.config.clientId && this.redirectUrl !== undefined
-+      && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))) {
++    if (clientInfo && !this.config.clientId && this.isRedirectStale(clientInfo)) {
 +      this.invalidatedClientId = clientInfo.clientId
 +    }
 +  }
 +
-+  /**
+   /**
     * Save client information from dynamic registration.
     */
-   async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
+@@ -544,6 +577,10 @@
+     this.flowClientInfo = clientInfo
+     this.invalidatedClientId = undefined
+     this.lastObservedClientId = clientInfo.clientId
++    if (this.skippingStoredSession) {
++      this.deferredClientInfo = clientInfo
++      return
++    }
+     updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
+   }
+ 
+@@ -594,6 +631,10 @@
+       ...(issuer !== undefined ? { issuer } : {}),
+     }
+     this.throwIfInactive()
++    if (this.deferredClientInfo !== undefined) {
++      updateClientInfo(this.serverName, this.deferredClientInfo, this.serverUrl, this.storageOptions)
++      this.deferredClientInfo = undefined
++    }
+     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
+     this.invalidatedAccessToken = undefined
+     this.lastSavedAccessToken = storedTokens.accessToken
 --- a/pi-mcp-adapter/commands.ts
 +++ b/pi-mcp-adapter/commands.ts
 @@ -404,6 +404,7 @@

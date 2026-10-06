@@ -306,6 +306,24 @@ describe("#447: the router MCP server's key", () => {
     await assert.rejects(resolveWith(""), /command exited with code 1/);
   });
 
+  test("sentry's gateway header is filled in process, not by a shell", { skip }, async () => {
+    // pi is a bun binary. spawnSync without an explicit env does not see variables connect sets
+    // after start, so a "!" header command exits 1 and OAuth reports "Failed to resolve OAuth HTTP
+    // headers". ${KERNAL_ROUTER_KEY} is substituted in process. A missing key still fails closed.
+    const sentry = JSON.parse(readFileSync(join(import.meta.dirname, "..", ".pi", "mcp.json"), "utf8")).mcpServers.sentry.headers["x-litellm-api-key"];
+    assert.equal(sentry, "Bearer ${KERNAL_ROUTER_KEY}");
+    const authFetch = join(import.meta.dirname, "..", ".pi", "npm", "node_modules", "pi-mcp-adapter", "mcp-auth-fetch.ts");
+    const { createJiti } = await import(jitiPath);
+    const { resolveOAuthHeaders } = await createJiti(import.meta.url).import(authFetch);
+    const saved = process.env.KERNAL_ROUTER_KEY;
+    process.env.KERNAL_ROUTER_KEY = "sk-device-1234";
+    try {
+      assert.equal(resolveOAuthHeaders({ "x-litellm-api-key": sentry }).get("x-litellm-api-key"), "Bearer sk-device-1234");
+      delete process.env.KERNAL_ROUTER_KEY;
+      assert.throws(() => resolveOAuthHeaders({ "x-litellm-api-key": sentry }), /Missing environment credential in OAuth HTTP headers/);
+    } finally { if (saved === undefined) delete process.env.KERNAL_ROUTER_KEY; else process.env.KERNAL_ROUTER_KEY = saved; }
+  });
+
   test("a key the router refused at start-up is withdrawn from the MCP server too", async () => {
     delete process.env.KERNAL_NO_DISCOVERY;
     const restore = stubFetch({

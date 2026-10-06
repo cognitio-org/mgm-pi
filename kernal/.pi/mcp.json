@@ -7,6 +7,16 @@
         "x-mcp-servers": "ce_knowledge_base,headroom"
       }
     },
+    "sentry": {
+      "url": "https://router.kernal.one/sentry/mcp",
+      "auth": "oauth",
+      "headers": {
+        "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
+      },
+      "oauth": {
+        "clientName": "kernal"
+      }
+    },
     "google_admin": {
       "url": "https://gcs-admin-mcp-ucpy26yrfa-uc.a.run.app/mcp",
       "auth": "oauth",

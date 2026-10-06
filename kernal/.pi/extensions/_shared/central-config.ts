@@ -14,7 +14,8 @@
  * when signed in) → the shell. The last three are all level "local", so a key whose declaration
  * has no "local" level ignores them.
  *
- * The personal keys (model.*, compaction.*, memory.mode, voice.*: `accountFirst`, #437) rank the
+ * The personal keys (model.*, compaction.*, memory.mode, voice.*, subscriptions.*: `accountFirst`, #437
+ * and subscriptions.md) rank the
  * account above what a machine set before there was one, so a central change reaches a laptop that
  * once ran /connect: this machine (config.local.json) → device → profile → user → legacy local
  * values (settings.json's defaultProvider/defaultModel/defaultThinkingLevel, kernal.compaction,
@@ -105,11 +106,26 @@ export interface KnownSetting {
 }
 
 /** The schema version this Kernal was built against. */
-export const KNOWN_SCHEMA_VERSION = 3;
+export const KNOWN_SCHEMA_VERSION = 4;
 
 const PERSONAL: readonly Level[] = ["fleet", "user", "profile", "device", "local"];
+/** subscriptions.md §2: not fleet. A fleet write is the server's 400, and this copy has no fleet level. */
+const SUBSCRIPTION_LEVELS: readonly Level[] = ["user", "profile", "device", "local"];
+const SUBSCRIPTION_MODE = ["off", "sandboxed", "full"] as const;
 
-/** The v1 keys (spec §3.2), v2's Sentry signals (#424) and v3's curated OpenRouter list (#440). */
+/** Vendor ids for `subscriptions.prefer` (subscriptions.md §2). No spaces, no duplicates; a subset is allowed. */
+const PREFER_VENDOR = "(?:claude|grok|codex|gemini)";
+const PREFER_RE = new RegExp(`^${PREFER_VENDOR}(?:,${PREFER_VENDOR})*$`);
+
+/** A valid prefer list, or undefined (`invalid_value` on the server; ignored here). */
+export function subscriptionPrefer(raw: string): string | undefined {
+  if (!PREFER_RE.test(raw)) return undefined;
+  const ids = raw.split(",");
+  return new Set(ids).size === ids.length ? raw : undefined;
+}
+
+/** The v1 keys (spec §3.2), v2's Sentry signals (#424), v3's curated OpenRouter list (#440),
+ * and v4's subscription workers (subscriptions.md §2). */
 export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "router.baseUrl", type: "url", secret: false, levels: ["fleet", "local"], override: "none", default: "https://router.kernal.one/v1", env: ["LITELLM_BASE_URL"], description: "The LiteLLM router this machine's router key is for." },
   { key: "router.key", type: "string", secret: true, levels: ["device", "local"], override: "any", env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"], description: "This device's own router key, minted at sign-in." },
@@ -141,6 +157,12 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "openrouter.models.profileRemove", type: "string", secret: false, levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list." },
   { key: "openrouter.models.localAdd", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list." },
   { key: "openrouter.models.localRemove", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list." },
+  // v4 (subscriptions.md §2). The fleet cannot turn one on. Not secret: the mode is not the token.
+  { key: "subscriptions.claude", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Claude plan from Kernal: off, read-only, or the CLI's own approvals.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.grok", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Grok plan from Kernal.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.codex", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Codex plan from Kernal.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.gemini", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Google AI Pro/Ultra plan from Kernal (Antigravity).", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.prefer", type: "string", secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "claude,grok,codex,gemini", description: "Which signed-in subscription to try after a plan window is spent, comma-separated.", accountFirst: true, takesEffect: "session" },
 ];
 
 /** The legacy settings.json flags (`kernal.<flag>: false`) that were each key's local opt-out
@@ -237,8 +259,11 @@ export function coerce(decl: KnownSetting, raw: unknown, fromText = false): Sett
       return typeof raw === "string" && (decl.values ?? []).includes(raw) ? raw : undefined;
     case "url":
       return typeof raw === "string" && /^https?:\/\/\S+$/.test(raw) ? raw : undefined;
-    case "string":
-      return typeof raw === "string" && raw !== "" ? raw : undefined;
+    case "string": {
+      if (typeof raw !== "string" || raw === "") return undefined;
+      if (decl.key === "subscriptions.prefer") return subscriptionPrefer(raw);
+      return raw;
+    }
   }
 }
 

@@ -429,6 +429,9 @@ case "${1:-}" in
   login|logout|whoami)
     # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, with node.
     exec node "$ROOT/.pi/extensions/kernal-login/cli.ts" "$@" ;;
+  subscriptions)
+    # Personal subscription workers (subscriptions.md §5): before pi starts, with node.
+    exec node "$ROOT/.pi/extensions/kernal-subscriptions/cli.ts" "$@" ;;
   local)
     shift
     exec_local_runtime "$ROOT/.pi/extensions/kernal-local/cli.ts" "$@" ;;

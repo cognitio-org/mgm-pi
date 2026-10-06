@@ -84,8 +84,11 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 # pi-mcp-adapter 2.37.0 treats a stored refresh token as already signed in, so explicit
 # /mcp-auth never opens the browser, and it reuses a client registered for an earlier callback
 # port. npm ci replaces these files; reapply until the pin moves.
-MCP_REAUTH_PROVIDER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter/mcp-oauth-provider.ts"
-if ! grep -q 'skipStoredSession(): void' "$MCP_REAUTH_PROVIDER"; then
+# Skipped only when every patched file already carries its change.
+MCP_ADAPTER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter"
+if ! { grep -q 'skipStaleClient(): void' "$MCP_ADAPTER/mcp-oauth-provider.ts" \
+    && grep -q 'authProvider.skipStaleClient()' "$MCP_ADAPTER/mcp-auth-flow.ts" \
+    && grep -q 'forceReauthorization: true,' "$MCP_ADAPTER/commands.ts"; }; then
   patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --fuzz=0 < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
 fi
 case "$PLATFORM" in

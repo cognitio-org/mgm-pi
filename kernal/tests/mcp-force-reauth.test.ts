@@ -3,7 +3,7 @@
  * browser URL must carry a client registered for this run's callback port.
  * pi-mcp-adapter is installed by npm ci, so the change ships as a patch applied in package.sh.
  */
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -18,38 +18,39 @@ const packageSh = join(root, "scripts/package.sh");
 const modules = join(root, ".pi/npm/node_modules");
 const adapterPath = join(modules, "pi-mcp-adapter");
 const jitiPath = join(modules, "jiti/lib/jiti.mjs");
-const PATCHED_MARKER = "skipStoredSession(): void";
+const PATCHED_MARKER = "skipStaleClient(): void";
+const canRun = existsSync(adapterPath) && existsSync(jitiPath);
 
 test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
   const script = readFileSync(packageSh, "utf8");
   const ci = script.indexOf("npm ci --legacy-peer-deps");
   const apply = script.indexOf("pi-mcp-adapter-force-reauth.patch");
   assert.ok(ci > 0 && apply > ci, "the patch must run after npm ci replaces node_modules");
-  const patch = readFileSync(patchPath, "utf8");
-  // The guard that skips an already-patched stage must look for a line this patch adds, or a
+  // The guard that skips an already-patched stage must look for lines this patch adds, or a
   // second run re-patches, fails, and set -e stops the release build.
-  const marker = script.match(/grep -q '([^']+)' "\$MCP_REAUTH_PROVIDER"/)?.[1];
-  assert.ok(marker, "package.sh guards the patch with a grep");
-  assert.ok(patch.split("\n").some((line) => line.startsWith("+") && line.includes(marker)), `the patch adds "${marker}"`);
-  assert.match(patch, /forceReauthorization: true/);
-  assert.match(patch, /authProvider\.skipStoredSession\(\)/);
-  assert.doesNotMatch(patch, /reconnectServer/);
+  const patch = readFileSync(patchPath, "utf8");
+  const added = patch.split("\n").filter((line) => line.startsWith("+"));
+  const markers = [...script.matchAll(/grep -q '([^']+)' "\$MCP_ADAPTER\/([^"]+)"/g)];
+  assert.deepEqual(markers.map((m) => m[2]).sort(), ["commands.ts", "mcp-auth-flow.ts", "mcp-oauth-provider.ts"]);
+  for (const [, marker] of markers) assert.ok(added.some((line) => line.includes(marker)), `the patch adds "${marker}"`);
 });
 
-const canRun = existsSync(adapterPath) && existsSync(jitiPath);
-
 /**
- * A patched copy of the published adapter, inside node_modules so its imports resolve. Locally,
- * undefined when the copy carries some other edit (an earlier version of this patch): run npm ci.
- * In CI the copy is the published package, so a patch that no longer applies fails the test.
+ * One patched copy of the published adapter's source, inside node_modules so its imports
+ * resolve. Locally, undefined when the copy carries some other edit (an earlier version of this
+ * patch): run npm ci. In CI the copy is the published package, so a patch that no longer applies
+ * fails the test with patch's own output.
  */
-function patchedAdapter(): { dir: string; adapter: string } | undefined {
-  // A killed run skips its finally block. Clear its copies, but not a concurrent run's.
+let patched: { dir: string; adapter: string } | undefined;
+
+before(() => {
+  if (!canRun) return;
+  // A killed run skips its after hook. Clear its copies, but not a concurrent run's.
   for (const name of readdirSync(modules)) {
     if (!name.startsWith(".mcp-reauth-")) continue;
     const path = join(modules, name);
     const mtime = statSync(path, { throwIfNoEntry: false })?.mtimeMs;
-    if (mtime !== undefined && Date.now() - mtime > 10 * 60_000) rmSync(path, { recursive: true, force: true });
+    if (mtime !== undefined && Date.now() - mtime > 60 * 60_000) rmSync(path, { recursive: true, force: true });
   }
   const dir = mkdtempSync(join(modules, ".mcp-reauth-"));
   const adapter = join(dir, "pi-mcp-adapter");
@@ -60,47 +61,49 @@ function patchedAdapter(): { dir: string; adapter: string } | undefined {
     filter: (src) => src === adapterPath || !(skip.has(basename(src)) || /\.(md|png)$/.test(src)),
   });
   const patch = readFileSync(patchPath);
+  const run = (args: string[]) => execFileSync("patch", ["-d", dir, "-p1", "--batch", "--fuzz=0", ...args], { input: patch, encoding: "utf8", stdio: "pipe" });
   try {
     // A local checkout may already be patched. CI's npm ci copy is the published package.
-    if (readFileSync(join(adapter, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) {
-      execFileSync("patch", ["-d", dir, "-p1", "-R", "--batch", "--fuzz=0"], { input: patch, stdio: ["pipe", "ignore", "ignore"] });
-    }
-    execFileSync("patch", ["-d", dir, "-p1", "--batch", "--fuzz=0"], { input: patch, stdio: ["pipe", "ignore", "ignore"] });
+    if (readFileSync(join(adapter, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) run(["-R"]);
+    run([]);
   } catch (error) {
     rmSync(dir, { recursive: true, force: true });
-    if (process.env.CI) throw new Error("the re-auth patch no longer applies to the pinned pi-mcp-adapter", { cause: error });
-    return undefined;
+    const { stdout = "", stderr = "" } = error as { stdout?: string; stderr?: string };
+    if (process.env.CI) throw new Error(`the re-auth patch no longer applies to the pinned pi-mcp-adapter:\n${stdout}${stderr}`);
+    return;
   }
-  return { dir, adapter };
-}
-
-test("the patch forces re-auth only for explicit /mcp-auth", { skip: !canRun }, (t) => {
-  const patched = patchedAdapter();
-  if (!patched) return t.skip("the local pi-mcp-adapter has other edits; run npm ci in .pi/npm");
-  const { dir, adapter } = patched;
-  try {
-    const flow = readFileSync(join(adapter, "mcp-auth-flow.ts"), "utf8");
-    const commands = readFileSync(join(adapter, "commands.ts"), "utf8");
-    assert.equal((flow.match(/authProvider\.skipStoredSession\(\)/g) ?? []).length, 1);
-    const reconnect = commands.slice(
-      commands.indexOf("export async function reconnectServer"),
-      commands.indexOf("export async function authenticateServer"),
-    );
-    assert.doesNotMatch(reconnect, /forceReauthorization/);
-    assert.equal((commands.match(/forceReauthorization: true/g) ?? []).length, 1);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  patched = { dir, adapter };
 });
 
-test("a forced sign-in hides the saved session and a client registered for an old callback port", { skip: !canRun }, (t) => {
-  const patched = patchedAdapter();
-  if (!patched) return t.skip("the local pi-mcp-adapter has other edits; run npm ci in .pi/npm");
-  const { dir, adapter } = patched;
+after(() => {
+  if (patched) rmSync(patched.dir, { recursive: true, force: true });
+});
+
+const LOCAL_EDITS = "the local pi-mcp-adapter has other edits; run npm ci in .pi/npm";
+
+test("the patch forces re-auth only for explicit /mcp-auth", { skip: !canRun }, (t) => {
+  if (!patched) return t.skip(LOCAL_EDITS);
+  const flow = readFileSync(join(patched.adapter, "mcp-auth-flow.ts"), "utf8");
+  const commands = readFileSync(join(patched.adapter, "commands.ts"), "utf8");
+  // The SDK skips the saved refresh token; the provider skips a client for another port.
+  assert.equal((flow.match(/forceReauthorization: options\.forceReauthorization === true/g) ?? []).length, 1);
+  assert.equal((flow.match(/authProvider\.skipStaleClient\(\)/g) ?? []).length, 1);
+  // startAuth's cleanup leaves the saved entry alone on a forced flow.
+  assert.match(flow, /!config\.clientId && options\.forceReauthorization !== true\)/);
+  const reconnect = commands.slice(
+    commands.indexOf("export async function reconnectServer"),
+    commands.indexOf("export async function authenticateServer"),
+  );
+  assert.doesNotMatch(reconnect, /forceReauthorization/);
+  assert.equal((commands.match(/forceReauthorization: true/g) ?? []).length, 1);
+});
+
+test("a forced sign-in skips a client registered for an old callback port and persists nothing until it succeeds", { skip: !canRun }, (t) => {
+  if (!patched) return t.skip(LOCAL_EDITS);
+  const { adapter } = patched;
   const agentDir = mkdtempSync(join(tmpdir(), "mcp-reauth-agent-"));
-  // The SDK refreshes any saved refresh token, and sends the saved client in the browser URL. The
-  // callback port is random per run, so a dynamic registration from an earlier run is refused:
-  // "redirect_uri is not registered for this client".
+  // The callback port is random per run, so a dynamic registration from an earlier run is
+  // refused: "redirect_uri is not registered for this client".
   const script = `
     const { createJiti } = await import(${JSON.stringify(jitiPath)});
     const jiti = createJiti(${JSON.stringify(join(adapter, "index.ts"))});
@@ -110,42 +113,36 @@ test("a forced sign-in hides the saved session and a client registered for an ol
     const url = "https://router.example/sentry/mcp";
     setOAuthCallbackPort(60535);
     const provider = () => new McpOAuthProvider("sentry", url, {}, { onRedirect: async () => {} }, store);
-    const view = async (p) => ({ client: (await p.clientInformation())?.client_id ?? null, token: (await p.tokens())?.access_token ?? null });
+    const client = async (p) => (await p.clientInformation())?.client_id ?? null;
     const saved = () => { const e = auth.getAuthForUrl("sentry", url, store); return { client: e?.clientInfo?.clientId ?? null, refresh: e?.tokens?.refreshToken ?? null }; };
+    const register = (p) => p.saveClientInformation({ client_id: "new-client", redirect_uris: ["http://localhost:60535/callback"] });
     const out = {};
     auth.updateClientInfo("sentry", { clientId: "old-client", clientIdIssuedAt: 1, redirectUris: ["http://localhost:51000/callback"] }, url, store);
     auth.updateTokens("sentry", { accessToken: "saved-token", refreshToken: "saved-refresh" }, url, store);
-    out.normal = await view(provider());
-    // What the SDK does on the browser leg: no client, so it registers one, then sends the URL.
+    out.normal = await client(provider());
+    // The SDK's browser leg: no usable client, so it registers one, then sends the URL.
     const abandoned = provider();
-    abandoned.skipStoredSession();
-    out.forced = await view(abandoned);
-    await abandoned.saveClientInformation({ client_id: "new-client", redirect_uris: ["http://localhost:60535/callback"] });
-    out.forcedAfterRegister = await view(abandoned);
-    // Another process refreshes the saved session mid-flow: it stays hidden.
-    auth.updateTokens("sentry", { accessToken: "refreshed-token", refreshToken: "saved-refresh" }, url, store);
-    out.afterConcurrentRefresh = await view(abandoned);
-    // The SDK's retry resets cannot bring it back either. A rejected new client falls back to
-    // registering again, never to the stale saved one.
-    await abandoned.invalidateCredentials("tokens");
+    abandoned.skipStaleClient();
+    out.forced = await client(abandoned);
+    await register(abandoned);
+    out.afterRegister = await client(abandoned);
+    out.whileRegistered = saved();
+    // invalid_client: the SDK invalidates "client" then "tokens" and retries. The stale client
+    // stays skipped, and nothing on disk changes.
     await abandoned.invalidateCredentials("client");
-    out.afterSdkResets = await view(abandoned);
-    // The server rejects the new client (invalid_client): the SDK resets everything. The saved
-    // session is the last good one and stays on disk.
-    await abandoned.invalidateCredentials("all");
-    out.afterRejectedClient = saved();
+    await abandoned.invalidateCredentials("tokens");
+    out.afterInvalidClient = await client(abandoned);
     abandoned.deactivate();
     out.afterAbandon = saved();
     // Completing the flow saves the new client and its tokens together.
     const completed = provider();
-    completed.skipStoredSession();
-    await completed.saveClientInformation({ client_id: "new-client", redirect_uris: ["http://localhost:60535/callback"] });
+    completed.skipStaleClient();
+    await register(completed);
     await completed.saveTokens({ access_token: "new-token", refresh_token: "new-refresh", token_type: "Bearer" });
     out.afterComplete = saved();
-    out.afterCompleteView = await view(completed);
     const reused = provider();
-    reused.skipStoredSession();
-    out.forcedCurrentPort = await view(reused);
+    reused.skipStaleClient();
+    out.forcedCurrentPort = await client(reused);
     console.log(JSON.stringify(out));
   `;
   try {
@@ -153,23 +150,19 @@ test("a forced sign-in hides the saved session and a client registered for an ol
       env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_MCP_ADAPTER_OAUTH_FILE_KEY: randomBytes(32).toString("base64") },
       encoding: "utf8",
     }).trim().split("\n").pop()!);
-    // Reconnect still refreshes the saved session with the saved client.
-    assert.deepEqual(out.normal, { client: "old-client", token: "saved-token" });
-    // Explicit auth: no refresh, and no stale client, so the SDK registers the current callback.
-    assert.deepEqual(out.forced, { client: null, token: null });
-    assert.deepEqual(out.forcedAfterRegister, { client: "new-client", token: null });
-    assert.deepEqual(out.afterConcurrentRefresh, { client: "new-client", token: null });
-    assert.deepEqual(out.afterSdkResets, { client: null, token: null });
-    assert.deepEqual(out.afterRejectedClient, { client: "old-client", refresh: "saved-refresh" });
-    // An abandoned sign-in keeps the saved client paired with the refresh token it was issued.
+    // Reconnect still refreshes with the saved client.
+    assert.equal(out.normal, "old-client");
+    // Explicit auth skips the stale client, so the SDK registers the current callback.
+    assert.equal(out.forced, null);
+    assert.equal(out.afterRegister, "new-client");
+    // The registration stays in memory: the saved client and refresh token remain a pair.
+    assert.deepEqual(out.whileRegistered, { client: "old-client", refresh: "saved-refresh" });
+    assert.equal(out.afterInvalidClient, null);
     assert.deepEqual(out.afterAbandon, { client: "old-client", refresh: "saved-refresh" });
     assert.deepEqual(out.afterComplete, { client: "new-client", refresh: "new-refresh" });
-    // Saving tokens ends the skip: the flow's own session is served.
-    assert.deepEqual(out.afterCompleteView, { client: "new-client", token: "new-token" });
-    // A registration that already lists this callback is reused; only the session is skipped.
-    assert.deepEqual(out.forcedCurrentPort, { client: "new-client", token: null });
+    // A registration that already lists this callback is reused.
+    assert.equal(out.forcedCurrentPort, "new-client");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
     rmSync(agentDir, { recursive: true, force: true });
   }
 });

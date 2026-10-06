@@ -1,27 +1,45 @@
 --- a/pi-mcp-adapter/mcp-auth-flow.ts
 +++ b/pi-mcp-adapter/mcp-auth-flow.ts
-@@ -68,6 +68,13 @@
+@@ -68,6 +68,14 @@
    runtime?: McpOAuthRuntime
    skipIssuerMetadataValidation?: boolean
    definition?: Pick<ServerEntry, "headers" | "oauth">
 +  /**
-+   * Ignore the saved session and open the authorization server again.
++   * Skip a stored refresh token and open the authorization server again.
 +   * Explicit /mcp-auth sets this. Reconnect must not: a gateway session that
-+   * still refreshes would otherwise never return a browser URL. The SDK has
-+   * no such option, so the provider ignores the saved session for this flow.
++   * still refreshes would otherwise never return a browser URL. The SDK skips
++   * the refresh; the provider skips a client registered for another callback
++   * port and persists nothing until the flow saves tokens.
 +   */
 +  forceReauthorization?: boolean
  }
  
  type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
-@@ -580,6 +587,7 @@
+@@ -553,7 +561,8 @@
+   try {
+     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
+     authority()
+-    if (storedAuth?.clientInfo && !config.clientId) {
++    // A forced flow leaves the saved entry alone: the provider skips what it cannot use.
++    if (storedAuth?.clientInfo && !config.clientId && options.forceReauthorization !== true) {
+       if (!storedAuth.tokens) {
+         clearClientInfo(serverName, authStorageOptions)
+         clearCodeVerifier(serverName, authStorageOptions)
+@@ -580,7 +589,13 @@
      const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
      authority()
      throwIfAborted(signal)
-+    if (options.forceReauthorization === true) authProvider.skipStoredSession()
-     const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
+-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
++    if (options.forceReauthorization === true) authProvider.skipStaleClient()
++    const result = await abortable(runSdkAuth(authProvider, {
++      serverUrl,
++      ...discovery,
++      fetchFn,
++      forceReauthorization: options.forceReauthorization === true,
++    }), signal)
      authority()
      throwIfAborted(signal)
+     if (result === "AUTHORIZED") {
 --- a/pi-mcp-adapter/mcp-oauth-provider.ts
 +++ b/pi-mcp-adapter/mcp-oauth-provider.ts
 @@ -20,6 +20,8 @@
@@ -37,9 +55,9 @@
    private authFetch: OAuthFetch
    private active = true
    private flowClientInfo: StoredClientInfo | undefined
-+  // Explicit /mcp-auth: the saved session is ignored until this flow saves tokens, and a
-+  // client registered for the flow is persisted only with those tokens.
-+  private skippingStoredSession = false
++  // Explicit /mcp-auth: a saved client registered for another callback port is skipped, and a
++  // client registered for this flow is persisted only with its tokens.
++  private skippingStaleClient = false
 +  private deferredClientInfo: StoredClientInfo | undefined
    private flowCodeVerifier: string | undefined
    private flowDiscoveryState: OAuthDiscoveryState | undefined
@@ -48,7 +66,7 @@
  
    deactivate(): void {
      this.active = false
-+    this.skippingStoredSession = false
++    this.skippingStaleClient = false
 +    this.deferredClientInfo = undefined
      this.invalidatedAccessToken = undefined
      this.invalidatedClientId = undefined
@@ -57,21 +75,12 @@
      // another runtime writes the shared persistent entry for the same name.
      const clientInfo = this.flowClientInfo ?? stored?.clientInfo
      if (clientInfo?.clientId === this.invalidatedClientId) return undefined
-+    if (this.skippingStoredSession && clientInfo !== this.flowClientInfo && clientInfo && this.isRedirectStale(clientInfo)) {
++    if (this.skippingStaleClient && clientInfo !== this.flowClientInfo && clientInfo && this.isRedirectStale(clientInfo)) {
 +      return undefined
 +    }
  
      const clientMetadataUrl = this.clientMetadataUrl
      const supportsClientMetadataDocument = this.flowDiscoveryState
-@@ -439,7 +450,7 @@
-     if (clientMetadataUrl !== undefined && supportsClientMetadataDocument !== undefined) {
-       if (supportsClientMetadataDocument === true
-         && clientInfo?.clientId !== clientMetadataUrl
--        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined)) {
-+        && (stored?.tokens?.refreshToken === undefined || this.invalidatedAccessToken !== undefined || this.skippingStoredSession)) {
-         // With no DCR refresh pair to preserve, let the SDK select CIMD now.
-         return undefined
-       }
 @@ -479,14 +490,15 @@
          clientInfo.issuer = issuer
          this.flowClientInfo = clientInfo
@@ -101,18 +110,18 @@
 +  }
 +
 +  /**
-+   * Explicit /mcp-auth: ignore the saved session until this flow saves tokens.
-+   * The SDK would otherwise refresh it and return no browser URL, or send a
-+   * dynamic client registered for an earlier callback port, which the
-+   * authorization server rejects ("redirect_uri is not registered for this
-+   * client"). One flag rather than token snapshots, so a concurrent refresh or
-+   * an SDK credential reset cannot bring the saved session back mid-flow. A
-+   * client registered here is persisted only with its tokens, so an abandoned
-+   * sign-in leaves the saved client and refresh token paired and usable.
++   * Explicit /mcp-auth (the SDK's forceReauthorization skips the refresh).
++   * The callback port is random per run, so a saved dynamic client usually
++   * lists another redirect URI, and the authorization server rejects it
++   * ("redirect_uri is not registered for this client"). Skip such a client
++   * so the SDK registers the current callback. A flag rather than an
++   * invalidated id, so an SDK credential reset cannot bring it back. The new
++   * client is persisted only with its tokens, so an abandoned sign-in leaves
++   * the saved client and refresh token paired and usable.
 +   */
-+  skipStoredSession(): void {
++  skipStaleClient(): void {
 +    this.throwIfInactive()
-+    this.skippingStoredSession = true
++    this.skippingStaleClient = true
 +  }
 +
    /**
@@ -122,22 +131,14 @@
      this.flowClientInfo = clientInfo
      this.invalidatedClientId = undefined
      this.lastObservedClientId = clientInfo.clientId
-+    if (this.skippingStoredSession) {
++    if (this.skippingStaleClient) {
 +      this.deferredClientInfo = clientInfo
 +      return
 +    }
      updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
    }
  
-@@ -553,6 +589,7 @@
-    */
-   async tokens(ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
-     this.throwIfInactive()
-+    if (this.skippingStoredSession) return undefined
-     // Once this provider rejects a token, bypass its process-local cache until
-     // another process replaces that token in shared secure storage.
-     if (this.invalidatedAccessToken !== undefined) {
-@@ -594,7 +631,21 @@
+@@ -594,7 +630,21 @@
        ...(issuer !== undefined ? { issuer } : {}),
      }
      this.throwIfInactive()
@@ -156,11 +157,11 @@
 +    } else {
 +      updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
 +    }
-+    this.skippingStoredSession = false
++    this.skippingStaleClient = false
      this.invalidatedAccessToken = undefined
      this.lastSavedAccessToken = storedTokens.accessToken
      // Discovery must survive the browser redirect so the callback can verify
-@@ -711,6 +762,7 @@
+@@ -711,6 +761,7 @@
      switch (type) {
        case "all":
          this.flowClientInfo = undefined
@@ -168,18 +169,7 @@
          this.flowCodeVerifier = undefined
          this.flowDiscoveryState = undefined
          this.flowIssuerMismatch = false
-@@ -721,7 +773,9 @@
-         this.lastObservedClientId = undefined
-         this.lastSavedAccessToken = undefined
-         this.pendingAuthAccessToken = undefined
--        clearAllCredentials(this.serverName, this.storageOptions)
-+        // A forced sign-in persists nothing until it saves tokens. If the server rejects the
-+        // client this flow registered, the saved session is still the last good one: keep it.
-+        if (!this.skippingStoredSession) clearAllCredentials(this.serverName, this.storageOptions)
-         break
-       case "client":
-         // Dynamic client registrations share the same credential-store entry as
-@@ -730,6 +784,7 @@
+@@ -730,6 +781,7 @@
          this.invalidatedClientId = this.lastObservedClientId
          this.lastObservedClientId = undefined
          this.flowClientInfo = undefined

@@ -7,6 +7,7 @@
 // `/model/info` call the E2.10 provider status service already makes.
 
 import { fetchJson, parseModelInfo, DEFAULT_TIMEOUT_MS, type ModelMeta } from "./providers-status.ts";
+import { parseRouterModelName } from "./local-hosts/naming.ts";
 
 export interface ModelRow {
   /** "litellm/<model_name>" for anything from the router; a bare LOCAL_MODELS id (already in that
@@ -21,8 +22,8 @@ export interface ModelRow {
    * per call -- see E2.11b) -- the Gurus page shows these distinctly since a fixed context-window
    * or price display would be misleading for one. */
   auto: boolean;
-  /** True for a model from config.localModels (env LOCAL_MODELS): only reachable when the laptop
-   * tunnel preflight (E2.8) is online. */
+  /** True for config.localModels (the `local-qwen-mlx` alias) or a `local/<user>-<host>/<id>`
+   * router name: only reachable when the laptop preflight (E2.8) is online. */
   local?: boolean;
 }
 
@@ -64,6 +65,7 @@ export function mergeLocalModels(rows: ModelRow[], localModels: string[]): Model
     if (existing) existing.local = true;
     else byId.set(id, { id, auto: false, local: true });
   }
+  for (const row of byId.values()) if (parseRouterModelName(row.id)) row.local = true;
   return [...byId.values()];
 }
 

@@ -28,7 +28,7 @@ Then, e.g.:
 
 ```bash
 curl -s localhost:8080/api/gurus -X POST -H 'content-type: application/json' \
-  -d '{"name":"dev guru","model":"litellm/local-qwen-mlx","fallbackModel":"litellm/claude-auto-llm"}'
+  -d '{"name":"dev guru","model":"litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b","fallbackModel":"litellm/claude-auto-llm"}'
 curl -s localhost:8080/api/sessions -X POST -H 'content-type: application/json' \
   -d '{"guruId":"<id from above>","prompt":"hello"}'
 ```
@@ -61,9 +61,9 @@ step, no test framework dependency. Every test builds an app with `MemoryStore` 
 | `GCP_PROJECT` | `""` | `providers/cloudrun.ts`, `secrets.ts` |
 | `GCP_REGION` | `us-central1` | `providers/cloudrun.ts` |
 | `IDLE_STOP_SECONDS` | `600` | `agentlink.ts` — sent to agentd as `run.spec.idleStopSeconds` |
-| `TUNNEL_DOMAIN_LMSTUDIO` | `""` | `laptop.ts` — laptop LM Studio's ngrok domain, e.g. `kernal-lmstudio.ngrok.app` (see `~/localllm/tunnel.sh`) |
-| `LOCAL_TUNNEL_TOKEN` | `""` | `laptop.ts` — bearer token the tunnel's traffic policy requires |
-| `LOCAL_MODELS` | `litellm/local-qwen-mlx` | `laptop.ts` — comma-separated model ids that require the laptop preflight before use |
+| `TUNNEL_DOMAIN_LMSTUDIO` | `""` | `laptop.ts` — legacy single-laptop tunnel domain for the `local-qwen-mlx` alias. `local/<user>-<host>/<model>` does not use it (`kernal local enable`) |
+| `LOCAL_TUNNEL_TOKEN` | `""` | `laptop.ts` — bearer the legacy tunnel requires. Not used for `local/...` names |
+| `LOCAL_MODELS` | `litellm/local-qwen-mlx` | `laptop.ts` — extra model ids that require the laptop preflight. `local/...` names are included automatically; `local-qwen-mlx` remains the alias |
 | `DEFAULT_CLOUD_MODEL` | `litellm/claude-auto-llm` | `laptop.ts` — fallback when a guru has no `fallbackModel` of its own |
 | `NGROK_WEBHOOK_SECRET` | `""` | `routes/hooks.ts` — HMAC-SHA256 shared secret for `POST /api/hooks/ngrok`; unset means every delivery is rejected |
 | `PORT` | `8080` | `main.ts` |

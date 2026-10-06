@@ -34,7 +34,7 @@ import {
   KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, adoptKeychainLogin, describeSource, displayValue, providerKey, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue,
   providerKeySource, resolve, startBackgroundRefresh, takeShellWarnings, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
-import { applyModelAtSessionStart, applyVoiceSettings, describeChanges, snapshot } from "../_shared/central-apply.ts";
+import { applyModelAtSessionStart, applyVoiceSettings, cliChoices, describeChanges, settingsThinkingFor, snapshot } from "../_shared/central-apply.ts";
 import { pendingDefaults, registerDefaultSync, type SyncResult } from "../_shared/default-sync.ts";
 
 /** /config's note on when a change reaches this Kernal. */
@@ -183,6 +183,17 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
     if (r.model) ctx.ui.notify(`Started on ${r.model}${m ? ` (${describeSource(m)})` : ""}${r.thinking ? `, thinking ${r.thinking}` : ""}. /connect changes it.`, "info");
     else if (r.thinking) ctx.ui.notify(`Thinking level ${r.thinking} (${describeSource(resolve().values["model.thinking"]!)}).`, "info");
     if (r.problem) ctx.ui.notify(`Default model: ${r.problem}.`, "warning");
+  });
+
+  // pi applies modelThinkingLevels only for an exact provider/id. `local/<user>-<host>/<model>`
+  // and the `local-qwen-mlx` alias have no such key until one is written, so match that "off" here.
+  // Not persisted: a session's thinking change must not become the account's default.
+  pi.on("model_select", (ev: any) => {
+    if (cliChoices(deps.argv).thinking || typeof pi.setThinkingLevel !== "function") return;
+    const m = ev?.model;
+    if (!m?.provider || !m?.id) return;
+    if (settingsThinkingFor({ provider: m.provider, id: m.id }) !== "off") return;
+    if (pi.getThinkingLevel?.() !== "off") pi.setThinkingLevel("off");
   });
 
   pi.registerCommand("config", {

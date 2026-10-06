@@ -212,6 +212,22 @@ describe("PUT /api/sessions/:id/model", () => {
     await app.fastify.close();
   });
 
+  test("a local/ model follows the host registry, not the legacy tunnel the alias still uses", async () => {
+    const app = await buildTestApp();
+    const { session, runId } = await makeRunningSession(app);
+    app.laptopProbe.setOnline(false);
+    const wanted = "litellm/local/mgm-mbp/qwen/qwen3.6-35b-a3b";
+    app.laptopProbe.isOnlineFor = async (model: string) => model === wanted;
+    const res = await putModel(app, session.id, wanted);
+    assert.equal(res.json().model, wanted);
+    assert.equal(res.json().modelFallback, undefined);
+    assert.deepEqual((await app.store.runs.findById(runId))?.pending, [
+      { t: "rpc", command: { type: "set_model", provider: "litellm", modelId: "local/mgm-mbp/qwen/qwen3.6-35b-a3b" } },
+    ]);
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
   test("two switches at once leave pi on what the floppy stores", async () => {
     const app = await buildTestApp();
     const { session, runId } = await makeRunningSession(app);

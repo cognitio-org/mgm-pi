@@ -742,9 +742,9 @@ on SIGTERM/SIGINT: stop heartbeat ("stop", 3 s), stop tunnel, release lock, exit
 - **One server per host in wave 2** (decision): the guard proxy forwards to one upstream, so the
   router reaches the models of that one server; the heartbeat still lists every server's models
   (the listing shows the rest as not shared). Routing by model across servers is a follow-up.
-- The guard proxy's keep-alive replaces `keepalive.mjs`; `tunnel.sh` and this service must not run
-  at once on the same reserved domain (ngrok ERR_NGROK_334 shows as the tunnel's reason). #387
-  retires tunnel.sh.
+- The guard proxy's keep-alive replaces the removed `keepalive.mjs`. `tunnel.sh` and `keepalive.mjs`
+  are gone (#387). A second tunnel on the same reserved domain still fails (ngrok ERR_NGROK_334
+  shows as the tunnel's reason).
 - The tunnel choice is `KERNAL_LOCAL_TUNNEL` (`auto` | `ngrok` | `cloudflare`, through
   `parseTunnelChoice`) until #386 adds a central `localHost.tunnel` setting. Outfitter provisions
   ngrok only in this wave, so **managed credentials always mean ngrok**: when the loop uses managed
@@ -766,7 +766,7 @@ merged with `{ service: { installed, running, pid, unit } }`.
 No heartbeats and no managed credentials (a managed tunnel that was running stops: its credential
 belongs to the signed-out account). Interim `.env` credentials (`NGROK_AUTHTOKEN`,
 `TUNNEL_DOMAIN_LMSTUDIO`, `LOCAL_TUNNEL_TOKEN`) still run a tunnel when `shareModels` is on locally,
-which is today's tunnel.sh behaviour without Outfitter. Sign-in is noticed within one POLL (a file
+which is what the removed `tunnel.sh` did without Outfitter. Sign-in is noticed within one POLL (a file
 read). The service never needs the router master key.
 
 ## 5. The events seam (spec-owned, in this PR)
@@ -827,7 +827,7 @@ read). The service never needs the router master key.
    set, they use `PREVIEW_DOMAIN`.
 4. Optional: a fleet `router.keys.models` value, if any, is re-minted onto keys over a week (§3.6).
 5. Release a Kernal version with C, then on each sharing machine: `kernal login`, turn on
-   `localHost.shareModels`, `kernal local enable`; stop `tunnel.sh` there (#387 removes it).
+   `localHost.shareModels`, `kernal local enable`. `tunnel.sh` and `keepalive.mjs` are removed (#387).
 
 ## 8. Decisions (made for this contract; the owner may revisit)
 

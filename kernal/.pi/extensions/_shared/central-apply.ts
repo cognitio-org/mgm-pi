@@ -129,11 +129,16 @@ export async function applyModelAtSessionStart(pi: any, event: { reason?: string
       }
     }
     const t = r.values["model.thinking"];
-    if (!cli.thinking && appliesOverLocal(t) && typeof pi.setThinkingLevel === "function") {
-      // pi's own per-model level (settings.json modelThinkingLevels) wins, as it does over pi's
-      // default level: it marks a model that can't think at that level.
+    if (!cli.thinking && typeof pi.setThinkingLevel === "function") {
+      // An exact modelThinkingLevels entry wins, as it does over pi's default level. A Local Host
+      // name has no exact entry (the id is per machine); it gets the same "off" as local-qwen-mlx.
       const perModel = current ? (opts.perModelThinking ?? settingsThinkingFor)(current) : undefined;
-      if (!perModel && pi.getThinkingLevel?.() !== t!.value) {
+      if (perModel) {
+        if (pi.getThinkingLevel?.() !== perModel) {
+          pi.setThinkingLevel(String(perModel));
+          out.thinking = String(perModel);
+        }
+      } else if (appliesOverLocal(t) && pi.getThinkingLevel?.() !== t!.value) {
         pi.setThinkingLevel(String(t!.value));
         out.thinking = String(t!.value);
       }
@@ -144,11 +149,16 @@ export async function applyModelAtSessionStart(pi: any, event: { reason?: string
   }
 }
 
-function settingsThinkingFor(ref: ModelRef): string | undefined {
+/** Per-model thinking: an exact `modelThinkingLevels` key, else "off" for the `local-qwen-mlx`
+ * alias and for `local/<user>-<host>/<model>`. An exact key always wins, so a hand-set level sticks. */
+export function settingsThinkingFor(ref: ModelRef): string | undefined {
   const levels = readSettings().modelThinkingLevels;
-  if (!levels || typeof levels !== "object" || Array.isArray(levels)) return undefined;
-  const v = (levels as Record<string, unknown>)[`${ref.provider}/${ref.id}`];
-  return typeof v === "string" ? v : undefined;
+  if (levels && typeof levels === "object" && !Array.isArray(levels)) {
+    const v = (levels as Record<string, unknown>)[`${ref.provider}/${ref.id}`];
+    if (typeof v === "string") return v;
+  }
+  if (ref.provider === "litellm" && (ref.id === "local-qwen-mlx" || /^local\/[a-z0-9-]{1,48}\/.+$/.test(ref.id))) return "off";
+  return undefined;
 }
 
 // ---------- voice: pi-listen's settings ----------

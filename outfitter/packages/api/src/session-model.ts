@@ -98,13 +98,18 @@ export async function switchSessionModel(ctx: RouteContext, session: Session, gu
   await ctx.store.sessions.setModelOverride(session.id, stored, new Date().toISOString());
   const run = await ctx.store.runs.findActiveForSession(session.id);
   if (!takesLiveSwitch(run)) return { modelOverride: stored, model: stored ?? "", applied: "next-run" };
-  const laptopOnline = await ctx.laptopProbe.isOnline();
+  // `local/<user>-<host>/<model>` is judged by the host registry; `local-qwen-mlx` still uses the
+  // legacy tunnel (isOnlineFor falls back). Probe before the re-read so a slow probe doesn't pin
+  // a model a later switch already replaced. If that switch names a different model, probe again:
+  // the first answer was for the model this call stored, not the one we will send.
+  let laptopOnline = await ctx.laptopProbe.isOnlineFor(stored ?? "");
   // Two switches at once: whichever sends last must send what is stored now, or pi would stay on
   // the older one while the floppy says the newer. So read the floppy again right before sending.
   const current = (await ctx.store.sessions.findById(session.id))?.modelOverride ?? null;
   // Null: the tape names no model, which leaves it to the owner's central settings (agentd's).
   const wanted = current ?? "";
   if (!wanted) return { modelOverride: current, model: wanted, applied: "next-run" };
+  if (wanted !== (stored ?? "")) laptopOnline = await ctx.laptopProbe.isOnlineFor(wanted);
   const resolved = resolveRunModel({
     wanted,
     guruFallbackModel: guru?.fallbackModel,

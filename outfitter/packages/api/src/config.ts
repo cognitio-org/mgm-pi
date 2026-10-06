@@ -69,7 +69,7 @@ export interface Config {
   idleStopSeconds: number;
   /** Domain the laptop's LM Studio is tunneled on (ngrok), e.g. kernal-lmstudio.ngrok.app. */
   tunnelDomainLmstudio: string;
-  /** Bearer token tunnel.sh's traffic policy requires on requests to the laptop tunnel. */
+  /** Bearer token the legacy single-laptop tunnel requires. `local/...` names do not use it. */
   localTunnelToken: string;
   /** MONGODB_DB: database name, default outfitter (the URI in Secret Manager names none). */
   mongodbDb: string;

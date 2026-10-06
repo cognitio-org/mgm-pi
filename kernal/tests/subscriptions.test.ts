@@ -416,6 +416,7 @@ describe("the coordinator uses the Claude runner", () => {
     const script = blockHiddenSubagent({ workflowScript: 'return runs.run("k", { agent: "claude-code-writer", task: "x" })' }, hidden);
     assert.equal(script?.block, true);
     assert.match(script?.reason ?? "", /claude-code-writer/);
+    assert.match(script?.reason ?? "", /subscription_worker/);
     assert.equal(subscriptionSystemNote({ claude: "off", codex: "off" }), undefined);
     const note = subscriptionSystemNote({ claude: "full", codex: "sandboxed" });
     assert.match(note ?? "", /subscription_worker/);
@@ -460,6 +461,72 @@ describe("the coordinator uses the Claude runner", () => {
     assert.equal((await executeSubscriptionWorker({ prompt: "  " }, { run: async () => { throw new Error("no"); } })).text, "subscription_worker needs a prompt.");
   });
 
+  test("a workflow or schedule that can name a hidden builtin is blocked", async () => {
+    const { blockHiddenSubagent } = await import("../.pi/extensions/kernal-subscriptions/dispatch.ts");
+    const hidden = ["claude-code", "claude-code-writer", "codex-exec", "codex-exec-writer"];
+    const scheduled = blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScript: 'return runs.run("k", { agent: "claude-code", task: "x" })',
+    }, hidden);
+    assert.equal(scheduled?.block, true);
+    assert.match(scheduled?.reason ?? "", /subscription_worker/);
+    assert.equal(blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScript: 'return runs.run("k", { agent: "scout", task: "look" })',
+    }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScript: 'return runs.run("k", { agent: args.name, task: "x" })',
+    }, hidden)?.block, true);
+    assert.equal(blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScript: 'return runs.run("k", { agent: "scout" + args.extra, task: "x" })',
+    }, hidden)?.block, true);
+    assert.equal(blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScript: "return runs.run('k', { agent: `scout`, task: 'look' })",
+    }, hidden)?.block, true);
+    assert.equal(blockHiddenSubagent({ action: "schedule.create" }, hidden)?.block, true);
+    assert.equal(blockHiddenSubagent({
+      workflowScript: 'return runs.all([runs.run("s", { agent: "scout", task: args.look }), runs.run("w", { agent: "worker", task: "edit" })])',
+    }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({
+      action: "validate",
+      workflowScript: 'return runs.run("k", { agent: "claude-code", task: "x" })',
+    }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({ workflow: "review" }, hidden), undefined);
+    assert.equal(blockHiddenSubagent({ action: "capabilities", agent: "claude-code" }, hidden), undefined);
+    const codex = blockHiddenSubagent({
+      workflowScript: 'return runs.run("k", { agent: "codex-exec", task: "x" })',
+    }, ["codex-exec", "codex-exec-writer"]);
+    assert.match(codex?.reason ?? "", /no Codex runner/);
+    assert.equal(blockHiddenSubagent({
+      workflowScript: 'return runs.run("k", { agent: "scout", task: "look" })',
+      args: { note: "claude-code" },
+    }, hidden)?.block, true);
+
+    const root = mkdtempSync(join(tmpdir(), "kernal-sub-wf-"));
+    const proj = join(root, "proj");
+    mkdirSync(proj);
+    writeFileSync(join(proj, "bad.js"), 'return runs.run("k", { agent: "claude-code", task: "x" })\n');
+    writeFileSync(join(proj, "scout.js"), 'return runs.run("k", { agent: "scout", task: "look" })\n');
+    writeFileSync(join(proj, "empty.js"), " \n");
+    const io = { cwd: root };
+    const fromFile = blockHiddenSubagent({ workflowScriptPath: "bad.js", cwd: "proj" }, hidden, io);
+    assert.equal(fromFile?.block, true);
+    assert.match(fromFile?.reason ?? "", /subscription_worker/);
+    assert.equal(blockHiddenSubagent({ workflowScriptPath: "scout.js", cwd: "proj" }, hidden, io), undefined);
+    assert.equal(blockHiddenSubagent({ workflowScriptPath: join("proj", "scout.js") }, hidden, io), undefined);
+    assert.equal(blockHiddenSubagent({ workflowScriptPath: "missing.js", cwd: "proj" }, hidden, io)?.block, true);
+    assert.equal(blockHiddenSubagent({ workflowScriptPath: "empty.js", cwd: "proj" }, hidden, io)?.block, true);
+    assert.equal(blockHiddenSubagent({
+      action: "schedule.create",
+      workflowScriptPath: "scout.js",
+      cwd: "proj",
+    }, hidden, io), undefined);
+    assert.equal(blockHiddenSubagent({ workflowScriptPath: join(proj, "bad.js") }, hidden, { cwd: "/tmp" })?.block, true);
+  });
+
   test("the extension registers the tool, blocks a hidden launch, and appends the note", async () => {
     const { _resetCentralConfig, setLocalOverride } = await import("../.pi/extensions/_shared/central-config.ts");
     const mod = await import("../.pi/extensions/kernal-subscriptions/index.ts");
@@ -479,6 +546,19 @@ describe("the coordinator uses the Claude runner", () => {
       assert.equal(blocked.block, true);
       assert.equal(await handlers.tool_call[0]({ toolName: "subagent", input: { agent: "scout", task: "look" } }), undefined);
       assert.equal(await handlers.tool_call[0]({ toolName: "bash", input: { command: "true" } }), undefined);
+      const eventDir = mkdtempSync(join(tmpdir(), "kernal-sub-hook-event-"));
+      const ctxDir = mkdtempSync(join(tmpdir(), "kernal-sub-hook-ctx-"));
+      writeFileSync(join(eventDir, "use.js"), 'return runs.run("k", { agent: "claude-code", task: "x" })\n');
+      writeFileSync(join(ctxDir, "use.js"), 'return runs.run("k", { agent: "scout", task: "look" })\n');
+      const fromEvent = await handlers.tool_call[0](
+        { toolName: "subagent", input: { workflowScriptPath: "use.js" }, cwd: eventDir },
+        { cwd: ctxDir },
+      );
+      assert.equal(fromEvent.block, true);
+      assert.equal(await handlers.tool_call[0](
+        { toolName: "subagent", input: { workflowScriptPath: "use.js" } },
+        { cwd: ctxDir },
+      ), undefined);
       const event = { systemPromptOptions: { appendSystemPrompt: "base", forceSystemPrompt: undefined as string | undefined } };
       await handlers.before_agent_start[0](event);
       assert.match(event.systemPromptOptions.appendSystemPrompt, /subscription_worker/);

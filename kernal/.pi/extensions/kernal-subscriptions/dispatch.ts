@@ -2,16 +2,25 @@
  * How the coordinator reaches the Claude runner (subscriptions.md §5).
  *
  * pi can block a tool call, not replace it. While a subscription switch is on, a `subagent` launch
- * of that vendor's builtin is blocked so pi-subagents cannot start it with an API key. The model
- * calls `subscription_worker` instead. Only Claude runs in this slice. An exhausted Claude result
- * names the rest of `subscriptions.prefer` and then the router. It does not spawn the next vendor
- * and it does not retry with an API key.
+ * of that vendor's builtin is blocked so pi-subagents cannot start it with an API key. A workflow
+ * script and `schedule.create` count: the schedule stores the script, and the later run does not
+ * come back through this hook. The model calls `subscription_worker` instead. Only Claude runs in
+ * this slice. An exhausted Claude result names the rest of `subscriptions.prefer` and then the
+ * router. It does not spawn the next vendor and it does not retry with an API key.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { subscriptionPlan, type SubscriptionRunResult } from "./runner.ts";
 import { isVendor, type SubscriptionVendor } from "./vendors.ts";
 
 /** Inspection actions. They name an agent and do not start it. */
 const INSPECT = new Set(["list", "get", "models", "status", "guide", "capabilities"]);
+
+/** `validate` checks a script and does not start it. */
+const VALIDATE = "validate";
+
+/** Stores a script to run later. That later `runs.run` is not another `tool_call`. */
+const SCHEDULE_CREATE = "schedule.create";
 
 export function subscriptionSystemNote(modes: { claude?: string; codex?: string }): string | undefined {
   const parts: string[] = [];
@@ -44,43 +53,278 @@ function blockReason(agent: string): string {
   return `${agent} is hidden while subscriptions.codex is on. This slice has no Codex runner, so use a router subagent. Do not launch this builtin.`;
 }
 
-/** `agent: "claude-code"` inside a workflow script or its args. Quoted or bare key. */
-function agentNamedIn(source: string, hidden: ReadonlySet<string>): string | undefined {
-  const re = /(?:^|[^A-Za-z0-9_])["']?agent["']?\s*:\s*["']([a-z0-9-]+)["']/g;
-  for (const match of source.matchAll(re)) {
-    if (hidden.has(match[1])) return match[1];
-  }
-  return undefined;
+export interface HiddenSubagentIo {
+  /** Coordinator cwd. `input.cwd` resolves against it, the same way pi-subagents does. */
+  cwd?: string;
+  /** Reads the absolute path `loadWorkflowScriptPath` would. Defaults to `readFileSync`. */
+  readFile?: (absolutePath: string) => string;
 }
 
-function scriptSource(input: Record<string, unknown>): string {
-  const script = typeof input.workflowScript === "string" ? input.workflowScript : "";
-  if (input.args === undefined) return script;
+/** `requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd`. */
+function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
+  return requestedCwd ? resolve(runtimeCwd, requestedCwd) : runtimeCwd;
+}
+
+function runtimeCwdOf(io: HiddenSubagentIo | undefined): string {
+  return typeof io?.cwd === "string" && io.cwd.trim() ? io.cwd : process.cwd();
+}
+
+function withArgs(script: string, record: Record<string, unknown>): string | undefined {
+  if (record.args === undefined) return script;
   try {
-    return `${script}\n${JSON.stringify(input.args)}`;
+    return `${script}\n${JSON.stringify(record.args)}`;
   } catch {
-    return script;
+    return undefined;
   }
 }
 
 /**
- * Block a `subagent` call that would start a hidden builtin. List, get, models, status, and guide
- * still run; their text is rewritten elsewhere. An empty hide list blocks nothing.
+ * File text pi-subagents would run, or the inline script when there is no path.
+ * An unreadable or empty file is not known-safe.
+ */
+function workflowSource(record: Record<string, unknown>, io: HiddenSubagentIo | undefined): string | undefined {
+  const requested = typeof record.cwd === "string" && record.cwd.trim() ? record.cwd : undefined;
+  if (typeof record.workflowScriptPath === "string") {
+    const absolute = resolve(resolveRequestedCwd(runtimeCwdOf(io), requested), record.workflowScriptPath);
+    try {
+      const readFile = io?.readFile ?? ((file: string) => readFileSync(file, "utf8"));
+      const text = readFile(absolute);
+      if (!text.trim()) return undefined;
+      return withArgs(text, record);
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof record.workflowScript === "string") return withArgs(record.workflowScript, record);
+  return undefined;
+}
+
+function unknownLaunchReason(hidden: readonly string[]): string {
+  const claude = hidden.some((name) => name === "claude-code" || name === "claude-code-writer");
+  const codex = hidden.some((name) => name === "codex-exec" || name === "codex-exec-writer");
+  if (claude && codex) {
+    return "This workflow may launch claude-code, claude-code-writer, codex-exec, or codex-exec-writer. Call subscription_worker for Claude. This slice has no Codex runner, so use a router subagent. Do not launch this builtin.";
+  }
+  if (claude) {
+    return "This workflow may launch claude-code or claude-code-writer while subscriptions.claude is on. Call subscription_worker with the task. Do not launch this builtin.";
+  }
+  if (codex) {
+    return "This workflow may launch codex-exec or codex-exec-writer while subscriptions.codex is on. This slice has no Codex runner, so use a router subagent. Do not launch this builtin.";
+  }
+  return blockReason(hidden[0] ?? "claude-code");
+}
+
+/** A hidden builtin named anywhere in the script or args, longest name first so a writer is not read as its prefix. */
+function hiddenNameIn(source: string, hidden: ReadonlySet<string>): string | undefined {
+  const names = [...hidden].sort((a, b) => b.length - a.length);
+  for (const name of names) {
+    const body = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(^|[^A-Za-z0-9_-])${body}(?![A-Za-z0-9_-])`).test(source)) return name;
+  }
+  return undefined;
+}
+
+function isIdentStart(char: string): boolean {
+  return /[A-Za-z_$]/.test(char);
+}
+
+function isIdentPart(char: string): boolean {
+  return /[A-Za-z0-9_$]/.test(char);
+}
+
+/**
+ * An `agent:` value is safe only as one single- or double-quoted literal.
+ * A variable, concatenation, or template is not proof the builtin stays hidden.
+ * Returns the hidden literal it saw, and whether any value was not a quoted literal.
+ */
+function agentLaunchShape(source: string, hidden: ReadonlySet<string>): { literal?: string; dynamic: boolean } {
+  let i = 0;
+  let dynamic = false;
+  let literal: string | undefined;
+  const note = (value: string) => {
+    const name = value.trim();
+    if (!literal && hidden.has(name)) literal = name;
+  };
+
+  const skipIgnorable = () => {
+    while (i < source.length) {
+      const char = source[i];
+      if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
+        i++;
+        continue;
+      }
+      if (char === "/" && source[i + 1] === "/") {
+        i += 2;
+        while (i < source.length && source[i] !== "\n") i++;
+        continue;
+      }
+      if (char === "/" && source[i + 1] === "*") {
+        i += 2;
+        while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+        i = Math.min(source.length, i + 2);
+        continue;
+      }
+      break;
+    }
+  };
+
+  const readQuoted = (): string | undefined => {
+    const quote = source[i];
+    if (quote !== "'" && quote !== '"') return undefined;
+    i++;
+    let value = "";
+    while (i < source.length) {
+      const char = source[i++];
+      if (char === "\\") {
+        if (i >= source.length) return undefined;
+        const next = source[i++];
+        if (next === "n") value += "\n";
+        else if (next === "r") value += "\r";
+        else if (next === "t") value += "\t";
+        else if (next === "u" && /^[0-9a-fA-F]{4}/.test(source.slice(i, i + 4))) {
+          value += String.fromCharCode(Number.parseInt(source.slice(i, i + 4), 16));
+          i += 4;
+        } else value += next;
+        continue;
+      }
+      if (char === quote) return value;
+      if (char === "\n") return undefined;
+      value += char;
+    }
+    return undefined;
+  };
+
+  const followedByColon = (): boolean => {
+    const saved = i;
+    skipIgnorable();
+    if (source[i] === ":") {
+      i++;
+      return true;
+    }
+    i = saved;
+    return false;
+  };
+
+  const valueIsQuotedLiteral = (): boolean => {
+    skipIgnorable();
+    if (source[i] !== "'" && source[i] !== '"') return false;
+    const value = readQuoted();
+    if (value === undefined) return false;
+    note(value);
+    skipIgnorable();
+    const next = source[i];
+    return next === undefined || next === "," || next === "}" || next === ")" || next === "]" || next === ";";
+  };
+
+  const scanTemplate = (): void => {
+    while (i < source.length) {
+      const char = source[i];
+      if (char === "\\") {
+        i += 2;
+        continue;
+      }
+      if (char === "`") {
+        i++;
+        return;
+      }
+      if (char === "$" && source[i + 1] === "{") {
+        i += 2;
+        scanCode(true);
+        if (source[i] === "}") i++;
+        continue;
+      }
+      i++;
+    }
+  };
+
+  const scanCode = (stopBrace: boolean): void => {
+    let depth = 0;
+    while (i < source.length) {
+      skipIgnorable();
+      if (i >= source.length) return;
+      const char = source[i];
+      if (char === "'" || char === '"') {
+        const value = readQuoted();
+        if (value === undefined) {
+          dynamic = true;
+          return;
+        }
+        if (value === "agent" && followedByColon() && !valueIsQuotedLiteral()) dynamic = true;
+        continue;
+      }
+      if (char === "`") {
+        i++;
+        scanTemplate();
+        continue;
+      }
+      if (char === "[") {
+        const saved = i;
+        i++;
+        skipIgnorable();
+        const key = source[i] === "'" || source[i] === '"' ? readQuoted() : undefined;
+        skipIgnorable();
+        if (key === "agent" && source[i] === "]") {
+          i++;
+          if (followedByColon() && !valueIsQuotedLiteral()) dynamic = true;
+          continue;
+        }
+        i = saved + 1;
+        continue;
+      }
+      if (char === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      if (char === "}") {
+        // Only a `${ ... }` expression ends at an unmatched brace. A loose `}` must not hide the rest of the script.
+        if (stopBrace && depth === 0) return;
+        if (depth > 0) depth--;
+        i++;
+        continue;
+      }
+      if (isIdentStart(char)) {
+        const start = i;
+        i++;
+        while (i < source.length && isIdentPart(source[i])) i++;
+        if (source.slice(start, i) === "agent" && followedByColon() && !valueIsQuotedLiteral()) dynamic = true;
+        continue;
+      }
+      i++;
+    }
+  };
+
+  scanCode(false);
+  return { literal, dynamic };
+}
+
+/**
+ * Block a `subagent` call that would start a hidden builtin. List, get, models, status, guide,
+ * and capabilities still run. `validate` does not launch. An empty hide list blocks nothing.
+ * A workflow script, a script path, or `schedule.create` launches unless the script is known
+ * not to name a hidden builtin.
  */
 export function blockHiddenSubagent(
   input: unknown,
   hidden: readonly string[],
+  io?: HiddenSubagentIo,
 ): { block: true; reason: string } | undefined {
   if (!hidden.length || !input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
   const action = typeof record.action === "string" ? record.action.trim() : "";
-  if (INSPECT.has(action)) return undefined;
+  if (INSPECT.has(action) || action === VALIDATE) return undefined;
   const hiddenSet = new Set(hidden);
   const direct = typeof record.agent === "string" ? record.agent.trim() : "";
   if (direct && hiddenSet.has(direct)) return { block: true, reason: blockReason(direct) };
-  if (action) return undefined;
-  const named = agentNamedIn(scriptSource(record), hiddenSet);
+  const hasScript = typeof record.workflowScript === "string";
+  const hasPath = typeof record.workflowScriptPath === "string";
+  if (!hasScript && !hasPath && action !== SCHEDULE_CREATE) return undefined;
+  const source = workflowSource(record, io);
+  if (source === undefined) return { block: true, reason: unknownLaunchReason(hidden) };
+  const shape = agentLaunchShape(source, hiddenSet);
+  const named = shape.literal ?? hiddenNameIn(source, hiddenSet);
   if (named) return { block: true, reason: blockReason(named) };
+  if (shape.dynamic) return { block: true, reason: unknownLaunchReason(hidden) };
   return undefined;
 }
 

@@ -89,9 +89,12 @@ export default function (pi: ExtensionAPI) {
     },
   } as any);
 
-  pi.on("tool_call", async (event) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "subagent") return;
-    return blockHiddenSubagent(event.input, hiddenNow());
+    const eventCwd = typeof (event as { cwd?: unknown }).cwd === "string" ? (event as { cwd: string }).cwd : "";
+    const ctxCwd = typeof ctx?.cwd === "string" ? ctx.cwd : "";
+    const cwd = eventCwd.trim() || ctxCwd.trim() || process.cwd();
+    return blockHiddenSubagent(event.input, hiddenNow(), { cwd });
   });
 
   pi.on("before_agent_start", async (event) => {

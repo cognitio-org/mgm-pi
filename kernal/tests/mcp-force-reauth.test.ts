@@ -27,27 +27,30 @@ test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
   assert.doesNotMatch(patch, /reconnectServer/);
 });
 
-test("the installed adapter forces re-auth only for explicit /mcp-auth", { skip: !existsSync(flowPath) }, () => {
-  const flow = readFileSync(flowPath, "utf8");
-  const commands = readFileSync(commandsPath, "utf8");
-  const forced = flow.match(/forceReauthorization: options\.forceReauthorization === true/g) ?? [];
-  assert.equal(forced.length, 1);
-  const refreshCalls = [...flow.matchAll(/runSdkAuth\(authProvider, \{([^}]*)\}/gs)].map((match) => match[1]);
-  assert.equal(refreshCalls.filter((body) => body.includes("forceReauthorization")).length, 1);
-  const reconnect = commands.slice(commands.indexOf("export async function reconnectServer"), commands.indexOf("export async function authenticateServer"));
-  assert.doesNotMatch(reconnect, /forceReauthorization/);
-  assert.equal((commands.match(/forceReauthorization: true/g) ?? []).length, 1);
-
+test("the patch forces re-auth only for explicit /mcp-auth", { skip: !existsSync(flowPath) }, () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-reauth-"));
   const adapter = join(dir, "pi-mcp-adapter");
   mkdirSync(adapter);
   cpSync(flowPath, join(adapter, "mcp-auth-flow.ts"));
   cpSync(commandsPath, join(adapter, "commands.ts"));
   const patch = readFileSync(patchPath);
-  execFileSync("patch", ["-d", dir, "-p1", "-R", "--batch"], { input: patch });
-  assert.doesNotMatch(readFileSync(join(dir, "pi-mcp-adapter/mcp-auth-flow.ts"), "utf8"), /forceReauthorization: options\.forceReauthorization === true/);
+  const copiedFlow = join(adapter, "mcp-auth-flow.ts");
+  // A local checkout may already be patched. CI's npm ci copy is the published package.
+  if (readFileSync(copiedFlow, "utf8").includes("forceReauthorization: options.forceReauthorization === true")) {
+    execFileSync("patch", ["-d", dir, "-p1", "-R", "--batch"], { input: patch });
+  }
   execFileSync("patch", ["-d", dir, "-p1", "--batch"], { input: patch });
-  assert.equal(readFileSync(join(dir, "pi-mcp-adapter/mcp-auth-flow.ts"), "utf8"), flow);
-  assert.equal(readFileSync(join(dir, "pi-mcp-adapter/commands.ts"), "utf8"), commands);
+  const flow = readFileSync(copiedFlow, "utf8");
+  const commands = readFileSync(join(adapter, "commands.ts"), "utf8");
+  const forced = flow.match(/forceReauthorization: options\.forceReauthorization === true/g) ?? [];
+  assert.equal(forced.length, 1);
+  const refreshCalls = [...flow.matchAll(/runSdkAuth\(authProvider, \{([^}]*)\}/gs)].map((match) => match[1]);
+  assert.equal(refreshCalls.filter((body) => body.includes("forceReauthorization")).length, 1);
+  const reconnect = commands.slice(
+    commands.indexOf("export async function reconnectServer"),
+    commands.indexOf("export async function authenticateServer"),
+  );
+  assert.doesNotMatch(reconnect, /forceReauthorization/);
+  assert.equal((commands.match(/forceReauthorization: true/g) ?? []).length, 1);
   rmSync(dir, { recursive: true, force: true });
 });

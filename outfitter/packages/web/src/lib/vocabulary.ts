@@ -30,6 +30,12 @@ export const vocabulary = {
   // #389 central sign-in and settings (docs/specs/central-auth.md §6-§7).
   device: { one: "Device", many: "Devices", hint: "computers where Kernal is signed in with your account" },
   account: { one: "Account", many: "Account", hint: "your Kernal settings: profiles, keys, local models and spend" },
+  // docs/specs/subscriptions.md §4. Nav label and the Subscriptions page subtitle.
+  subscription: {
+    one: "Subscriptions",
+    many: "Subscriptions",
+    hint: "your Claude, Grok, Codex, and Antigravity logins",
+  },
   profile: { one: "Profile", many: "Profiles", hint: "named sets of Kernal settings, picked with kernal --profile" },
   settings: { one: "Control Panel", many: "Control Panel", hint: "keys and deployment settings" },
   operator: { one: "Sysop", many: "Sysops", hint: "can change keys and deployment settings" },

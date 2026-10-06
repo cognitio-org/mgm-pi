@@ -3,6 +3,9 @@
 // which personal provider keys a user has stored (the values live in Secret Manager). Owned by task
 // D; the shapes and interfaces are the contract the Devices page (CA-1 web), account settings
 // (CA-7) and run keys (CA-6) read.
+//
+// Subscription secrets (docs/specs/subscriptions.md §3) are a sibling collection, not a provider id:
+// Grok and Codex auth files do not fit a provider key. The value stays in Secret Manager.
 
 import type { Collection as MongoCollection, Db } from "mongodb";
 
@@ -140,6 +143,66 @@ export class MemoryProviderKeys implements ProviderKeysCollection {
   }
 }
 
+/** A personal subscription secret's metadata (docs/specs/subscriptions.md §3). The value is the
+ * Secret Manager version `version` of `secretName`. */
+export interface SubscriptionSecretMeta {
+  /** `<userId>:subscription:<vendor>`. */
+  id: string;
+  userId: string;
+  vendor: string;
+  secretName: string;
+  /** The Secret Manager version just written. */
+  version: number;
+  /** Last 4 hex digits of sha256 of the exact stored bytes. */
+  last4: string;
+  setAt: string;
+  setBy: string;
+}
+
+export interface SubscriptionSecretsCollection {
+  /** Sorted by vendor. */
+  listForUser(userId: string): Promise<SubscriptionSecretMeta[]>;
+  get(id: string): Promise<SubscriptionSecretMeta | null>;
+  upsert(meta: SubscriptionSecretMeta): Promise<void>;
+  /** Writes `meta` only when the stored version is still `expectedVersion`. `null` means no
+   * document yet: success only if this call inserts, and a concurrent insert loses. Never stores
+   * a version number lower than or equal to the one already stored. */
+  compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean>;
+  delete(id: string): Promise<boolean>;
+}
+
+export class MemorySubscriptionSecrets implements SubscriptionSecretsCollection {
+  private readonly metas = new Map<string, SubscriptionSecretMeta>();
+
+  async listForUser(userId: string): Promise<SubscriptionSecretMeta[]> {
+    return [...this.metas.values()]
+      .filter((m) => m.userId === userId)
+      .sort((a, b) => a.vendor.localeCompare(b.vendor))
+      .map((m) => ({ ...m }));
+  }
+  async get(id: string): Promise<SubscriptionSecretMeta | null> {
+    const meta = this.metas.get(id);
+    return meta ? { ...meta } : null;
+  }
+  async upsert(meta: SubscriptionSecretMeta): Promise<void> {
+    this.metas.set(meta.id, { ...meta });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const current = this.metas.get(meta.id);
+    if (expectedVersion === null) {
+      if (current) return false;
+      this.metas.set(meta.id, { ...meta });
+      return true;
+    }
+    if (!current || current.version !== expectedVersion || meta.version <= current.version) return false;
+    this.metas.set(meta.id, { ...meta });
+    return true;
+  }
+  async delete(id: string): Promise<boolean> {
+    return this.metas.delete(id);
+  }
+}
+
 // ---------- Mongo ----------
 
 export type RouterKeyDoc = RouterKey & { _id: string };
@@ -225,6 +288,54 @@ export class MongoProviderKeys implements ProviderKeysCollection {
   }
 }
 
+/** `_id` is the meta's `id`, not stored twice. */
+export type SubscriptionSecretDoc = Omit<SubscriptionSecretMeta, "id"> & { _id: string };
+
+function subscriptionSecretFromDoc(doc: SubscriptionSecretDoc): SubscriptionSecretMeta {
+  const { _id, ...meta } = doc;
+  return { id: _id, ...meta };
+}
+
+export class MongoSubscriptionSecrets implements SubscriptionSecretsCollection {
+  private readonly col: MongoCollection<SubscriptionSecretDoc>;
+  constructor(col: MongoCollection<SubscriptionSecretDoc>) {
+    this.col = col;
+  }
+  async listForUser(userId: string): Promise<SubscriptionSecretMeta[]> {
+    const rows = await this.col.find({ userId }).sort({ vendor: 1 }).toArray();
+    return rows.map(subscriptionSecretFromDoc);
+  }
+  async get(id: string): Promise<SubscriptionSecretMeta | null> {
+    const doc = await this.col.findOne({ _id: id });
+    return doc ? subscriptionSecretFromDoc(doc) : null;
+  }
+  async upsert(meta: SubscriptionSecretMeta): Promise<void> {
+    const { id, ...rest } = meta;
+    await this.col.replaceOne({ _id: id }, rest, { upsert: true });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const { id, ...rest } = meta;
+    if (expectedVersion === null) {
+      try {
+        await this.col.insertOne({ _id: id, ...rest });
+        return true;
+      } catch (err) {
+        if (typeof err === "object" && err !== null && (err as { code?: number }).code === 11000) return false;
+        throw err;
+      }
+    }
+    // Filter on `_id` and `version`, not an unconditional replace: a stale writer must not move
+    // the stored version backward. `version <= expected` loses even when the filter would match.
+    if (meta.version <= expectedVersion) return false;
+    const result = await this.col.replaceOne({ _id: id, version: expectedVersion }, rest);
+    return result.matchedCount === 1;
+  }
+  async delete(id: string): Promise<boolean> {
+    const result = await this.col.deleteOne({ _id: id });
+    return result.deletedCount > 0;
+  }
+}
+
 /** Called from MongoStore.ensureIndexes (store/mongo.ts). */
 export async function ensureKeyIndexes(db: Db): Promise<void> {
   await Promise.all([
@@ -232,5 +343,6 @@ export async function ensureKeyIndexes(db: Db): Promise<void> {
     db.collection("routerKeys").createIndex({ userId: 1, deletedAt: 1 }),
     db.collection("routerKeys").createIndex({ deletedAt: 1, deleteFailedAt: 1, expiresAt: 1 }),
     db.collection("providerKeys").createIndex({ userId: 1 }),
+    db.collection("subscriptionSecrets").createIndex({ userId: 1 }),
   ]);
 }

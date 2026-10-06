@@ -1,10 +1,13 @@
 // Central sign-in, CA-4 + CA-5 (#393, #394, docs/specs/central-auth.md §4, §5.5, §8): personal
 // provider keys (write-only), a device's router key re-mint, and spend. Owned by task D.
+// Subscription secrets (docs/specs/subscriptions.md §3) use the same auth, on their own routes.
 // Registered once from routes/index.ts on every role; this module decides per role:
-//   every role: GET/PUT/DELETE /api/me/provider-keys[/:provider] (a person on web; a device token
-//              anywhere, so /admin can write from Kernal on link; never a Dongle or machine token).
+//   every role: GET/PUT/DELETE /api/me/provider-keys[/:provider] and
+//              /api/me/subscription-secrets[/:vendor] (a person on web; a device token anywhere,
+//              so /admin can write from Kernal on link; never a Dongle or machine token).
 //   web, all:   GET /api/me/spend, GET /api/operator/spend.
-//   link, all:  POST /api/device/provider-keys, POST /api/device/router-key (device tokens only).
+//   link, all:  POST /api/device/provider-keys, POST /api/device/subscription-secrets,
+//              POST /api/device/router-key (device tokens only).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
@@ -19,6 +22,15 @@ import {
   setProviderKey,
   type ProviderKeyDeps,
 } from "../central/provider-keys.ts";
+import {
+  deleteSubscriptionSecret,
+  deliverSubscriptionSecrets,
+  isSubscriptionVendor,
+  isValidSubscriptionValue,
+  listSubscriptionSecrets,
+  setSubscriptionSecret,
+  type SubscriptionSecretDeps,
+} from "../central/subscription-secrets.ts";
 import { currentSpendMonth, deviceKeyAlias, isSpendMonth, mintDeviceRouterKey, routerKeyLimits } from "../central/litellm-keys.ts";
 import type { Device } from "../store/devices.ts";
 import { metrics } from "../sentry.ts";
@@ -40,6 +52,14 @@ function refuseNonDevice(req: FastifyRequest, reply: FastifyReply): boolean {
     return true;
   }
   return false;
+}
+
+/** `ifVersion` omitted, a positive integer, or null when the field is present but not one. */
+function subscriptionIfVersion(body: unknown): number | undefined | null {
+  const raw = (body as { ifVersion?: unknown } | null | undefined)?.ifVersion;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) return null;
+  return raw;
 }
 
 /** A device token's own Device, or a refusal: gone or revoked is 404, and a machine token (CI, §1.7)
@@ -64,6 +84,11 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
   const role = ctx.config.role;
   const deps = (req: FastifyRequest): ProviderKeyDeps => ({
     providerKeys: ctx.store.providerKeys,
+    secrets: ctx.secretAdmin,
+    log: (msg, err) => req.log.warn({ err }, msg),
+  });
+  const subscriptionDeps = (req: FastifyRequest): SubscriptionSecretDeps => ({
+    subscriptionSecrets: ctx.store.subscriptionSecrets,
     secrets: ctx.secretAdmin,
     log: (msg, err) => req.log.warn({ err }, msg),
   });
@@ -111,6 +136,52 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
     return reply.code(204).send();
   });
 
+  // ---------- subscription secrets (docs/specs/subscriptions.md §3): write-only ----------
+
+  app.get("/api/me/subscription-secrets", async (req, reply) => {
+    if (refuseDongle(req, reply)) return;
+    if ((await deviceOrRefuse(ctx, req, reply)) === undefined) return;
+    return listSubscriptionSecrets(subscriptionDeps(req), userIdFor(req.identity!.email));
+  });
+
+  app.put<{ Params: { vendor: string } }>("/api/me/subscription-secrets/:vendor", async (req, reply) => {
+    if (refuseDongle(req, reply)) return;
+    if ((await deviceOrRefuse(ctx, req, reply)) === undefined) return;
+    const { vendor } = req.params;
+    if (!isSubscriptionVendor(vendor)) return reply.code(400).send({ error: "unknown_vendor" });
+    const value = (req.body as { value?: unknown } | undefined)?.value;
+    if (!isValidSubscriptionValue(vendor, value)) return reply.code(400).send({ error: "invalid_value" });
+    const ifVersion = subscriptionIfVersion(req.body);
+    if (ifVersion === null) return reply.code(400).send({ error: "invalid_request" });
+    const email = req.identity!.email;
+    let result;
+    try {
+      result = await setSubscriptionSecret(subscriptionDeps(req), { userId: userIdFor(email), vendor, value, setBy: email, ...(ifVersion !== undefined ? { ifVersion } : {}) });
+    } catch (err) {
+      // Never the error object itself: a Secret Manager (Gaxios) error carries the request, and so
+      // the secret, in its config.
+      const status = (err as { response?: { status?: unknown } } | undefined)?.response?.status;
+      req.log.warn({ vendor, status, message: err instanceof Error ? err.message : String(err) }, "subscription secret write failed");
+      metrics.count("subscription_secret.write", { vendor, op: "set", outcome: "failed" });
+      return reply.code(502).send({ error: "secret_write_failed" });
+    }
+    if (!result.ok) return reply.code(409).send({ error: result.error, version: result.version });
+    metrics.count("subscription_secret.write", { vendor, op: "set", outcome: "ok" });
+    req.log.info({ vendor, deviceId: req.identity!.deviceId }, "subscription secret set");
+    return result.view;
+  });
+
+  app.delete<{ Params: { vendor: string } }>("/api/me/subscription-secrets/:vendor", async (req, reply) => {
+    if (refuseDongle(req, reply)) return;
+    if ((await deviceOrRefuse(ctx, req, reply)) === undefined) return;
+    const { vendor } = req.params;
+    if (!isSubscriptionVendor(vendor)) return reply.code(400).send({ error: "unknown_vendor" });
+    await deleteSubscriptionSecret(subscriptionDeps(req), { userId: userIdFor(req.identity!.email), vendor });
+    metrics.count("subscription_secret.write", { vendor, op: "delete", outcome: "ok" });
+    req.log.info({ vendor, deviceId: req.identity!.deviceId }, "subscription secret removed");
+    return reply.code(204).send();
+  });
+
   // ---------- spend (§8) ----------
 
   if (role !== "link") {
@@ -152,6 +223,15 @@ export async function registerKeyRoutes(app: FastifyInstance, ctx: RouteContext)
       const keys = await deliverProviderKeys(deps(req), userIdFor(req.identity!.email));
       req.log.info({ deviceId: req.identity!.deviceId, providers: Object.keys(keys) }, "provider keys delivered");
       return { keys };
+    });
+
+    app.post("/api/device/subscription-secrets", async (req, reply) => {
+      if (refuseNonDevice(req, reply)) return;
+      if ((await deviceOrRefuse(ctx, req, reply)) === undefined) return;
+      reply.header("cache-control", "no-store");
+      const secrets = await deliverSubscriptionSecrets(subscriptionDeps(req), userIdFor(req.identity!.email));
+      req.log.info({ deviceId: req.identity!.deviceId, vendors: Object.keys(secrets) }, "subscription secrets delivered");
+      return { secrets };
     });
 
     app.post("/api/device/router-key", async (req, reply) => {

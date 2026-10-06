@@ -64,7 +64,41 @@ describe("schema validation", () => {
     for (const key of ["openrouter.models.localAdd", "openrouter.models.localRemove"]) {
       assert.deepEqual(parseValueWrite("user", { values: { [key]: ids } }), { error: "level_not_allowed", key });
     }
-    assert.equal(SETTINGS_SCHEMA_VERSION, 3);
+    assert.equal(SETTINGS_SCHEMA_VERSION, 4);
+  });
+
+  test("subscription keys (schema v4): not fleet, three modes, prefer is a unique vendor list", () => {
+    const decl = (k: string) => settingDecl(k)!;
+    const modes = ["subscriptions.claude", "subscriptions.grok", "subscriptions.codex", "subscriptions.gemini"] as const;
+    for (const key of modes) {
+      assert.deepEqual(decl(key).levels, ["user", "profile", "device", "local"]);
+      assert.equal(decl(key).secret, false);
+      assert.equal(decl(key).override, "any");
+      assert.equal(decl(key).since, 4);
+      assert.equal(decl(key).default, "off");
+      assert.deepEqual(parseValueWrite("fleet", { values: { [key]: "full" } }), { error: "level_not_allowed", key });
+      for (const value of ["off", "sandboxed", "full"]) assert.equal(coerceSettingValue(decl(key), value), value);
+      assert.equal(coerceSettingValue(decl(key), "on"), undefined);
+      assert.deepEqual(parseValueWrite("user", { values: { [key]: "sometimes" } }), { error: "invalid_value", key });
+    }
+    assert.deepEqual(parseValueWrite("profile", { values: { "subscriptions.claude": "full" } }), { patch: { "subscriptions.claude": "full" } });
+    assert.deepEqual(parseValueWrite("device", { values: { "subscriptions.grok": "sandboxed" } }), { patch: { "subscriptions.grok": "sandboxed" } });
+
+    const prefer = decl("subscriptions.prefer");
+    assert.equal(prefer.default, "claude,grok,codex,gemini");
+    assert.deepEqual(prefer.levels, ["user", "profile", "device", "local"]);
+    assert.deepEqual(parseValueWrite("fleet", { values: { "subscriptions.prefer": "claude,grok" } }), { error: "level_not_allowed", key: "subscriptions.prefer" });
+    assert.equal(coerceSettingValue(prefer, "claude,grok"), "claude,grok");
+    assert.equal(coerceSettingValue(prefer, "gemini"), "gemini");
+    assert.equal(coerceSettingValue(prefer, "gemini,claude"), "gemini,claude");
+    assert.equal(coerceSettingValue(prefer, "claude,claude"), undefined);
+    assert.equal(coerceSettingValue(prefer, "claude, atlas"), undefined);
+    assert.equal(coerceSettingValue(prefer, "claude, grok"), undefined);
+    assert.equal(coerceSettingValue(prefer, ""), undefined);
+    assert.equal(coerceSettingValue(prefer, ","), undefined);
+    // the prefer shape is not applied to other string keys
+    assert.equal(coerceSettingValue(decl("model.default"), "claude, grok"), "claude, grok");
+    assert.equal(coerceSettingValue(decl("model.default"), "claude,claude"), "claude,claude");
   });
 
   test("parseValueWrite checks declared, secret, level and type, in that order", () => {

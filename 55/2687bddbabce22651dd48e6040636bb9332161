@@ -1,0 +1,36 @@
+outfitter/packages/api/test/autofix.test.ts
+  s_fe1c4322a69a90::t_188728a540c822 268,272-291,293-300
+  s_fe1c4322a69a90::t_a3399221722fe0 292
+  s_fe1c4322a69a90::t_ab855faee2eb4a 126-127
+  s_0c22637abb3b43::t_267584b9b739e5 301-302
+outfitter/packages/api/src/autofix.ts
+  s_fe1c4322a69a90::t_bc921b2769e406 215,221-222,224-241,243-246,250-252
+  s_fe1c4322a69a90::t_d51811d9c30876 17,19
+  s_0c22637abb3b43::t_9701eb3434d4a9 253-254
+outfitter/docs/protocol.md
+  s_fe1c4322a69a90::t_7ff947a33b1162 558
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "552687bddbabce22651dd48e6040636bb9332161",
+  "prompts": {},
+  "sessions": {
+    "s_0c22637abb3b43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "49aca729-6f5c-461c-99f2-b26ac7e08e84",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

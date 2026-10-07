@@ -1,0 +1,45 @@
+outfitter/packages/api/src/store/mongo.ts
+  s_fe1c4322a69a90::t_f8572755b2fcab 184,188-199,206-207
+  s_fe1c4322a69a90::t_c3aa1478c621eb 208-209
+outfitter/packages/api/src/routes/sessions.ts
+  s_fe1c4322a69a90::t_932a54adefaa1d 492-503
+  s_fe1c4322a69a90::t_7959d0333158f6 21
+outfitter/packages/api/test/autofix.test.ts
+  s_fe1c4322a69a90::t_bae813ca99d4a4 360-362
+  s_fe1c4322a69a90::t_0d68a43e762c0b 395,415
+  s_fe1c4322a69a90::t_1eb7c5045117bf 9,11,15-16,105,107,112,115-118,120,123-124,131,136,138,146,150-151,154,157,161,168-196,210-212,224,226-227,235,237,240,244-269,273,276,289-306,315,319,338-359,363-375,391-394,396-414,416-418,430,450,453,456-458,460,463-467,469-512,540,557,561,570-572,580-602,611-612,617,619
+outfitter/packages/api/src/store/memory.ts
+  s_fe1c4322a69a90::t_ecee50d04fa3de 168,171,173,178-179
+  s_fe1c4322a69a90::t_ec8c32a8fd8b91 180-181
+outfitter/packages/web/src/api/client.ts
+  s_fe1c4322a69a90::t_58fb6e5a35af7e 947-949
+  s_fe1c4322a69a90::t_e163e84b9d8302 87
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_fe1c4322a69a90::t_b9fa94ffc2d909 76,78-79,206-209
+  s_fe1c4322a69a90::t_f2f21cb390a8e7 67,80,89
+outfitter/packages/api/src/autofix.ts
+  s_fe1c4322a69a90::t_4e1390720b9035 6-7,10-11,15-19,22,24,28,30-31,37-41,45,49-51,54-55,62-66,69,80,83,101,120,128-131,172,174,176-188,190,193-194,202,206-209,222-231,234-237,244,249-250,252,254-259,261,263-264,268-269,273-300,302,310-312,321,336-346,348,351-353,355-359
+outfitter/packages/api/src/store/types.ts
+  s_fe1c4322a69a90::t_d5a507fef2e470 121-130
+  s_fe1c4322a69a90::t_fc8b6ccb3de390 874-879
+outfitter/packages/api/src/server.ts
+  s_fe1c4322a69a90::t_0d7ac4d1c8b96b 185,188
+outfitter/docs/protocol.md
+  s_fe1c4322a69a90::t_5902bb85542f2e 558-562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "45e09d3ab61a1074793ac458f91ac13fb294add0",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

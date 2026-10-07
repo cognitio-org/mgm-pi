@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap.ts";
 import { BackIcon } from "./SessionIcons.tsx";
-import type { ChangedFile, GithubCheck, LastPush } from "../api/client.ts";
+import type { AutofixState, ChangedFile, GithubCheck, LastPush } from "../api/client.ts";
+import { relativeTime } from "../lib/relative-time.ts";
 import type { DiffNotes } from "../hooks/useDiffNotes.ts";
 import type { SessionGit } from "../hooks/useSessionGit.ts";
 import {
@@ -210,6 +211,78 @@ function FailingCheck({ check, git }: { check: GithubCheck; git: SessionGit }) {
   );
 }
 
+/** #503 Auto-fix CI for this floppy. `onToggle` resolves to an error message, or null once saved. */
+export interface AutofixControl {
+  state: AutofixState | undefined;
+  canManage: boolean;
+  /** Archived: the watcher skips it, and the server only lets it be turned off. */
+  archived: boolean;
+  onToggle: (on: boolean) => Promise<string | null>;
+}
+
+/** What the switch says under its label, and whether it can be pressed. Pure for tests. */
+export function autofixSwitchView(
+  control: AutofixControl,
+  now = Date.now(),
+): { on: boolean; note: string; disabled: boolean } {
+  const { state, canManage, archived } = control;
+  const on = state?.on === true;
+  if (state?.a2a) return { on, note: "Not available on an A2A task's floppy.", disabled: !on || !canManage };
+  if (!canManage) return { on, note: state?.notice ?? "Only the floppy's owner can change this.", disabled: true };
+  if (archived)
+    return on
+      ? { on, note: "Paused while this floppy is archived. You can still turn it off.", disabled: false }
+      : { on, note: "Restore this floppy to use Auto-fix.", disabled: true };
+  if (on && state?.capped) {
+    const at = state.resumesAt ? Date.parse(state.resumesAt) : NaN;
+    const when = Number.isNaN(at)
+      ? "within a day"
+      : `at ${new Date(at).toLocaleString([], { weekday: at - now > 20 * 3600_000 ? "short" : undefined, hour: "2-digit", minute: "2-digit" })}`;
+    return { on, note: `Paused: 3 messages in the last 24 hours and CI is still failing. Resumes ${when}; turn it off and on to resume now.`, disabled: false };
+  }
+  if (state?.notice) return { on, note: state.notice, disabled: false };
+  if (on && state?.lastAt && state.lastSha) return { on, note: `Last sent for ${state.lastSha.slice(0, 7)} ${relativeTime(state.lastAt, now)}.`, disabled: false };
+  if (on) return { on, note: "On: a failing check on this floppy's pull request goes to the agent (at most 3 a day).", disabled: false };
+  return { on, note: "When a check fails, send its log to the agent (at most 3 a day).", disabled: false };
+}
+
+function AutofixSwitch({ control }: { control: AutofixControl }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // A new state (a save, or another floppy) clears an old refusal.
+  useEffect(() => setError(null), [control.state]);
+  const { on, note, disabled } = autofixSwitchView(control);
+  const toggle = async () => {
+    setSaving(true);
+    setError(null);
+    const failed = await control.onToggle(!on);
+    setSaving(false);
+    setError(failed);
+  };
+  return (
+    <div className="details-toggle">
+      <span>
+        Auto-fix CI
+        <small>{note}</small>
+        {error && (
+          <small className="git-error" role="alert">
+            {error}
+          </small>
+        )}
+      </span>
+      <button
+        type="button"
+        className="details-switch"
+        role="switch"
+        aria-checked={on}
+        aria-label="Auto-fix CI"
+        disabled={disabled || saving}
+        onClick={() => void toggle()}
+      />
+    </div>
+  );
+}
+
 function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const status = git.status;
@@ -278,13 +351,6 @@ function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => v
         </ul>
       )}
       {failing && <FailingCheck check={failing} git={git} />}
-      <div className="details-toggle">
-        <span>
-          Auto-fix CI
-          <small>When a check fails, send its log to the agent. Coming soon (#503).</small>
-        </span>
-        <button type="button" className="details-switch" role="switch" aria-checked={false} aria-label="Auto-fix CI, coming soon" disabled />
-      </div>
       {merge.offered ? (
         <div className="git-actions">
           {confirming ? (
@@ -340,11 +406,13 @@ export function ChangesPane({
   lastPush,
   onCreatePr,
   onSendNotes,
+  autofix,
 }: {
   git: SessionGit;
   notes: DiffNotes;
   lastPush: LastPush | null | undefined;
   onCreatePr: () => void;
+  autofix?: AutofixControl;
   /** Resolves true once the message was accepted; the notes stay until then. */
   onSendNotes: (text: string) => Promise<boolean>;
 }) {
@@ -426,6 +494,8 @@ export function ChangesPane({
           <span>Pull request</span>
         </h2>
         <PullRequest git={git} onCreatePr={onCreatePr} />
+        {/* Outside PullRequest: it can be on with no open PR (before one, after a merge), and must stay switchable. */}
+        {autofix && <AutofixSwitch control={autofix} />}
       </section>
 
       <section aria-labelledby="changes-files">

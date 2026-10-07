@@ -1283,6 +1283,11 @@
   font-size: 0.72rem;
 }
 
+/* #503: why the Auto-fix switch couldn't change. */
+.details-toggle small.git-error {
+  color: var(--danger);
+}
+
 .session-shell .details-switch {
   position: relative;
   flex: none;

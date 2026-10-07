@@ -87,6 +87,8 @@ export interface AutofixState {
   /** The pause notice, or (with `on: false`) "Auto-fix turned itself off after 3 days of failing CI." */
   notice?: string;
   resumesAt?: string;
+  /** An A2A task's session: Auto-fix isn't available (turning it on is a 409 autofix-a2a). */
+  a2a?: boolean;
 }
 
 export interface SessionDetail {

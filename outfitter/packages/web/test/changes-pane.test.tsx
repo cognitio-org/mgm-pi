@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { ChangesPane } from "../src/components/ChangesPane.tsx";
+import { ChangesPane, autofixSwitchView, type AutofixControl } from "../src/components/ChangesPane.tsx";
 import { GitChips, GitStrip } from "../src/components/GitChips.tsx";
 import { CreatePrDialog } from "../src/components/CreatePrDialog.tsx";
 import { useDiffNotes } from "../src/hooks/useDiffNotes.ts";
@@ -59,9 +59,19 @@ function fakeGit(over: Partial<SessionGit> = {}): SessionGit {
   };
 }
 
-function Pane({ git, onSend = async () => true, onCreatePr = () => {} }: { git: SessionGit; onSend?: (t: string) => Promise<boolean>; onCreatePr?: () => void }) {
+function Pane({
+  git,
+  onSend = async () => true,
+  onCreatePr = () => {},
+  autofix,
+}: {
+  git: SessionGit;
+  onSend?: (t: string) => Promise<boolean>;
+  onCreatePr?: () => void;
+  autofix?: AutofixControl;
+}) {
   const notes = useDiffNotes("s1");
-  return <ChangesPane git={git} notes={notes} lastPush={{ sha: "7c1e9a4ffff", pushed: true }} onCreatePr={onCreatePr} onSendNotes={onSend} />;
+  return <ChangesPane git={git} notes={notes} lastPush={{ sha: "7c1e9a4ffff", pushed: true }} onCreatePr={onCreatePr} onSendNotes={onSend} autofix={autofix} />;
 }
 
 const button = (host: HTMLElement, text: RegExp) => [...host.querySelectorAll("button")].find((b) => text.test(b.textContent ?? ""))!;
@@ -152,7 +162,64 @@ describe("ChangesPane", () => {
     expect(git.rerun).toHaveBeenCalled();
     expect(button(host, /Merge…/).disabled).toBe(true);
     expect(host.querySelector(".git-merge-why")?.textContent).toMatch(/failing/);
-    expect(host.querySelector<HTMLButtonElement>("[role='switch'][aria-label^='Auto-fix']")!.disabled).toBe(true);
+    // No Auto-fix control passed (a floppy without a repo): no switch.
+    expect(host.querySelector("[role='switch'][aria-label^='Auto-fix']")).toBeNull();
+  });
+
+  it("#503: the Auto-fix switch turns on, shows the last send, and says why it can't change", async () => {
+    const onToggle = vi.fn(async () => null as string | null);
+    const sw = (host: HTMLElement) => host.querySelector<HTMLButtonElement>("[role='switch'][aria-label='Auto-fix CI']")!;
+    let host = mount(<Pane git={fakeGit({ status: status({ pr: pr() }) })} autofix={{ state: { on: false }, canManage: true, archived: false, onToggle }} />);
+    expect(sw(host).getAttribute("aria-checked")).toBe("false");
+    await act(async () => sw(host).click());
+    expect(onToggle).toHaveBeenCalledWith(true);
+
+    host = mount(
+      <Pane
+        git={fakeGit({ status: status({ pr: pr() }) })}
+        autofix={{ state: { on: true, lastSha: "abcdef1234567", lastAt: new Date().toISOString() }, canManage: true, archived: false, onToggle }}
+      />,
+    );
+    expect(sw(host).getAttribute("aria-checked")).toBe("true");
+    expect(host.textContent).toMatch(/Last sent for abcdef1/);
+
+    const refused = vi.fn(async () => "Auto-fix is on for 10 floppies already.");
+    host = mount(<Pane git={fakeGit({ status: status({ pr: pr() }) })} autofix={{ state: { on: false }, canManage: true, archived: false, onToggle: refused }} />);
+    await act(async () => sw(host).click());
+    expect(host.querySelector("[role='alert']")?.textContent).toBe("Auto-fix is on for 10 floppies already.");
+
+    host = mount(<Pane git={fakeGit({ status: status({ pr: pr() }) })} autofix={{ state: { on: false, notice: "Auto-fix turned itself off after 3 days of failing CI." }, canManage: false, archived: false, onToggle }} />);
+    expect(sw(host).disabled).toBe(true);
+    expect(host.textContent).toMatch(/turned itself off/);
+  });
+
+  it("#503 review: the switch stays reachable with no open pull request", () => {
+    const host = mount(<Pane git={fakeGit({ status: status({ pr: null }) })} autofix={{ state: { on: true }, canManage: true, archived: false, onToggle: vi.fn(async () => null) }} />);
+    const sw = host.querySelector<HTMLButtonElement>("[role='switch'][aria-label='Auto-fix CI']")!;
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(sw.disabled).toBe(false);
+  });
+
+  it("#503 review: archived, A2A and paused states say what's going on", () => {
+    const onToggle = async () => null;
+    const base = { canManage: true, archived: false, onToggle };
+    // Archived and on: paused, but can still be turned off. Archived and off: can't be turned on.
+    expect(autofixSwitchView({ ...base, archived: true, state: { on: true, lastAt: new Date().toISOString(), lastSha: "abc1234" } })).toEqual({
+      on: true,
+      note: "Paused while this floppy is archived. You can still turn it off.",
+      disabled: false,
+    });
+    expect(autofixSwitchView({ ...base, archived: true, state: { on: false } }).disabled).toBe(true);
+    // A2A: can't be turned on; if somehow on, it can be turned off.
+    expect(autofixSwitchView({ ...base, state: { on: false, a2a: true } })).toMatchObject({ disabled: true, note: "Not available on an A2A task's floppy." });
+    expect(autofixSwitchView({ ...base, state: { on: true, a2a: true } }).disabled).toBe(false);
+    // Paused for the day: a readable time, never the raw ISO string.
+    const now = Date.parse("2026-10-07T12:00:00Z");
+    const paused = autofixSwitchView({ ...base, state: { on: true, capped: true, resumesAt: "2026-10-07T18:30:00Z", notice: "server text" } }, now);
+    expect(paused.note).toMatch(/^Paused: 3 messages in the last 24 hours/);
+    expect(paused.note).not.toContain("2026-10-07T18:30");
+    // Not a manager: disabled with the reason.
+    expect(autofixSwitchView({ ...base, canManage: false, state: { on: true } })).toMatchObject({ disabled: true, note: "Only the floppy's owner can change this." });
   });
 
   it("Merge asks once, then squashes into the base", () => {

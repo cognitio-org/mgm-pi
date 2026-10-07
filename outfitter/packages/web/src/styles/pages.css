@@ -465,7 +465,6 @@ button.danger {
   border-color: var(--danger);
 }
 
-
 /* Session page title: the session's name (or a short id) in the body face. A full UUID in the
    uppercase pixel display face was hard to read; the full id is on hover. */
 .session-title {
@@ -909,80 +908,6 @@ button.danger {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-}
-
-.github-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  max-width: 100%;
-  min-width: 0;
-  padding: 0.05rem 0.45rem;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  color: var(--text-dim);
-  white-space: nowrap;
-  font-family: var(--font-mono);
-}
-
-.github-status-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-  color: var(--text);
-}
-
-.github-status-branch-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 12rem;
-}
-
-.github-status-sync {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.github-status-pull {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
-  padding: 0 0.2rem;
-  border: 1px solid transparent;
-  color: inherit;
-  text-decoration: none;
-}
-
-.github-status a.github-status-pull:hover {
-  color: var(--text);
-  border-color: var(--border);
-}
-
-/* Accent box, not color alone: the title also says this is the branch's pull request. */
-.github-status-pull.is-branch {
-  color: var(--text);
-  border-color: var(--accent);
-  background: var(--bg-inset);
-}
-
-.github-status-pull.is-draft {
-  border-style: dashed;
-  border-color: var(--border);
-}
-
-.github-status-pull.is-branch.is-draft {
-  border-color: var(--accent);
-}
-
-.github-status-draft {
-  font-family: var(--font-body);
-  font-size: 0.65rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .github-status-diff {

@@ -471,7 +471,6 @@
   flex: none;
 }
 
-.session-chips .github-status,
 .session-chips .preview-cluster {
   flex-wrap: nowrap;
 }
@@ -1333,6 +1332,522 @@
 
 .nerd-out.is-embedded .nerd-out-grid {
   grid-template-columns: 1fr;
+}
+
+/* ---------- #502: git chips, the phone strip, the Changes tab ---------- */
+
+.git-add {
+  color: var(--diff-add);
+}
+
+.git-del {
+  color: var(--diff-del);
+}
+
+.git-st-pass {
+  color: var(--ok);
+}
+
+.git-st-fail {
+  color: var(--danger);
+}
+
+.git-st-run {
+  color: var(--warn);
+}
+
+.session-shell .git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  box-shadow: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.session-shell .git-chip:hover {
+  border-color: var(--border);
+  transform: none;
+}
+
+.git-chip svg,
+.git-strip svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.git-chip-branch {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-shell .git-chip.is-fail {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.session-shell .git-chip.is-behind {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.session-shell .git-chip.is-merged {
+  color: var(--text-dim);
+}
+
+.session-shell .git-action {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-shell .git-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+  box-shadow: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.git-strip-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.git-strip-part:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.git-strip-part.is-fail {
+  color: var(--danger);
+}
+
+.git-strip-part.is-behind {
+  color: var(--warn);
+}
+
+.git-strip-caret {
+  margin-left: auto;
+}
+
+.pane-pad {
+  padding: 12px 14px;
+}
+
+.changes-pane {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.git-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--ok);
+  font-size: 0.8rem;
+}
+
+.git-notice > span {
+  flex: 1;
+}
+
+.git-notice.is-warn {
+  border-left-color: var(--warn);
+}
+
+.git-notice.is-error {
+  border-left-color: var(--danger);
+}
+
+.git-pushed {
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.git-branch-line {
+  overflow-wrap: anywhere;
+}
+
+.git-callout {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  font-size: 0.8rem;
+}
+
+.git-callout.is-fail {
+  border-color: var(--danger);
+}
+
+.git-callout.is-warn {
+  border-color: var(--warn);
+}
+
+.git-callout-note {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.git-log {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  font: 11px var(--font-mono);
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.git-callout .git-actions {
+  margin-top: 0;
+}
+
+.git-link {
+  font-size: 0.8rem;
+}
+
+.git-pr-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+  font-size: 0.86rem;
+}
+
+.git-pr-sub {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.git-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font: 12px var(--font-mono);
+}
+
+.git-check {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.git-check a,
+.git-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-check-time {
+  color: var(--text-dim);
+}
+
+.git-merge-why {
+  margin-top: 6px;
+}
+
+.git-others {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.git-others a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-others-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.git-files-head {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.git-file {
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-shell .git-file-row {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 14px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+}
+
+.session-shell .git-file-row:hover {
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-inset));
+}
+
+.git-file-st.is-A {
+  color: var(--diff-add);
+}
+
+.git-file-st.is-M,
+.git-file-st.is-R,
+.git-file-st.is-C {
+  color: var(--warn);
+}
+
+.git-file-st.is-D,
+.git-file-st.is-U {
+  color: var(--danger);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-empty {
+  margin: 0 14px 10px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.pane-diff {
+  margin: 0 10px 10px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  font: 12px var(--font-mono);
+  overflow-x: auto;
+}
+
+.session-shell .diff-row,
+.diff-row {
+  display: grid;
+  grid-template-columns: 34px 34px max-content;
+  min-width: 100%;
+  min-height: 0;
+  width: max-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  line-height: 1.5;
+}
+
+.session-shell button.diff-row:hover,
+.session-shell button.diff-row:focus-visible {
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+.diff-row.is-add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.diff-row.is-del {
+  background: var(--diff-del-bg);
+  color: var(--diff-del);
+}
+
+.diff-row.is-hunk,
+.diff-row.is-meta {
+  background: var(--bg-inset);
+  color: var(--text-dim);
+}
+
+.diff-ln {
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.diff-row.is-add .diff-ln,
+.diff-row.is-del .diff-ln {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.diff-text {
+  padding-right: 10px;
+  white-space: pre;
+}
+
+.diff-mark {
+  display: inline-block;
+  width: 14px;
+  user-select: none;
+}
+
+.diff-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 3px 8px 5px 68px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--bg-elevated);
+  font: 12px/1.4 var(--font-body);
+  white-space: normal;
+}
+
+.diff-note > span:nth-child(2) {
+  flex: 1;
+}
+
+.diff-note-who {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.diff-note-form {
+  display: grid;
+  gap: 6px;
+  margin: 4px 8px 6px;
+  font-family: var(--font-body);
+}
+
+.diff-note-form textarea {
+  width: 100%;
+  font: 13px var(--font-body);
+  resize: vertical;
+}
+
+.diff-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.git-notes-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--warn);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+}
+
+.git-notes-bar > span {
+  flex: 1;
+}
+
+.changes-full {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.changes-full-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-inset);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.changes-full .session-head-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.create-pr-where {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.create-pr-draft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  font-size: 0.86rem;
+}
+
+.create-pr-draft input {
+  min-height: 0;
+}
+
+.create-pr-error {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--danger);
+  background: var(--bg-inset);
+  font-size: 0.84rem;
 }
 
 /* ---------- phone: the floppy fills the screen; ⋯ opens a sheet ---------- */

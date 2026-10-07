@@ -12,6 +12,10 @@
 
 import { classifyTokenRequest422, githubAppJwt, GITHUB_APP_ID_SECRET, GITHUB_APP_KEY_SECRET } from "./github-app.ts";
 import { parseSessionRepo } from "./session-repo.ts";
+import { capChanges, filesFromGithubCompare, type ChangedFile } from "./session-changes.ts";
+
+/** #499: compare results kept (one per repo:base:branch). */
+export const COMPARE_CACHE_MAX = 200;
 
 const LIST_TTL_MS = 60_000;
 const FAILURE_TTL_MS = 15_000;
@@ -116,6 +120,20 @@ export interface GithubSessionStatus {
   branchPull: GithubPull | null;
   diff: GithubDiff | null;
 }
+
+/** #499: base...branch on GitHub, file by file, for a sleeping Drive's Changes pane. */
+export type GithubBranchCompare =
+  | {
+      ok: true;
+      ahead?: number;
+      behind?: number;
+      /** The branch tip GitHub compared, when the response showed it. */
+      head?: string;
+      files: ChangedFile[];
+      /** GitHub lists at most 300 files in a compare. */
+      partial: boolean;
+    }
+  | { ok: false; reason: GithubStatusReason | "not-found" };
 
 export interface GithubCreateInput {
   owner: string;
@@ -305,6 +323,7 @@ export class GithubCatalog {
   private readonly tokens = new Map<string, CachedToken>();
   private readonly details = new Map<string, { at: number; value: GithubDetailResult }>();
   private readonly statuses = new Map<string, { at: number; value: GithubSessionStatus }>();
+  private readonly compares = new Map<string, { at: number; expectedHead: string; value: GithubBranchCompare }>();
   private readonly read: (secretName: string) => Promise<string>;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -478,6 +497,83 @@ export class GithubCatalog {
     const parsed = parseSessionRepo(session.repo);
     if (!parsed) return;
     this.statuses.delete(`${parsed.owner}/${parsed.repo}`.toLowerCase() + `:${session.branch ?? ""}:${session.baseBranch ?? ""}`);
+  }
+
+  /** #499: the files base...branch changes on GitHub, with their patches. Same App token path as
+   * sessionStatus. Cached briefly, one entry per repo:base:branch (the newest replaces the last)
+   * and at most COMPARE_CACHE_MAX in all, already capped (capChanges). An entry only counts for the
+   * same `expectedHead` (the session's last pushed head), so a new push is seen at once. */
+  async compareBranch(session: {
+    repo: string | null;
+    branch?: string | null;
+    baseBranch?: string | null;
+    expectedHead?: string | null;
+  }): Promise<GithubBranchCompare> {
+    if (!session.repo) return { ok: false, reason: "no-repository" };
+    const parsed = parseSessionRepo(session.repo);
+    const branch = session.branch ?? "";
+    const base = session.baseBranch ?? "";
+    if (!parsed || !validOwner(parsed.owner) || !validRepoName(parsed.repo) || !safeRef(branch) || !safeRef(base)) {
+      return { ok: false, reason: "invalid" };
+    }
+    const key = `${parsed.owner}/${parsed.repo}`.toLowerCase() + `:${base}:${branch}`;
+    const expectedHead = session.expectedHead ?? "";
+    const hit = this.compares.get(key);
+    if (hit && hit.expectedHead === expectedHead && this.now() - hit.at < STATUS_TTL_MS) return hit.value;
+    const fetched = await this.fetchCompare(parsed.owner, parsed.repo, base, branch);
+    let value = fetched;
+    if (fetched.ok) {
+      const capped = capChanges(fetched.files);
+      value = { ...fetched, files: capped.files, partial: fetched.partial || capped.truncated };
+    }
+    const transient = !value.ok && value.reason === "unavailable";
+    const ttl = transient ? FAILURE_TTL_MS : STATUS_TTL_MS;
+    // Re-insert so Map order is oldest-first, then drop the oldest past the bound.
+    this.compares.delete(key);
+    this.compares.set(key, { at: this.now() - (STATUS_TTL_MS - ttl), expectedHead, value });
+    while (this.compares.size > COMPARE_CACHE_MAX) this.compares.delete(this.compares.keys().next().value!);
+    return value;
+  }
+
+  private async fetchCompare(owner: string, name: string, base: string, head: string): Promise<GithubBranchCompare> {
+    const opened = await this.openRepo(owner, name, READ_PERMISSIONS);
+    if (!opened.ok) return { ok: false, reason: opened.reason };
+    const basehead = `${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+    const res = await this.call(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${basehead}`,
+      opened.token,
+    );
+    if (!res) return { ok: false, reason: "unavailable" };
+    // 404: the branch (or the base) isn't on GitHub, e.g. nothing pushed yet.
+    if (res.status === 404) return { ok: false, reason: "not-found" };
+    if (!res.ok) {
+      console.warn(`[github-catalog] compare returned ${res.status}`);
+      return { ok: false, reason: "unavailable" };
+    }
+    let body: { ahead_by?: unknown; behind_by?: unknown; files?: unknown; commits?: unknown };
+    try {
+      body = (await res.json()) as typeof body;
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
+    const files = filesFromGithubCompare(body.files);
+    const ahead = countOf(body.ahead_by);
+    const behind = countOf(body.behind_by);
+    // `commits` is base..head, oldest first, at most 250: the last is the branch tip when it holds them all.
+    const commits = Array.isArray(body.commits) ? body.commits : [];
+    const last = commits[commits.length - 1] as { sha?: unknown } | undefined;
+    const tip =
+      ahead !== null && ahead > 0 && commits.length === ahead && typeof last?.sha === "string" && /^[0-9a-f]{40}$/i.test(last.sha)
+        ? last.sha
+        : undefined;
+    return {
+      ok: true,
+      ...(ahead !== null ? { ahead } : {}),
+      ...(behind !== null ? { behind } : {}),
+      ...(tip ? { head: tip } : {}),
+      files,
+      partial: Array.isArray(body.files) && body.files.length >= 300,
+    };
   }
 
   private async fetchList(): Promise<{ snapshot: GithubCatalogSnapshot; installations: InstallationRef[]; ttl: number }> {

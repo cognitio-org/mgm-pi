@@ -204,7 +204,7 @@ Down (api → agentd):
 | `ui_response` | `id, value` | pi RPC `extension_ui_response` |
 | `rpc` | `command` (raw pi RPC object) | escape hatch for anything else (`get_state`, `set_model`, `compact`, `bash`) |
 | `checkpoint` | `message?` | git push + snapshot now |
-| `diff` | `reqId` | agentd replies `diff.result {reqId, base, patch}`; without a repo it replies with the list of changed files in /workspace since the last checkpoint |
+| `diff` | `reqId` | agentd replies `diff.result {reqId, base, patch, truncated?}`: the merge-base of `base` and HEAD against the working tree (commits and uncommitted edits as one diff, each path once), then each untracked file (`-uall`) against /dev/null; cut at a file boundary under 2 MB (`truncated`). Without a repo it replies with the list of changed files in /workspace since the last checkpoint |
 | `read` | `reqId, path` | agentd replies `read.result {reqId, content|error}` |
 | `stop` | `reason` | checkpoint, then `bye`, exit 0 |
 | `mail` | `id, text, behavior?: "followUp"\|"steer"` | E5.5 mailbox message: pi RPC `prompt` with rpc id `mail:<id>` and `streamingBehavior: behavior ?? "followUp"` (starts a turn when idle, queues when busy); agentd sends `mail.ack` once pi accepts it, and re-acks without re-prompting if the same id is redelivered |
@@ -560,6 +560,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
   the provider directly for a `queued`/`provisioning` run, which has no live agent to ask) · `/wake`
   · `/ui-response {id,value}`
 - `GET /api/sessions/:id/diff` · `GET /api/sessions/:id/export.jsonl`
+- `GET /api/sessions/:id/changes` (#499, web role) → `{source: "drive"|"github"|"none", reason?, base, branch, head?, ahead?, behind?, pushed?: {sha, at?}, truncated, files: [{path, oldPath?, status: A|M|D|R|C|U, additions, deletions, binary?, patch?, patchOmitted?}]}`, the Changes pane's list (`src/session-changes.ts`). A live Drive (this process holds its socket) answers from its `diff` split per file (one ask per run per 5 s; a patch over 4 MB is cut first), with no `head`, since the list includes unpushed work; otherwise, or if that fails, GitHub's compare of `base...branch` on the pushed branch (App token, like `/github-status`; capped, then cached 30 s, one entry per repo:base:branch and 200 in all, only for the same pushed head). A GitHub row with no patch and no line counts is `binary`. `patch` is the file's hunks from its first `@@`. Patches over 100 KB, and any past 1 MB in total, are dropped (`patchOmitted`), at most 1,000 files are listed, and GitHub's own 300-file limit counts too; any of these sets `truncated`. `pushed` is the last checkpoint that landed (`checkpoint.head`, `landedAt`). `source: "none"` with `reason` (`no-repository`, `no-branch`, `not-found` for a branch not pushed yet, or the `/github-status` reasons) is still a 200. Anyone who can open the session.
 - `POST /api/sessions/:id/archive` · `/restore` (#207, web role) → `{session}`. Only the session's
   owner (`ownerEmail`, compared case-insensitively) or a sysop may call them; a session with no
   owner is sysop-only; anyone else gets 403. Both are idempotent. Archive sets `archivedAt` and

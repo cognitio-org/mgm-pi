@@ -102,7 +102,7 @@ test("#499: GET /changes is 404 for a missing floppy, none without a repository,
       repo: "acme/widget",
       branch: "outfitter/abc",
       baseBranch: "main",
-      checkpoint: { branch: "outfitter/abc", head: "a".repeat(40), landedAt: now, landed: true, at: now },
+      checkpoint: { branch: "outfitter/abc", head: "a".repeat(40), landedAt: now, landed: true, pushed: true, pushedAt: now, at: now },
       ...base,
     });
     const plain = await app.fastify.inject({ method: "GET", url: "/api/sessions/plain/changes" });

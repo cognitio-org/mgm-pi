@@ -12,7 +12,7 @@ test("a live Drive's changes come from its diff, split per file, with the last p
   const { session, runId, runToken } = await makeRunningSession(app, {
     branch: "outfitter/s1",
     baseBranch: "main",
-    checkpoint: { branch: "outfitter/s1", head, landed: true, landedAt, at: landedAt },
+    checkpoint: { branch: "outfitter/s1", head, landed: true, pushed: true, landedAt, pushedAt: landedAt, at: landedAt },
   });
   const agent = await openAgentSocket(app, runId);
   try {

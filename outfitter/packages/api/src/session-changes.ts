@@ -310,7 +310,7 @@ export interface ChangesSession {
   repo: string | null;
   branch?: string;
   baseBranch?: string;
-  checkpoint?: { branch?: string; head?: string; landedAt?: string };
+  checkpoint?: { branch?: string; head?: string; pushedAt?: string };
 }
 
 /** GithubCatalog.compareBranch's answer (github-catalog.ts), restated so this module stays pure. */
@@ -324,10 +324,11 @@ export interface ChangesSources {
   compare: (args: { repo: string; branch: string; baseBranch: string; expectedHead: string | null }) => Promise<BranchCompare>;
 }
 
-/** The last checkpoint that landed on GitHub (agentlink.ts records head and landedAt). */
+/** The last checkpoint that landed on GitHub. `at` is pushedAt (#501), never landedAt: every no-op
+ * re-land moves landedAt, and rows from before #501 have no pushedAt, so they get the sha alone. */
 export function lastPush(checkpoint: ChangesSession["checkpoint"]): { sha: string; at?: string } | undefined {
   if (!checkpoint?.head) return undefined;
-  return { sha: checkpoint.head, ...(checkpoint.landedAt ? { at: checkpoint.landedAt } : {}) };
+  return { sha: checkpoint.head, ...(checkpoint.pushedAt ? { at: checkpoint.pushedAt } : {}) };
 }
 
 /** #499: the live Drive's working tree when it can answer, else the pushed branch on GitHub. */

@@ -251,7 +251,7 @@ const SESSION = {
   repo: "acme/widget",
   branch: "outfitter/s1",
   baseBranch: "main",
-  checkpoint: { branch: "outfitter/s1", head: "a".repeat(40), landedAt: "2026-10-07T10:00:00.000Z" },
+  checkpoint: { branch: "outfitter/s1", head: "a".repeat(40), pushedAt: "2026-10-07T10:00:00.000Z" },
 };
 
 const neverCompare = async (): Promise<BranchCompare> => {

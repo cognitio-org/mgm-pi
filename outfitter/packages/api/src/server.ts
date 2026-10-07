@@ -353,6 +353,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
         : new CachedSandboxTelemetry(new GcpSandboxTelemetry(config.gcpProject, config.gkeNamespace))),
     githubCatalog:
       opts.githubCatalog ?? new GithubCatalog(async (name) => (await secretAdmin.accessLatest(name)) ?? ""),
+    github,
     deviceLifecycle,
     ...(litellmKeys ? { litellmKeys } : {}),
     localHostEvents,

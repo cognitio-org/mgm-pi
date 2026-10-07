@@ -471,6 +471,15 @@ export class GithubCatalog {
     return value;
   }
 
+  /** #500: drop a session's cached status after the web UI wrote to its branch or pull request
+   * (opened, merged, synced), so the next poll shows it. */
+  forgetSessionStatus(session: { repo: string | null; branch?: string | null; baseBranch?: string | null }): void {
+    if (!session.repo) return;
+    const parsed = parseSessionRepo(session.repo);
+    if (!parsed) return;
+    this.statuses.delete(`${parsed.owner}/${parsed.repo}`.toLowerCase() + `:${session.branch ?? ""}:${session.baseBranch ?? ""}`);
+  }
+
   private async fetchList(): Promise<{ snapshot: GithubCatalogSnapshot; installations: InstallationRef[]; ttl: number }> {
     const creds = await this.credentials();
     if (!creds.ok) {

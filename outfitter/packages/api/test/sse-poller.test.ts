@@ -234,6 +234,60 @@ describe("SsePoller live thought (#285)", () => {
   });
 });
 
+describe("SsePoller checkpoint (#501)", () => {
+  function checkpointFrames(frames: string[]): Array<Record<string, unknown>> {
+    return frames
+      .filter((f) => f.startsWith("event: checkpoint"))
+      .map((f) => JSON.parse(f.slice(f.indexOf("data:") + 5).trim()) as Record<string, unknown>);
+  }
+
+  test("republishes the stored checkpoint once per change, without snapshot URLs", async () => {
+    const store = new MemoryStore();
+    const webHub = new SseHub();
+    const poller = new SsePoller(webHub, store, 5);
+    await seedSession(store, "sc");
+    const { reply, frames } = fakeSubscriber();
+    webHub.subscribe("sc", reply);
+    poller.watch("sc");
+
+    await poller.pollOne("sc");
+    assert.equal(checkpointFrames(frames).length, 0, "no checkpoint yet, nothing sent");
+
+    const head = "a".repeat(40);
+    const at = "2026-10-07T10:00:00.000Z";
+    // As agentlink.ts stores it on the link role's process.
+    await store.sessions.update("sc", {
+      checkpoint: {
+        branch: "outfitter/sc",
+        head,
+        at,
+        landed: true,
+        landedAt: at,
+        pushed: true,
+        pushedAt: at,
+        snapshotUrl: "https://storage.googleapis.com/b/sc.tar.gz",
+      },
+    });
+    await poller.pollOne("sc");
+    await poller.pollOne("sc");
+    assert.deepEqual(checkpointFrames(frames), [
+      { t: "checkpoint", branch: "outfitter/sc", head, landed: true, pushed: true, at, landedAt: at, pushedAt: at },
+    ]);
+
+    // A later turn found nothing new: same head, pushedAt kept, one more event.
+    const later = "2026-10-07T10:05:00.000Z";
+    await store.sessions.update("sc", {
+      checkpoint: { branch: "outfitter/sc", head, at: later, landed: true, landedAt: later, pushed: false, pushedAt: at },
+    });
+    await poller.pollOne("sc");
+    const all = checkpointFrames(frames);
+    assert.equal(all.length, 2);
+    assert.equal(all[1]!.pushed, false);
+    assert.equal(all[1]!.pushedAt, at);
+    poller.stop();
+  });
+});
+
 describe("SsePoller entry window (review fix)", () => {
   test("publishes a later run's entries even though agentd's seq restarted below the last one seen", async () => {
     const store = new MemoryStore();

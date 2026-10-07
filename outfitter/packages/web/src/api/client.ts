@@ -62,6 +62,17 @@ export interface StartupSummary {
   segments: StartupSegment[];
 }
 
+/** #501: GET /api/sessions/:id's `lastPush` (packages/api/src/checkpoint-wire.ts). */
+export interface LastPush {
+  sha: string;
+  branch?: string;
+  /** ISO time a checkpoint last sent commits. Absent on rows from before it was recorded: show the
+   * sha without a time then. */
+  at?: string;
+  /** The latest checkpoint sent commits, rather than finding GitHub already at `sha`. */
+  pushed: boolean;
+}
+
 export interface SessionDetail {
   id: string;
   name?: string;
@@ -86,7 +97,20 @@ export interface SessionDetail {
   cost: number;
   archivedAt?: string;
   canManage?: boolean;
-  checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  checkpoint?: {
+    branch?: string;
+    head?: string;
+    at?: string;
+    landed?: boolean;
+    landedAt?: string;
+    /** #501: the latest checkpoint sent commits. */
+    pushed?: boolean;
+    /** #501: when a checkpoint last sent commits. */
+    pushedAt?: string;
+  };
+  /** #501: the commit last known to be on GitHub; null before any checkpoint landed. Kept current
+   * by the stream's `checkpoint` events (useSessionStream's lastPush). */
+  lastPush?: LastPush | null;
   /** #132: whether the run's prompt allowed external CSS and JS; HTML previews start from it. */
   allowExternalHtmlResources?: boolean;
   /** #147: each run's own value, by run id. An entry's `outfitterRunId` picks from it; an entry
@@ -432,6 +456,11 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The error body's stable `code`, when the route sends one (#500: pr-exists, no-commits,
+     * merge-not-allowed, head-moved, actions-permission, ...). */
+    public code?: string,
+    /** The rest of a JSON error body (e.g. `url` with pr-exists). */
+    public body?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -460,26 +489,33 @@ function authedInit(init: RequestInit = {}): RequestInit {
   };
 }
 
-async function errorMessage(res: Response): Promise<string> {
+async function apiError(res: Response): Promise<ApiError> {
   let message = res.statusText;
+  let code: string | undefined;
+  let rest: Record<string, unknown> | undefined;
   try {
-    const body = (await res.json()) as { error?: any };
+    const body = (await res.json()) as { error?: any; code?: unknown };
     if (body?.error) {
-      message = typeof body.error === 'object' && body.error !== null 
-        ? (body.error.message || JSON.stringify(body.error)) 
+      message = typeof body.error === 'object' && body.error !== null
+        ? (body.error.message || JSON.stringify(body.error))
         : String(body.error);
+    }
+    // Only routes that send a stable `code` (#500) get the body kept alongside it.
+    if (typeof body?.code === "string") {
+      code = body.code;
+      rest = body as Record<string, unknown>;
     }
   } catch {
     // non-JSON error body -- fall back to statusText
   }
-  return message;
+  return new ApiError(res.status, message, code, rest);
 }
 
 /** Exported for the per-feature client modules (api/devices.ts, api/account.ts; #389) so they
  * don't each add to `api` below. */
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, authedInit(init));
-  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.ok) throw await apiError(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -487,7 +523,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 /** Jpeg bytes. Same cookies and dev bearer as request(); the body is not JSON. */
 async function requestBlob(path: string): Promise<Blob> {
   const res = await fetch(path, authedInit());
-  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.ok) throw await apiError(res);
   return res.blob();
 }
 
@@ -595,6 +631,95 @@ export interface GithubSessionStatus {
     source: "pull" | "compare";
     partial?: boolean;
   } | null;
+  /** #500: whether Merge may be offered (the tape has mergeFromCloud; never for an A2A session). */
+  mergeAllowed?: boolean;
+  /** #500: the session branch's open pull request with checks, review and mergeability. Read with
+   * the broker's credential, so it can be set while `connected` is false. */
+  pr?: GithubSessionPr | null;
+  /** #500: why `pr` couldn't be read, when it couldn't. */
+  prError?: string;
+}
+
+/** #500: one check on the pull request head. */
+export interface GithubCheck {
+  /** A check run's id (pass it to sessionCheckLog when `hasLog`), or `status:<context>`. */
+  id: string;
+  name: string;
+  kind: "check-run" | "status";
+  status: string;
+  conclusion: string | null;
+  state: "pass" | "fail" | "running" | "skipped";
+  startedAt: string | null;
+  completedAt: string | null;
+  detailsUrl: string | null;
+  hasLog: boolean;
+}
+
+export interface GithubSessionPr {
+  number: number;
+  url: string;
+  title: string;
+  draft: boolean;
+  base: string | null;
+  /** Pass it to mergeSessionPr: the merge is pinned to the head you saw. */
+  headSha: string | null;
+  checks: GithubCheck[];
+  checkSummary: { passed: number; failed: number; pending: number; total: number; state: "pass" | "fail" | "pending" | "none" };
+  checksError?: string;
+  review: "approved" | "changes_requested" | "review_required" | "none";
+  mergeable: boolean | null;
+  mergeableState: string | null;
+}
+
+export interface CreateSessionPrResult {
+  number: number | null;
+  url: string;
+  draft: boolean;
+  base: string;
+  template: string | null;
+}
+
+export interface MergeSessionPrResult {
+  number: number;
+  method: string;
+  sha: string;
+  merged: true;
+  detail: string;
+}
+
+/** #500: Sync with base. On `branchMoved`, a live Drive's checkout is behind GitHub's branch: send
+ * the agent `agentNote` (pull before going on) or its next push is rejected. */
+export interface SyncSessionResult {
+  status: "updated" | "up-to-date" | "conflict";
+  via: "update-branch" | "merge" | null;
+  base: string;
+  sha?: string;
+  branchMoved: boolean;
+  agentNote?: string;
+}
+
+export interface RerunChecksResult {
+  status: "rerun" | "nothing-to-rerun";
+  sha: string;
+  rerun: { id: number; name: string }[];
+}
+
+export interface CheckLog {
+  id: string;
+  name: string;
+  conclusion: string | null;
+  detailsUrl: string | null;
+  /** The last lines of the job's log, timestamps and colour codes removed. */
+  log: string;
+  truncated: boolean;
+}
+
+/** A fresh key per user action, so a retried request doesn't act twice. */
+function idempotencyHeaders(key?: string): Record<string, string> {
+  const value = key ?? (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  return { "Idempotency-Key": value };
 }
 
 export const api = {
@@ -883,9 +1008,64 @@ export const api = {
     return request("/api/github/repos", { method: "POST", body: JSON.stringify(input) });
   },
 
-  /** Branch, open pull requests, and line counts for a Floppy whose repository the App can see. */
-  githubStatus(sessionId: string): Promise<GithubSessionStatus> {
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/github-status`);
+  /** Branch, open pull requests, and line counts for a Floppy whose repository the App can see.
+   * `fresh` is honoured only for the owner or a sysop, and at most every few seconds. */
+  githubStatus(sessionId: string, fresh = false): Promise<GithubSessionStatus> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/github-status${fresh ? "?fresh=1" : ""}`);
+  },
+
+  /** #500: open the session branch's pull request (body defaults to the repo's PR template). 409
+   * with code `pr-exists` (body.url), `no-commits` or `no-branch`. Pass the same `idempotencyKey`
+   * when retrying one click. */
+  createSessionPr(
+    sessionId: string,
+    input: { title: string; body?: string; draft?: boolean },
+    idempotencyKey?: string,
+  ): Promise<CreateSessionPrResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/pr`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      headers: idempotencyHeaders(idempotencyKey),
+    });
+  },
+
+  /** #500: merge the session's pull request at `sha` (its headSha as shown). 403 `merge-not-allowed`
+   * unless `mergeAllowed`; 409 `head-moved`, `not-mergeable`, `no-pr`. */
+  mergeSessionPr(
+    sessionId: string,
+    input: { sha: string; method?: "squash" | "merge" | "rebase" },
+    idempotencyKey?: string,
+  ): Promise<MergeSessionPrResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/pr/merge`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      headers: idempotencyHeaders(idempotencyKey),
+    });
+  },
+
+  /** #500: merge the base branch into the session branch on GitHub. A conflict is a result; 409
+   * `protected-branch` when the session branch is its base or the repository's default branch. */
+  syncSession(sessionId: string, idempotencyKey?: string): Promise<SyncSessionResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/sync`, {
+      method: "POST",
+      body: "{}",
+      headers: idempotencyHeaders(idempotencyKey),
+    });
+  },
+
+  /** #500: re-run the failed workflow runs on the head. 403 `actions-permission` until the GitHub
+   * App has Actions: write. */
+  rerunSessionChecks(sessionId: string, idempotencyKey?: string): Promise<RerunChecksResult> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/checks/rerun`, {
+      method: "POST",
+      body: "{}",
+      headers: idempotencyHeaders(idempotencyKey),
+    });
+  },
+
+  /** #500: the tail of a failed check's log (a check with `hasLog`), for Fix CI. */
+  sessionCheckLog(sessionId: string, checkId: string): Promise<CheckLog> {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/checks/${encodeURIComponent(checkId)}/log`);
   },
 
   streamUrl(id: string): string {

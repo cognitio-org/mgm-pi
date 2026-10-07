@@ -84,7 +84,7 @@ export function SessionPage() {
     agentSeenAt,
     piActiveAt,
     liveThought: streamedThought,
-  } = useSessionStream(sessionId);
+  } = useSessionStream(sessionId, session?.id === sessionId ? session.lastPush : undefined);
   const { providers } = useProviders();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // The status line under the title bar hides once the person scrolls. The jump to the

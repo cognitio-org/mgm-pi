@@ -137,6 +137,10 @@ describe("SubscriptionsPage", () => {
     const calls = stubFetch();
     vi.stubGlobal("confirm", vi.fn(() => true));
     await render();
+    const claude = card("Claude");
+    expect(claude.textContent).toContain("connected …c0de");
+    expect(claude.textContent).toContain("Laptop: Ready (one-shot worker)");
+    expect(claude.textContent).toContain("Cloud Drives: Pending #473");
     await click(button(card("Claude"), "Disconnect"));
     expect(calls.some((call) => call.method === "DELETE" && call.url === "/api/me/subscription-secrets/claude")).toBe(true);
     expect(card("Claude").textContent).toContain("not connected");

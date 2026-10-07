@@ -30,6 +30,8 @@ interface Vendor {
   /** File paste (auth.json / ACP profile) rather than a one-line token. */
   multiline: boolean;
   hint: ReactNode;
+  laptopAvailability: string;
+  cloudAvailability: string;
 }
 
 const VENDORS: readonly Vendor[] = [
@@ -43,6 +45,8 @@ const VENDORS: readonly Vendor[] = [
         signed-in computer.
       </>
     ),
+    laptopAvailability: "Ready (one-shot worker)",
+    cloudAvailability: "Pending #473 (sandbox container runtime)",
   },
   {
     id: "grok",
@@ -53,6 +57,8 @@ const VENDORS: readonly Vendor[] = [
         The contents of <code>~/.grok/auth.json</code>.
       </>
     ),
+    laptopAvailability: "In progress (secret stored)",
+    cloudAvailability: "Planned",
   },
   {
     id: "codex",
@@ -63,12 +69,16 @@ const VENDORS: readonly Vendor[] = [
         The contents of <code>~/.codex/auth.json</code>.
       </>
     ),
+    laptopAvailability: "In progress (secret stored)",
+    cloudAvailability: "Planned",
   },
   {
     id: "gemini",
     label: "Antigravity",
     multiline: true,
     hint: <>The ACP profile, stored now and used when that worker lands.</>,
+    laptopAvailability: "In progress (secret stored)",
+    cloudAvailability: "Planned",
   },
 ];
 
@@ -394,6 +404,15 @@ function SubscriptionCard({
             <span className="session-meta">not connected</span>
           )}
         </p>
+
+        <div className="subscription-env-status" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", margin: "0.4rem 0" }}>
+          <span className="pill session-meta" title="Local laptop support">
+            💻 Laptop: {vendor.laptopAvailability}
+          </span>
+          <span className="pill session-meta" title="Cloud drive support">
+            ☁ Cloud Drives: {vendor.cloudAvailability}
+          </span>
+        </div>
 
         <div className="form-row">
           <label htmlFor={`subscriptions-${vendor.id}`}>

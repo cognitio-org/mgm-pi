@@ -84,12 +84,15 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 # pi-mcp-adapter 2.37.0 treats a stored refresh token as already signed in, so explicit
 # /mcp-auth never opens the browser, and it reuses a client registered for an earlier callback
 # port. npm ci replaces these files; reapply until the pin moves.
-# Skipped only when the whole patch reverses cleanly (already applied). A partly patched stage
-# fails --forward and stops the build rather than shipping half a fix.
-MCP_REAUTH_PATCH="$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
-if ! patch -d "$STAGE/.pi/npm/node_modules" -p1 -R --dry-run --batch --fuzz=0 -s < "$MCP_REAUTH_PATCH" >/dev/null 2>&1; then
-  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --forward --fuzz=0 < "$MCP_REAUTH_PATCH"
-fi
+# apply-adapter-patch.sh applies it once, skips it when already applied, and fails on anything in
+# between, so a build never ships half the fix or none of it.
+"$ROOT/scripts/apply-adapter-patch.sh" "$STAGE/.pi/npm/node_modules" "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+# Verify the result, not the tool: 0.3.9 shipped unpatched because a guard misjudged the tree.
+MCP_ADAPTER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter"
+grep -q 'skipStaleClient(): void' "$MCP_ADAPTER/mcp-oauth-provider.ts" \
+  && grep -q 'authProvider.skipStaleClient()' "$MCP_ADAPTER/mcp-auth-flow.ts" \
+  && grep -q 'forceReauthorization: true,' "$MCP_ADAPTER/commands.ts" \
+  || { echo "package.sh: the staged pi-mcp-adapter is missing the re-auth patch" >&2; exit 1; }
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;
   darwin-x64)   keep='darwin[-_]x64|x64[-_]darwin|x86_64[-_]apple' ;;

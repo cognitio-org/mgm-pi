@@ -26,13 +26,10 @@ test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
   const ci = script.indexOf("npm ci --legacy-peer-deps");
   const apply = script.indexOf("pi-mcp-adapter-force-reauth.patch");
   assert.ok(ci > 0 && apply > ci, "the patch must run after npm ci replaces node_modules");
-  // The guard that skips an already-patched stage must look for lines this patch adds, or a
-  // second run re-patches, fails, and set -e stops the release build.
-  const patch = readFileSync(patchPath, "utf8");
-  const added = patch.split("\n").filter((line) => line.startsWith("+"));
-  const markers = [...script.matchAll(/grep -q '([^']+)' "\$MCP_ADAPTER\/([^"]+)"/g)];
-  assert.deepEqual(markers.map((m) => m[2]).sort(), ["commands.ts", "mcp-auth-flow.ts", "mcp-oauth-provider.ts"]);
-  for (const [, marker] of markers) assert.ok(added.some((line) => line.includes(marker)), `the patch adds "${marker}"`);
+  // Skip only when the whole patch reverses cleanly; otherwise apply it forward with no fuzz, so
+  // a partly patched stage or a drifted hunk stops the build.
+  assert.match(script, /if ! patch [^\n]*-R --dry-run --batch --fuzz=0[^\n]*"\$MCP_REAUTH_PATCH"/);
+  assert.match(script, /\n  patch [^\n]*--batch --forward --fuzz=0 < "\$MCP_REAUTH_PATCH"/);
 });
 
 /**
@@ -114,70 +111,140 @@ function childEnv(agentDir: string): NodeJS.ProcessEnv {
   return { ...env, PI_CODING_AGENT_DIR: agentDir, PI_MCP_ADAPTER_OAUTH_FILE_KEY: randomBytes(32).toString("base64") };
 }
 
-test("a forced sign-in skips a client registered for an old callback port and persists nothing until it succeeds", { skip: !canRun }, (t) => {
+/**
+ * Drives the SDK's own auth() against a local authorization server, the way startAuth and the
+ * callback do, so every call the SDK makes into the provider (including its re-save of the saved
+ * tokens to stamp an issuer) is exercised. The saved tokens predate issuer binding.
+ */
+const SDK_FLOW = String.raw`
+  const http = await import("node:http");
+  const { createJiti } = await import(process.env.JITI);
+  const adapter = process.env.ADAPTER;
+  const jiti = createJiti(adapter + "/index.ts");
+  const auth = await jiti.import(adapter + "/mcp-auth.ts");
+  const { McpOAuthProvider, setOAuthCallbackPort } = await jiti.import(adapter + "/mcp-oauth-provider.ts");
+  const { auth: runSdkAuth } = await jiti.import("@modelcontextprotocol/client");
+
+  const seen = { registered: 0, refreshes: [], exchanges: 0 };
+  let rejectCode = false;
+  const server = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const base = "http://127.0.0.1:" + server.address().port;
+    const json = (status, value) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
+    const path = req.url.split("?")[0];
+    if (path === "/.well-known/oauth-protected-resource/mcp") return json(200, { resource: base + "/mcp", authorization_servers: [base] });
+    if (path === "/.well-known/oauth-authorization-server") return json(200, {
+      issuer: base, authorization_endpoint: base + "/authorize", token_endpoint: base + "/token",
+      registration_endpoint: base + "/register", response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
+    });
+    if (path === "/register") {
+      seen.registered += 1;
+      return json(201, { ...JSON.parse(body), client_id: "client-" + seen.registered });
+    }
+    if (path === "/token") {
+      const form = new URLSearchParams(body);
+      if (form.get("grant_type") === "refresh_token") {
+        seen.refreshes.push(form.get("client_id"));
+        return json(200, { access_token: "refreshed-token", refresh_token: "saved-refresh", token_type: "Bearer" });
+      }
+      seen.exchanges += 1;
+      if (rejectCode) return json(400, { error: "invalid_client" });
+      return json(200, { access_token: "new-token", refresh_token: "new-refresh", token_type: "Bearer", expires_in: 3600 });
+    }
+    json(404, {});
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const serverUrl = "http://127.0.0.1:" + server.address().port + "/mcp";
+  const store = { credentialStore: "encrypted-file" };
+  setOAuthCallbackPort(60535);
+
+  const seed = () => {
+    auth.updateClientInfo("sentry", { clientId: "old-client", clientIdIssuedAt: 1, redirectUris: ["http://localhost:51000/callback"] }, serverUrl, store);
+    auth.updateTokens("sentry", { accessToken: "saved-token", refreshToken: "saved-refresh" }, serverUrl, store);
+  };
+  const saved = () => { const e = auth.getAuthForUrl("sentry", serverUrl, store); return { client: e?.clientInfo?.clientId ?? null, refresh: e?.tokens?.refreshToken ?? null }; };
+  const redirects = [];
+  const provider = (state) => new McpOAuthProvider("sentry", serverUrl, {}, { onRedirect: async (url) => { redirects.push(url) } }, store, undefined, state);
+  // startAuth's forced path: skip the stale client, then the browser leg.
+  const browserLeg = async (p) => { p.skipStaleClient(); return runSdkAuth(p, { serverUrl, forceReauthorization: true }); };
+  const out = {};
+
+  seed();
+  const abandoned = provider("state-1");
+  out.firstLeg = await browserLeg(abandoned);
+  const url = new URL(redirects.at(-1));
+  out.redirect = { client: url.searchParams.get("client_id"), redirectUri: url.searchParams.get("redirect_uri") };
+  out.refreshesWhenForced = seen.refreshes.length;
+  out.afterBrowserLeg = saved();
+  abandoned.deactivate();
+  out.afterAbandon = saved();
+
+  // The SDK re-saves the saved tokens after registering when they carry no issuer. tokens()
+  // stamps one first in practice, so make that call directly: it must not commit the new client.
+  const resave = provider("state-5");
+  resave.skipStaleClient();
+  await resave.saveClientInformation({ client_id: "client-resave", redirect_uris: ["http://localhost:60535/callback"] });
+  await resave.saveTokens({ access_token: "saved-token", refresh_token: "saved-refresh", token_type: "Bearer" });
+  out.afterResave = saved();
+  resave.deactivate();
+
+  const rejected = provider("state-2");
+  await browserLeg(rejected);
+  rejectCode = true;
+  out.rejectedError = await runSdkAuth(rejected, { serverUrl, authorizationCode: "code", forceReauthorization: true }).then(() => null, (e) => e.message);
+  rejectCode = false;
+  rejected.deactivate();
+  out.afterRejected = saved();
+
+  const completed = provider("state-3");
+  await browserLeg(completed);
+  out.completed = await runSdkAuth(completed, { serverUrl, authorizationCode: "code", forceReauthorization: true });
+  out.afterComplete = saved();
+
+  seed();
+  out.reconnect = await runSdkAuth(provider(), { serverUrl });
+  out.reconnectRefreshedWith = seen.refreshes.at(-1);
+
+  const cimdUrl = "https://kernal.example/oauth-client.json";
+  auth.updateClientInfo("sentry", { clientId: cimdUrl, redirectUris: ["http://localhost:51000/callback"] }, serverUrl, store);
+  const cimd = new McpOAuthProvider("sentry", serverUrl, { clientMetadataUrl: cimdUrl }, { onRedirect: async () => {} }, store, undefined, "state-4");
+  cimd.skipStaleClient();
+  out.cimdClient = (await cimd.clientInformation())?.client_id ?? null;
+
+  server.close();
+  console.log(JSON.stringify(out));
+`;
+
+test("a forced sign-in registers a client for this callback and persists nothing until the code is exchanged", { skip: !canRun }, (t) => {
   if (!patched) return t.skip(LOCAL_EDITS);
-  const { adapter } = patched;
   const agentDir = mkdtempSync(join(tmpdir(), "mcp-reauth-agent-"));
-  // The callback port is random per run, so a dynamic registration from an earlier run is
-  // refused: "redirect_uri is not registered for this client".
-  const script = `
-    const { createJiti } = await import(${JSON.stringify(jitiPath)});
-    const jiti = createJiti(${JSON.stringify(join(adapter, "index.ts"))});
-    const auth = await jiti.import(${JSON.stringify(join(adapter, "mcp-auth.ts"))});
-    const { McpOAuthProvider, setOAuthCallbackPort } = await jiti.import(${JSON.stringify(join(adapter, "mcp-oauth-provider.ts"))});
-    const store = { credentialStore: "encrypted-file" };
-    const url = "https://router.example/sentry/mcp";
-    setOAuthCallbackPort(60535);
-    const provider = () => new McpOAuthProvider("sentry", url, {}, { onRedirect: async () => {} }, store);
-    const client = async (p) => (await p.clientInformation())?.client_id ?? null;
-    const saved = () => { const e = auth.getAuthForUrl("sentry", url, store); return { client: e?.clientInfo?.clientId ?? null, refresh: e?.tokens?.refreshToken ?? null }; };
-    const register = (p) => p.saveClientInformation({ client_id: "new-client", redirect_uris: ["http://localhost:60535/callback"] });
-    const out = {};
-    auth.updateClientInfo("sentry", { clientId: "old-client", clientIdIssuedAt: 1, redirectUris: ["http://localhost:51000/callback"] }, url, store);
-    auth.updateTokens("sentry", { accessToken: "saved-token", refreshToken: "saved-refresh" }, url, store);
-    out.normal = await client(provider());
-    // The SDK's browser leg: no usable client, so it registers one, then sends the URL.
-    const abandoned = provider();
-    abandoned.skipStaleClient();
-    out.forced = await client(abandoned);
-    await register(abandoned);
-    out.afterRegister = await client(abandoned);
-    out.whileRegistered = saved();
-    // invalid_client: the SDK invalidates "client" then "tokens" and retries. The stale client
-    // stays skipped, and nothing on disk changes.
-    await abandoned.invalidateCredentials("client");
-    await abandoned.invalidateCredentials("tokens");
-    out.afterInvalidClient = await client(abandoned);
-    abandoned.deactivate();
-    out.afterAbandon = saved();
-    // Completing the flow saves the new client and its tokens together.
-    const completed = provider();
-    completed.skipStaleClient();
-    await register(completed);
-    await completed.saveTokens({ access_token: "new-token", refresh_token: "new-refresh", token_type: "Bearer" });
-    out.afterComplete = saved();
-    const reused = provider();
-    reused.skipStaleClient();
-    out.forcedCurrentPort = await client(reused);
-    console.log(JSON.stringify(out));
-  `;
   try {
-    const out = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], {
-      env: childEnv(agentDir),
+    const stdout = execFileSync(process.execPath, ["--input-type=module", "-e", SDK_FLOW], {
+      env: { ...childEnv(agentDir), JITI: jitiPath, ADAPTER: patched.adapter },
       encoding: "utf8",
-    }).trim().split("\n").pop()!);
-    // Reconnect still refreshes with the saved client.
-    assert.equal(out.normal, "old-client");
-    // Explicit auth skips the stale client, so the SDK registers the current callback.
-    assert.equal(out.forced, null);
-    assert.equal(out.afterRegister, "new-client");
-    // The registration stays in memory: the saved client and refresh token remain a pair.
-    assert.deepEqual(out.whileRegistered, { client: "old-client", refresh: "saved-refresh" });
-    assert.equal(out.afterInvalidClient, null);
+    });
+    const out = JSON.parse(stdout.trim().split("\n").pop()!);
+    // The browser URL carries a client registered for this run's callback, not the saved one
+    // (the router answered that with "redirect_uri is not registered for this client").
+    assert.equal(out.firstLeg, "REDIRECT");
+    assert.deepEqual(out.redirect, { client: "client-1", redirectUri: "http://localhost:60535/callback" });
+    assert.equal(out.refreshesWhenForced, 0, "forceReauthorization skips the saved refresh token");
+    // The SDK re-saved the issuer-less saved tokens on that leg: they stay with the saved client.
+    assert.deepEqual(out.afterBrowserLeg, { client: "old-client", refresh: "saved-refresh" });
     assert.deepEqual(out.afterAbandon, { client: "old-client", refresh: "saved-refresh" });
-    assert.deepEqual(out.afterComplete, { client: "new-client", refresh: "new-refresh" });
-    // A registration that already lists this callback is reused.
-    assert.equal(out.forcedCurrentPort, "new-client");
+    assert.deepEqual(out.afterResave, { client: "old-client", refresh: "saved-refresh" });
+    // invalid_client at the token endpoint: the sign-in fails and the saved pair is untouched.
+    assert.ok(out.rejectedError);
+    assert.deepEqual(out.afterRejected, { client: "old-client", refresh: "saved-refresh" });
+    // The code exchange saves the new client and its tokens together.
+    assert.equal(out.completed, "AUTHORIZED");
+    assert.deepEqual(out.afterComplete, { client: "client-3", refresh: "new-refresh" });
+    // Reconnect still refreshes with the saved client.
+    assert.equal(out.reconnect, "AUTHORIZED");
+    assert.equal(out.reconnectRefreshedWith, "old-client");
+    // A metadata-document client is not bound to a redirect URI, so it is not skipped.
+    assert.equal(out.cimdClient, "https://kernal.example/oauth-client.json");
   } finally {
     rmSync(agentDir, { recursive: true, force: true });
   }

@@ -52,7 +52,7 @@
    updateTokens,
    updateClientInfo,
    clearAllCredentials,
-@@ -256,6 +258,10 @@
+@@ -256,6 +258,12 @@
    private authFetch: OAuthFetch
    private active = true
    private flowClientInfo: StoredClientInfo | undefined
@@ -60,29 +60,34 @@
 +  // client registered for this flow is persisted only with its tokens.
 +  private skippingStaleClient = false
 +  private deferredClientInfo: StoredClientInfo | undefined
++  // Set once the browser redirect is issued: only tokens after it come from this flow's code.
++  private authorizationRedirected = false
    private flowCodeVerifier: string | undefined
    private flowDiscoveryState: OAuthDiscoveryState | undefined
    private flowIssuerMismatch = false
-@@ -305,6 +311,8 @@
+@@ -305,6 +313,9 @@
  
    deactivate(): void {
      this.active = false
 +    this.skippingStaleClient = false
 +    this.deferredClientInfo = undefined
++    this.authorizationRedirected = false
      this.invalidatedAccessToken = undefined
      this.invalidatedClientId = undefined
      this.staleRedirectClientId = undefined
-@@ -432,6 +440,9 @@
+@@ -432,6 +443,11 @@
      // another runtime writes the shared persistent entry for the same name.
      const clientInfo = this.flowClientInfo ?? stored?.clientInfo
      if (clientInfo?.clientId === this.invalidatedClientId) return undefined
-+    if (this.skippingStaleClient && clientInfo !== this.flowClientInfo && clientInfo && this.isRedirectStale(clientInfo)) {
++    // A metadata-document (CIMD) client is not bound to a registered redirect URI.
++    if (this.skippingStaleClient && clientInfo !== this.flowClientInfo && clientInfo
++      && clientInfo.clientId !== this.clientMetadataUrl && this.isRedirectStale(clientInfo)) {
 +      return undefined
 +    }
  
      const clientMetadataUrl = this.clientMetadataUrl
      const supportsClientMetadataDocument = this.flowDiscoveryState
-@@ -479,14 +490,15 @@
+@@ -479,14 +495,15 @@
          clientInfo.issuer = issuer
          this.flowClientInfo = clientInfo
          this.throwIfInactive()
@@ -101,7 +106,7 @@
        this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
        // Return all registration metadata and the local issuer extension.
        // This keeps the SDK OAuth view and the stored issuer binding consistent.
-@@ -511,6 +523,26 @@
+@@ -511,6 +528,26 @@
      return undefined
    }
  
@@ -128,7 +133,7 @@
    /**
     * Save client information from dynamic registration.
     */
-@@ -544,6 +576,10 @@
+@@ -544,6 +581,10 @@
      this.flowClientInfo = clientInfo
      this.invalidatedClientId = undefined
      this.lastObservedClientId = clientInfo.clientId
@@ -139,12 +144,14 @@
      updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
    }
  
-@@ -594,7 +630,21 @@
+@@ -594,7 +635,24 @@
        ...(issuer !== undefined ? { issuer } : {}),
      }
      this.throwIfInactive()
 -    updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
-+    if (this.deferredClientInfo !== undefined) {
++    // The SDK also re-saves the saved tokens on the browser leg (to stamp an issuer). Those still
++    // belong to the saved client: commit the deferred client only with tokens from the code.
++    if (this.deferredClientInfo !== undefined && this.authorizationRedirected) {
 +      // One write, so no reader or failed write sees the new client with the old tokens.
 +      const entry: AuthEntry = getAuthEntry(this.serverName, this.storageOptions) ?? {}
 +      if (entry.serverUrl !== this.serverUrl) {
@@ -155,14 +162,23 @@
 +      entry.tokens = storedTokens
 +      saveAuthEntry(this.serverName, entry, this.serverUrl, this.storageOptions)
 +      this.deferredClientInfo = undefined
++      this.skippingStaleClient = false
 +    } else {
 +      updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
++      if (this.authorizationRedirected) this.skippingStaleClient = false
 +    }
-+    this.skippingStaleClient = false
      this.invalidatedAccessToken = undefined
      this.lastSavedAccessToken = storedTokens.accessToken
      // Discovery must survive the browser redirect so the callback can verify
-@@ -711,6 +761,7 @@
+@@ -624,6 +682,7 @@
+         `Re-authentication required for MCP server: ${this.serverName}`,
+       )
+     }
++    this.authorizationRedirected = true
+     // URL is passed to callback, not logged (may contain sensitive params)
+     await this.callbacks.onRedirect(addAuthorizationParams(authorizationUrl, this.config.authorizationParams))
+   }
+@@ -711,6 +770,7 @@
      switch (type) {
        case "all":
          this.flowClientInfo = undefined
@@ -170,7 +186,7 @@
          this.flowCodeVerifier = undefined
          this.flowDiscoveryState = undefined
          this.flowIssuerMismatch = false
-@@ -730,6 +781,7 @@
+@@ -730,6 +790,7 @@
          this.invalidatedClientId = this.lastObservedClientId
          this.lastObservedClientId = undefined
          this.flowClientInfo = undefined

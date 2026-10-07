@@ -88,3 +88,38 @@ test("the link role does not serve the catalog", async () => {
     await close(link);
   }
 });
+
+test("#499: GET /changes is 404 for a missing floppy, none without a repository, and none when the App isn't set up", async () => {
+  const app = await buildTestApp();
+  try {
+    const missing = await app.fastify.inject({ method: "GET", url: "/api/sessions/missing/changes" });
+    assert.equal(missing.statusCode, 404);
+    const now = new Date().toISOString();
+    const base = { guruId: "g", status: "open" as const, cost: 0, createdAt: now, updatedAt: now };
+    await app.store.sessions.insert({ id: "plain", repo: null, ...base });
+    await app.store.sessions.insert({
+      id: "s1",
+      repo: "acme/widget",
+      branch: "outfitter/abc",
+      baseBranch: "main",
+      checkpoint: { branch: "outfitter/abc", head: "a".repeat(40), landedAt: now, landed: true, pushed: true, pushedAt: now, at: now },
+      ...base,
+    });
+    const plain = await app.fastify.inject({ method: "GET", url: "/api/sessions/plain/changes" });
+    assert.equal(plain.statusCode, 200);
+    assert.deepEqual(plain.json(), { source: "none", reason: "no-repository", base: null, branch: null, truncated: false, files: [] });
+    const res = await app.fastify.inject({ method: "GET", url: "/api/sessions/s1/changes" });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), {
+      source: "none",
+      reason: "not-configured",
+      base: "main",
+      branch: "outfitter/abc",
+      pushed: { sha: "a".repeat(40), at: now },
+      truncated: false,
+      files: [],
+    });
+  } finally {
+    await close(app);
+  }
+});

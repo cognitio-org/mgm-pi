@@ -7,7 +7,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const patchPath = join(root, "scripts/patches/pi-mcp-adapter-force-reauth.patch");
 const packageSh = join(root, "scripts/package.sh");
+const applyScript = join(root, "scripts/apply-adapter-patch.sh");
 const modules = join(root, ".pi/npm/node_modules");
 const adapterPath = join(modules, "pi-mcp-adapter");
 const jitiPath = join(modules, "jiti/lib/jiti.mjs");
@@ -26,10 +27,36 @@ test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
   const ci = script.indexOf("npm ci --legacy-peer-deps");
   const apply = script.indexOf("pi-mcp-adapter-force-reauth.patch");
   assert.ok(ci > 0 && apply > ci, "the patch must run after npm ci replaces node_modules");
-  // Skip only when the whole patch reverses cleanly; otherwise apply it forward with no fuzz, so
-  // a partly patched stage or a drifted hunk stops the build.
-  assert.match(script, /if ! patch [^\n]*-R --dry-run --batch --fuzz=0[^\n]*"\$MCP_REAUTH_PATCH"/);
-  assert.match(script, /\n  patch [^\n]*--batch --forward --fuzz=0 < "\$MCP_REAUTH_PATCH"/);
+  assert.match(script, /"\$ROOT\/scripts\/apply-adapter-patch\.sh" "\$STAGE\/\.pi\/npm\/node_modules" "\$ROOT\/scripts\/patches\/pi-mcp-adapter-force-reauth\.patch"/);
+});
+
+// The release build's own patch step, run for real with the system `patch` (BSD on a Mac, GNU in
+// CI). kernal 0.3.9 shipped unpatched because a reverse dry run with GNU --batch "succeeded" on an
+// unpatched tree; only running it catches that.
+test("apply-adapter-patch.sh applies once, then skips, and refuses a partly patched tree", { skip: !existsSync(adapterPath) }, () => {
+  const files = ["mcp-auth-flow.ts", "mcp-oauth-provider.ts", "commands.ts"];
+  const dir = mkdtempSync(join(tmpdir(), "adapter-patch-"));
+  const pkg = join(dir, "pi-mcp-adapter");
+  try {
+    cpSync(adapterPath, pkg, { recursive: true, filter: (src) => src === adapterPath || files.includes(basename(src)) });
+    if (readFileSync(join(pkg, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) {
+      execFileSync("patch", ["-d", dir, "-p1", "-R", "--force", "--fuzz=0", "-s"], { input: readFileSync(patchPath), stdio: ["pipe", "ignore", "ignore"] });
+    }
+    const pristine = files.map((f) => readFileSync(join(pkg, f), "utf8"));
+    const apply = () => execFileSync(applyScript, [dir, patchPath], { encoding: "utf8", stdio: "pipe" });
+    assert.match(apply(), /^applied /m);
+    const patched = files.map((f) => readFileSync(join(pkg, f), "utf8"));
+    assert.ok(patched[1].includes(PATCHED_MARKER), "the patch landed");
+    assert.match(patched[0], /authProvider\.skipStaleClient\(\)/);
+    assert.match(patched[2], /forceReauthorization: true,/);
+    assert.match(apply(), /^already applied: /m);
+    assert.deepEqual(files.map((f) => readFileSync(join(pkg, f), "utf8")), patched, "a second run changes nothing");
+    // Half the fix: one file back to the published version.
+    writeFileSync(join(pkg, "commands.ts"), pristine[2]);
+    assert.throws(apply, (error: { status?: number }) => error.status === 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**
@@ -63,11 +90,11 @@ before(() => {
     filter: (src) => dirname(src) !== adapterPath || !(skip.has(basename(src)) || /\.(md|png)$/.test(src)),
   });
   const patch = readFileSync(patchPath);
-  const run = (args: string[]) => execFileSync("patch", ["-d", dir, "-p1", "--batch", "--forward", "--fuzz=0", ...args], { input: patch, encoding: "utf8", stdio: "pipe" });
+  const run = (args: string[]) => execFileSync("patch", ["-d", dir, "-p1", "--forward", "--fuzz=0", ...args], { input: patch, encoding: "utf8", stdio: "pipe" });
   try {
     // A local checkout may already be patched. CI's npm ci copy is the published package.
     if (readFileSync(join(adapter, "mcp-oauth-provider.ts"), "utf8").includes(PATCHED_MARKER)) {
-      execFileSync("patch", ["-d", dir, "-p1", "--batch", "--fuzz=0", "-R"], { input: patch, encoding: "utf8", stdio: "pipe" });
+      execFileSync("patch", ["-d", dir, "-p1", "--force", "--fuzz=0", "-R"], { input: patch, encoding: "utf8", stdio: "pipe" });
     }
     run([]);
   } catch (error) {

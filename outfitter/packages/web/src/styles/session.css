@@ -41,6 +41,10 @@
 .session-shell .pane-tabs button,
 .session-shell .details-link,
 .session-shell .composer-pill,
+.session-shell .git-chip,
+.session-shell .git-strip,
+.session-shell .git-file-row,
+.session-shell .diff-row,
 .pop-menu-list > a,
 .pop-menu-list > button {
   background: transparent;
@@ -455,8 +459,8 @@
   white-space: nowrap;
 }
 
-/* The live chips: GitHub facts, previews, the IDE. #502's git chips join them here. One line;
- * what doesn't fit is cut, and all of it is in the Details pane. */
+/* The live chips: the git chips (#502), previews, the IDE. One line;
+ * what doesn't fit is cut, and all of it is in the Changes and Details tabs. */
 .session-chips {
   flex: 0 1 auto;
   min-width: 0;
@@ -471,7 +475,6 @@
   flex: none;
 }
 
-.session-chips .github-status,
 .session-chips .preview-cluster {
   flex-wrap: nowrap;
 }
@@ -1314,6 +1317,542 @@
 .details-switch[aria-checked="true"]::after {
   left: 19px;
   background: var(--ok);
+}
+
+/* ---------- git (#502): header chips, phone strip, the Changes tab ---------- */
+
+.git-add {
+  color: var(--diff-add);
+}
+
+.git-del {
+  color: var(--diff-del);
+}
+
+.git-st-pass {
+  color: var(--ok);
+}
+
+.git-st-fail {
+  color: var(--danger);
+}
+
+.git-st-run {
+  color: var(--warn);
+}
+
+.session-shell .git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 3px 8px;
+  border-color: var(--rule);
+  font: 12px var(--font-mono);
+  white-space: nowrap;
+}
+
+.session-shell .git-chip:hover {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.session-shell .git-chip.is-fail {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.session-shell .git-chip.is-behind {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.session-shell .git-chip.is-merged {
+  color: var(--text-dim);
+}
+
+.git-chip .github-glyph,
+.git-strip .github-glyph {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.git-chip-branch {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-shell .git-action {
+  min-height: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.session-shell .git-action.is-fix {
+  border-color: var(--danger);
+}
+
+/* The phone's one line under the header. */
+.session-shell .git-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--rule);
+  font: 12px var(--font-mono);
+  color: var(--text-dim);
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.git-strip-part {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Only the branch name gives way. */
+.git-strip-part:first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.git-strip-part:first-child .git-chip-branch {
+  min-width: 0;
+}
+
+.git-strip-part.is-fail {
+  color: var(--danger);
+}
+
+.git-strip-part.is-behind {
+  color: var(--warn);
+}
+
+.git-strip-caret {
+  margin-left: auto;
+}
+
+.pane-pad {
+  padding: 12px 14px;
+}
+
+.changes-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.git-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--rule);
+  border-left-width: 3px;
+  font-size: 0.8rem;
+  background: var(--bg-elevated);
+}
+
+.git-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.git-notice.is-ok {
+  border-left-color: var(--ok);
+}
+
+.git-notice.is-warn {
+  border-left-color: var(--warn);
+}
+
+.git-notice.is-error {
+  border-left-color: var(--danger);
+}
+
+.git-branch-line,
+.git-pushed {
+  overflow-wrap: anywhere;
+}
+
+.git-pushed {
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
+.git-callout {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.git-callout.is-fail {
+  border-color: var(--danger);
+}
+
+.git-callout.is-warn {
+  border-color: var(--warn);
+}
+
+.git-callout-note {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.git-log {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font: 11px var(--font-mono);
+  white-space: pre-wrap;
+  color: var(--text-dim);
+}
+
+.git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.git-callout .git-actions {
+  margin-top: 0;
+}
+
+.git-link {
+  color: var(--link);
+  font-size: 0.78rem;
+}
+
+.git-pr-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+  font-size: 0.86rem;
+}
+
+.git-pr-sub {
+  margin: 0 0 8px;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+
+.git-checks {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.git-check {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  font: 12px var(--font-mono);
+}
+
+.git-check a,
+.git-check > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.git-check a:hover {
+  color: var(--link);
+}
+
+.git-check-time {
+  color: var(--text-dim);
+}
+
+.git-merge-why {
+  margin-top: 6px;
+}
+
+.git-others {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.git-others a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--link);
+}
+
+.git-others-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.git-files-head {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.session-shell .git-file-row {
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 14px;
+  text-align: left;
+  font: 12px var(--font-mono);
+}
+
+.session-shell .git-file-row:hover {
+  background: var(--bg-elevated);
+}
+
+.git-file-st {
+  font-weight: 600;
+}
+
+.git-file-st.is-A {
+  color: var(--diff-add);
+}
+
+.git-file-st.is-M,
+.git-file-st.is-R,
+.git-file-st.is-C {
+  color: var(--warn);
+}
+
+.git-file-st.is-D,
+.git-file-st.is-U {
+  color: var(--danger);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-stat {
+  white-space: nowrap;
+}
+
+/* One file's diff: two line-number gutters and the text; a click on a line takes a note. */
+.pane-diff {
+  margin: 0 10px 10px;
+  padding: 4px 0;
+  border: 1px solid var(--rule);
+  font: 12px var(--font-mono);
+  overflow-x: auto;
+  background: var(--bg);
+}
+
+.pane-diff > div {
+  min-width: max-content;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 30px 30px auto;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  white-space: pre;
+}
+
+.session-shell .diff-row {
+  min-height: 0;
+  padding: 0 8px 0 0;
+  border-radius: 0;
+}
+
+.session-shell button.diff-row:hover,
+.session-shell button.diff-row[aria-expanded="true"] {
+  border-color: transparent;
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+.session-shell .diff-row.is-add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.session-shell .diff-row.is-del {
+  background: var(--diff-del-bg);
+  color: var(--diff-del);
+}
+
+.diff-row.is-hunk,
+.diff-row.is-meta {
+  color: var(--text-dim);
+}
+
+.diff-row.is-hunk {
+  border-top: 1px dashed var(--rule);
+}
+
+.diff-row.is-hunk:first-child {
+  border-top: 0;
+}
+
+.diff-ln {
+  padding-right: 6px;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.diff-mark {
+  display: inline-block;
+  width: 14px;
+  user-select: none;
+}
+
+.diff-empty {
+  margin: 0 14px 10px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.diff-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 3px 8px 5px 60px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--bg-elevated);
+  font: 12px/1.4 var(--font-body);
+  white-space: normal;
+  max-width: 36ch;
+}
+
+.diff-note > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-shell .diff-note .btn,
+.session-shell .git-notice .btn {
+  flex: none;
+  min-height: 0;
+  min-width: 24px;
+  padding: 0 6px;
+}
+
+.diff-note-who {
+  flex: none;
+  font: 9px var(--font-display);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+.diff-note-form {
+  display: grid;
+  gap: 6px;
+  margin: 4px 8px 6px;
+  max-width: 40ch;
+  white-space: normal;
+}
+
+.diff-note-form textarea {
+  width: 100%;
+  resize: vertical;
+  font: 13px var(--font-body);
+}
+
+.diff-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.git-notes-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--warn);
+  font-size: 0.8rem;
+}
+
+.git-notes-bar > span {
+  flex: 1;
+  color: var(--text-dim);
+}
+
+/* The phone's full-screen Changes view, over the floppy. */
+.changes-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-inset);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.changes-full-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.create-pr-dialog {
+  width: min(520px, calc(100vw - 24px));
+}
+
+.create-pr-where {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.create-pr-draft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  font-size: 0.86rem;
+}
+
+.create-pr-draft input {
+  min-height: 0;
+}
+
+.create-pr-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: 0.84rem;
 }
 
 /* The Nerd out panel, inside Details: no window chrome, its cards stacked. */

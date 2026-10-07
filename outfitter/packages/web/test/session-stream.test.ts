@@ -1,6 +1,37 @@
 import { describe, it, expect } from "vitest";
-import { livenessTimes, mergeEntries, nextLiveThought, nextPendingOnStatus, nextPendingUiRequest, nextStatusDetail } from "../src/hooks/useSessionStream.ts";
+import {
+  livenessTimes,
+  mergeEntries,
+  nextLastPush,
+  nextLiveThought,
+  nextPendingOnStatus,
+  nextPendingUiRequest,
+  nextStatusDetail,
+} from "../src/hooks/useSessionStream.ts";
 import type { PiEntry } from "../src/api/client.ts";
+
+describe("nextLastPush (#501)", () => {
+  const head = "a".repeat(40);
+  it("takes the head and the push time from a checkpoint event", () => {
+    expect(
+      nextLastPush(undefined, {
+        t: "checkpoint",
+        branch: "outfitter/s1",
+        head,
+        pushed: true,
+        landedAt: "2026-10-07T10:05:00Z",
+        pushedAt: "2026-10-07T10:00:00Z",
+      }),
+    ).toEqual({ sha: head, branch: "outfitter/s1", at: "2026-10-07T10:00:00Z", pushed: true });
+  });
+
+  it("falls back to landedAt, and keeps the last push for an event with no head", () => {
+    const current = nextLastPush(undefined, { head, landedAt: "2026-10-07T10:05:00Z", pushed: false });
+    expect(current).toEqual({ sha: head, at: "2026-10-07T10:05:00Z", pushed: false });
+    expect(nextLastPush(current, { t: "checkpoint", landed: false })).toBe(current);
+    expect(nextLastPush(undefined, { t: "checkpoint" })).toBeUndefined();
+  });
+});
 
 describe("livenessTimes (#182)", () => {
   it("turns the api's ages into times on this browser's clock", () => {

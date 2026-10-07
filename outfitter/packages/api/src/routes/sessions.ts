@@ -16,6 +16,7 @@ import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import { createSession, postUserMail } from "../session-create.ts";
 import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
+import { lastPush } from "../checkpoint-wire.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -241,6 +242,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // out; their entries use allowExternalHtmlResources above.
       htmlPreviewAccessByRun: await htmlPreviewAccessByRun(ctx, session.id),
       heldMail,
+      // #501: the commit last known to be on GitHub and when it was pushed, so the page can say
+      // "Pushed 1m ago · sha" on load; `checkpoint` events keep it current. null before any landed.
+      lastPush: lastPush(session.checkpoint),
       // #172: a hold for a run failure (a GitHub credential problem) says what's wrong instead.
       ...(heldMail > 0 ? { mailNotice: mailHeldNotice(await ctx.store.mail.heldDetail(session.id)) } : {}),
       github: {

@@ -1,12 +1,14 @@
 // Tiny SSE helper: one hub of per-session subscriber lists, written to directly (no framework
 // dependency beyond Fastify's raw response). See protocol.md "browser <-> api": GET
 // /api/sessions/:id/stream sends `status` on connect, then live entry|event|status|spend|checkpoint|liveness.
+// `checkpoint` carries the stored checkpoint (checkpoint-wire.ts), from agentlink.ts or the poller below.
 
 import { approvalUiRequest, mayAnswer } from "./admin/approvals.ts";
 import type { FastifyReply } from "fastify";
 import type { Store } from "./store/types.ts";
 import { entryForWire } from "./entry-wire.ts";
 import { summarizeStartup } from "./startup.ts";
+import { checkpointEvent } from "./checkpoint-wire.ts";
 
 export type SseEventType = "entry" | "event" | "status" | "spend" | "checkpoint" | "liveness" | "live_thought";
 
@@ -145,6 +147,8 @@ interface PollCursor {
   lastLivenessKey?: string;
   /** Last `live_thought` text published. Null once cleared; absent until the first one. */
   lastLiveThought?: string | null;
+  /** #501: JSON of the last `checkpoint` event published. */
+  lastCheckpointKey?: string;
 }
 
 export class SsePoller {
@@ -295,10 +299,22 @@ export class SsePoller {
       this.hub.publish(sessionId, { type: "live_thought", data: { text: liveThought } });
       cursor.lastLiveThought = liveThought;
     }
+    // #501: the session's checkpoint, as agentlink.ts stored it on the link role. Sent whenever it
+    // changes (a push, or a checkpoint that found nothing new), including on the first poll, so a
+    // page that just opened has the last push without waiting for the next one.
+    const session = this.store.sessions ? await this.store.sessions.findById(sessionId) : null;
+    if (session?.checkpoint) {
+      const event = checkpointEvent(session.checkpoint);
+      const key = JSON.stringify(event);
+      if (key !== cursor.lastCheckpointKey) {
+        this.hub.publish(sessionId, { type: "checkpoint", data: event });
+        cursor.lastCheckpointKey = key;
+      }
+    }
     // Sysop tools (#287): an admin approval held for the owner rides the same card, ahead of pi's,
     // but only on the owner's own streams as a person. Everyone else keeps seeing pi's question.
     if (cursor.ownerEmail === undefined) {
-      cursor.ownerEmail = (await this.store.sessions?.findById(sessionId))?.ownerEmail?.toLowerCase() ?? "";
+      cursor.ownerEmail = session?.ownerEmail?.toLowerCase() ?? "";
     }
     const owner = { ownerEmail: cursor.ownerEmail ?? "" };
     const isOwner = (viewer: SseViewer) => !!owner.ownerEmail && mayAnswer(owner, viewer);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type PiEntry, type StartupSummary } from "../api/client.ts";
+import { api, type LastPush, type PiEntry, type StartupSummary } from "../api/client.ts";
 import type { RawUiRequest } from "../components/UiRequestPanel.tsx";
 
 export interface StreamState {
@@ -26,6 +26,36 @@ export interface StreamState {
    * a thinking block has started and no words have arrived yet. Not an entry: the message
    * hasn't been stored. */
   liveThought: string | null;
+  /** #501: the commit last pushed to GitHub, from `checkpoint` events. Undefined until one arrives
+   * (GET /api/sessions/:id's `lastPush` has it on load). */
+  lastPush?: LastPush;
+}
+
+export type { LastPush };
+
+/** One `checkpoint` event (sse.ts / agentlink.ts's checkpointEvent). */
+export interface CheckpointEvent {
+  t?: "checkpoint";
+  branch?: string;
+  head?: string;
+  landed?: boolean;
+  pushed?: boolean;
+  at?: string;
+  landedAt?: string;
+  pushedAt?: string;
+}
+
+/** Folds one `checkpoint` event into the last push. An event with no head (a repo-less floppy, or
+ * nothing landed yet) leaves it as it is. Same rule as the api's lastPush(). */
+export function nextLastPush(current: LastPush | undefined, event: CheckpointEvent): LastPush | undefined {
+  if (typeof event.head !== "string" || !event.head) return current;
+  const at = event.pushedAt ?? event.landedAt;
+  return {
+    sha: event.head,
+    ...(event.branch ? { branch: event.branch } : {}),
+    ...(at ? { at } : {}),
+    pushed: event.pushed === true,
+  };
 }
 
 /** One `liveness` frame (sse.ts) on this browser's clock. The api sends ages, not timestamps, so
@@ -148,6 +178,7 @@ export function useSessionStream(sessionId: string): StreamState {
   const [agentSeenAt, setAgentSeenAt] = useState<number | undefined>(undefined);
   const [piActiveAt, setPiActiveAt] = useState<number | undefined>(undefined);
   const [liveThought, setLiveThought] = useState<string | null>(null);
+  const [lastPush, setLastPush] = useState<LastPush | undefined>(undefined);
   const entryIds = useRef<Set<string>>(new Set());
   // Event handlers read this. A setState updater writes it before the handler returns, so a
   // live_thought frame that arrives in the same tick as its entry still sees that entry.
@@ -170,6 +201,7 @@ export function useSessionStream(sessionId: string): StreamState {
     setAgentSeenAt(undefined);
     setPiActiveAt(undefined);
     setLiveThought(null);
+    setLastPush(undefined);
     entriesRef.current = [];
 
     api
@@ -254,11 +286,16 @@ export function useSessionStream(sessionId: string): StreamState {
       if (typeof data.estimate === "number") setCostEstimate(data.estimate);
     });
 
+    source.addEventListener("checkpoint", (ev) => {
+      const event = JSON.parse((ev as MessageEvent).data) as CheckpointEvent;
+      setLastPush((prev) => nextLastPush(prev, event));
+    });
+
     return () => {
       cancelled = true;
       source.close();
     };
   }, [sessionId]);
 
-  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt, liveThought };
+  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt, liveThought, lastPush };
 }

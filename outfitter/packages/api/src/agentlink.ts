@@ -48,6 +48,7 @@ import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-though
 import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
 import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
+import { checkpointEvent } from "./checkpoint-wire.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 /** #285: how often the open thought is written onto the run. The poller already lags by its
@@ -1773,6 +1774,10 @@ export class AgentLink {
           // hide the push before it.
           const landedAt = landed ? now : session?.checkpoint?.landedAt;
           if (landedAt) checkpoint.landedAt = landedAt;
+          // #501: the page's "Pushed 1m ago". Only a frame that sent commits moves it.
+          checkpoint.pushed = landed && pushed;
+          const pushedAt = landed && pushed ? now : session?.checkpoint?.pushedAt;
+          if (pushedAt) checkpoint.pushedAt = pushedAt;
         }
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
@@ -1803,7 +1808,9 @@ export class AgentLink {
         const sessionPatch: Partial<Session> = { checkpoint, updatedAt: now };
         if (takeBranch && reported && reported !== current) sessionPatch.branch = reported;
         await this.store.sessions.update(sessionId, sessionPatch);
-        this.sse.publish(sessionId, { type: "checkpoint", data: frame });
+        // #501: what was stored, not the frame (sse.ts's SsePoller sends the same shape from the
+        // store for a browser on the web role).
+        this.sse.publish(sessionId, { type: "checkpoint", data: checkpointEvent(checkpoint) });
         break;
       }
       case "startup": {

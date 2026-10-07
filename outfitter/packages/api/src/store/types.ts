@@ -63,6 +63,11 @@ export interface Session {
     landed?: boolean;
     /** When a frame last landed; a later frame that didn't keeps it (and `head`). */
     landedAt?: string;
+    /** #501: this frame landed by sending commits (`pushed: true`), not by finding them there. */
+    pushed?: boolean;
+    /** #501: when a frame last pushed commits; kept by later frames that didn't. What the page shows
+     * as "Pushed 1m ago": a turn with nothing new re-lands the same head and moves only landedAt. */
+    pushedAt?: string;
   };
   /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
    * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a

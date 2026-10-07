@@ -689,6 +689,10 @@ describe("agentd <-> api WebSocket", () => {
     assert.equal(moved?.branch, "outfitter/issue-4");
     assert.equal(moved?.checkpoint?.branch, "outfitter/issue-4");
     assert.equal(moved?.checkpoint?.head, next);
+    // #501: a frame that sent commits records when.
+    assert.equal(moved?.checkpoint?.pushed, true);
+    const pushedAt = moved?.checkpoint?.pushedAt;
+    assert.ok(pushedAt);
 
     agent.send({ t: "checkpoint", branch: "outfitter/s1", head: "c".repeat(40), pushed: false });
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -709,6 +713,11 @@ describe("agentd <-> api WebSocket", () => {
     }
     assert.equal(landed?.checkpoint?.head, already);
     assert.equal(landed?.checkpoint?.landed, true);
+    // #501: found there, not pushed: the push time stays the last real push's.
+    assert.equal(landed?.checkpoint?.pushed, false);
+    assert.equal(landed?.checkpoint?.pushedAt, pushedAt);
+    const detail = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}` });
+    assert.deepEqual(detail.json().lastPush, { sha: already, branch: "outfitter/issue-4", at: pushedAt, pushed: false });
     // No head (nothing could be pushed): not landed, the last head kept.
     agent.send({ t: "checkpoint", branch: "outfitter/issue-4", pushed: false });
     await new Promise((resolve) => setTimeout(resolve, 30));

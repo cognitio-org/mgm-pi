@@ -21,7 +21,8 @@
 #
 # Needs, on the owner account: roles/resourcemanager.projectIamAdmin (grants), roles/iam.denyAdmin
 # (deny policies; not part of Owner) and serviceusage.services.enable. Missing denyAdmin shows as
-# PERMISSION_DENIED on step 3: grant it to yourself on the project, rerun, and remove it after.
+# PERMISSION_DENIED on step 3: grant it to yourself on the ORGANIZATION (it can't be granted on a
+# project), rerun, and remove it after (docs/runbooks/gcloud-mcp.md).
 # Docs: https://docs.cloud.google.com/sdk/use-gcloud-mcp
 #       https://docs.cloud.google.com/mcp/control-mcp-use-iam
 #       https://cloud.google.com/iam/docs/deny-access

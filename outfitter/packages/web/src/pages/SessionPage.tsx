@@ -629,7 +629,8 @@ export function SessionPage() {
         session?.repo
           ? {
               state: session.autofix,
-              canManage: Boolean(session.canManage) && !archived,
+              canManage: Boolean(session.canManage),
+              archived,
               onToggle: async (on) => {
                 // Bound to the floppy it started on, like the git writes (#502).
                 const id = sessionId;

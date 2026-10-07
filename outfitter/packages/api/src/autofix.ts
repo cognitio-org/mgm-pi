@@ -101,11 +101,14 @@ export interface AutofixView {
   /** The pause, or (switch off) why it turned itself off. */
   notice?: string;
   resumesAt?: string;
+  /** An A2A task's session: Auto-fix isn't available there (the toggle is a 409). */
+  a2a?: boolean;
 }
 
 export function autofixView(session: Session, now = Date.now()): AutofixView {
   const state = session.autofix;
   const view: AutofixView = { on: session.autofixCi === true };
+  if (isA2ASession(session)) view.a2a = true;
   if (state?.lastSha) view.lastSha = state.lastSha;
   if (state?.lastAt) view.lastAt = state.lastAt;
   if (state?.lastPr !== undefined) view.lastPr = state.lastPr;
@@ -115,7 +118,7 @@ export function autofixView(session: Session, now = Date.now()): AutofixView {
     const resumesAt = new Date(Date.parse(recent[0]!) + AUTOFIX_WINDOW_MS).toISOString();
     view.capped = true;
     view.resumesAt = resumesAt;
-    view.notice = `Auto-fix paused: it sent ${AUTOFIX_MAX_PER_DAY} messages in the last 24 hours and CI is still failing. It resumes at ${resumesAt}, or turn it off and on again to resume now.`;
+    view.notice = `Auto-fix paused: it sent ${AUTOFIX_MAX_PER_DAY} messages in the last 24 hours and CI is still failing. It resumes by itself within a day, or turn it off and on again to resume now.`;
   }
   if (!view.on && state?.offNotice) view.notice = state.offNotice;
   return view;

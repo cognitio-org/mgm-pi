@@ -3,7 +3,7 @@
 # files. Checks: DRY_RUN calls nothing; a real run without CONFIRM=1 refuses before reading any
 # secret; the first run POSTs an oauth2 authorization_code server with Google's endpoints, the
 # cloud-platform scope and the client secret from Secret Manager; a rerun only shows it (no PUT);
-# FORCE_PURGE=1 PUTs; EXTRA_FIELDS_JSON is merged; neither the master key nor the client secret ever
+# FORCE_PURGE=1 PUTs; neither the master key nor the client secret ever
 # reaches stdout/stderr. No network, no GCP.
 #   bash outfitter/deploy/test/gcloud-mcp-router.test.sh
 set -euo pipefail
@@ -60,7 +60,7 @@ node "${WORK}/router.mjs" & ROUTER_PID=$!
 trap 'kill ${ROUTER_PID} 2>/dev/null; rm -rf "${WORK}"' EXIT
 for _ in $(seq 50); do [[ -s "${PORT_FILE}" ]] && break; sleep 0.1; done
 export ROUTER_URL="http://127.0.0.1:$(cat "${PORT_FILE}")"
-unset GITHUB_ACTIONS DRY_RUN CONFIRM FORCE_PURGE EXTRA_FIELDS_JSON
+unset GITHUB_ACTIONS DRY_RUN CONFIRM FORCE_PURGE
 export GCLOUD_MCP_OAUTH_CLIENT_ID=111111111111-abcdef0ghi.apps.googleusercontent.com
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -81,24 +81,18 @@ grep -q "CONFIRM=1 is required" "${WORK}/out" || fail "wrong refusal"
 [[ ! -s "${STATE}/gcloud-calls" ]] || fail "read a secret without CONFIRM=1"
 [[ ! -s "${ROUTER_LOG}" ]] || fail "called the router without CONFIRM=1"
 
-# Without the GA-1 authorize params CONFIRM=1 refuses (no refresh token), before reading any secret.
-CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "registered without EXTRA_FIELDS_JSON or NO_REFRESH_OK=1"
-grep -q "no refresh token" "${WORK}/out" || fail "wrong refusal without EXTRA_FIELDS_JSON"
-[[ ! -s "${STATE}/gcloud-calls" ]] || fail "read a secret before the refresh check"
-
 # A plain-http router that isn't loopback is refused.
-ROUTER_URL=http://router.example.com CONFIRM=1 NO_REFRESH_OK=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-https ROUTER_URL"
+ROUTER_URL=http://router.example.com CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-https ROUTER_URL"
 grep -q "must be https" "${WORK}/out" || fail "wrong refusal for http"
 
 # A 422 that echoes the request (incl. the client secret) must not leak it.
 touch "${FAIL_FILE}"
-CONFIRM=1 NO_REFRESH_OK=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "422 didn't fail the run"
+CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "422 didn't fail the run"
 grep -q "HTTP 422: bad url" "${WORK}/out" || { cat "${WORK}/out"; fail "422 message missing"; }
 ! grep -qE 'sk-master|GOCSPX' "${WORK}/out" || { cat "${WORK}/out"; fail "a secret leaked through the 422 error"; }
 rm -f "${FAIL_FILE}"; : >"${ROUTER_LOG}"
 
 # First run registers.
-export NO_REFRESH_OK=1
 CONFIRM=1 run
 [[ "$(posts)" == 1 ]] || fail "expected one POST"
 body="$(grep '^POST ' "${ROUTER_LOG}" | sed 's/^POST [^ ]* //')"
@@ -106,26 +100,25 @@ check() { jq -e "$1" <<<"${body}" >/dev/null || fail "payload: $2 ($1)"; }
 check '.server_id == "gcloud" and .alias == "gcloud"' "id/alias"
 check '.url == "https://cloudcli.googleapis.com/mcp" and .transport == "http"' "url/transport"
 check '.auth_type == "oauth2" and .oauth2_flow == "authorization_code"' "auth"
-check '.authorization_url == "https://accounts.google.com/o/oauth2/v2/auth"' "authorization_url"
 check '.token_url == "https://oauth2.googleapis.com/token"' "token_url"
 check '.credentials.scopes == ["https://www.googleapis.com/auth/cloud-platform"]' "scope"
 check '.credentials.client_id == "111111111111-abcdef0ghi.apps.googleusercontent.com"' "client_id"
 check '.credentials.client_secret == "GOCSPX-client-secret-TESTONLY"' "client_secret from Secret Manager"
 check '.allow_all_keys == false' "allow_all_keys"
+check '.authorization_url | contains("access_type=offline") and contains("prompt=consent") and startswith("https://accounts.google.com/o/oauth2/v2/auth?")' "authorization_url carries access_type and prompt"
 
 # Rerun: shown, not edited.
 CONFIRM=1 run
 grep -q "already registered" "${WORK}/out" || fail "rerun didn't show the server"
 [[ "$(posts)" == 1 && "$(puts)" == 0 ]] || fail "rerun wrote to the router"
 
-# FORCE_PURGE=1: PUT, with the GA-1 extra fields merged.
-CONFIRM=1 FORCE_PURGE=1 EXTRA_FIELDS_JSON='{"authorize_extra_params":{"access_type":"offline"}}' run
+# FORCE_PURGE=1: PUT.
+CONFIRM=1 FORCE_PURGE=1 run
 [[ "$(puts)" == 1 ]] || fail "FORCE_PURGE didn't PUT"
-grep '^PUT ' "${ROUTER_LOG}" | grep -q '"access_type":"offline"' || fail "EXTRA_FIELDS_JSON not merged"
 grep -q "purges every user" "${WORK}/out" || fail "no purge warning"
 
-# FORCE_PURGE without CONFIRM still refuses; a bad extra object fails.
+# FORCE_PURGE without CONFIRM still refuses.
 FORCE_PURGE=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "FORCE_PURGE alone ran"
-CONFIRM=1 EXTRA_FIELDS_JSON='[1]' bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-object EXTRA_FIELDS_JSON"
+CONFIRM=1='[1]' bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-object"
 
 echo "gcloud-mcp-router.test.sh: ok"

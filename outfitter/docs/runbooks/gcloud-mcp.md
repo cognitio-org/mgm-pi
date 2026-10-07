@@ -13,29 +13,33 @@ approval cards (GA-4), not a read-only IAM deny; personal/Outfitter account only
 
 Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfitter/deploy/`.
 
-1. **Create the OAuth client.** Google Cloud console, project `outfitter-509211`, APIs & Services,
+1. **Roll router-litellm #45 to the live router first.** It makes the router default
+   `access_type=offline` and `prompt=consent` for accounts.google.com and keeps the stored refresh
+   token when Google's refresh response omits it. Without it a grant can die after the first
+   refresh. (Follow the router release lock: check the live release before rolling.)
+2. **Create the OAuth client.** Google Cloud console, project `outfitter-509211`, APIs & Services,
    OAuth consent screen. The user type must be **Internal** (an External app in Testing expires
    refresh tokens after 7 days). Then Credentials, Create credentials, OAuth client ID, type
    **Web application**. Authorized redirect URI: `https://router.kernal.one/callback` (the router
    builds its MCP OAuth callback as `<base url>/callback`). Copy the client ID and secret.
    Internal needs the project inside a Workspace organization; if the console only offers
    External, stop and ask: External is not acceptable here.
-2. **Store the client secret** in Secret Manager as `outfitter-gcloud-mcp-oauth-client-secret`,
+3. **Store the client secret** in Secret Manager as `outfitter-gcloud-mcp-oauth-client-secret`,
    straight from the console download or clipboard, never into a file in the repo:
    `pbpaste | gcloud --configuration=outfitter secrets create outfitter-gcloud-mcp-oauth-client-secret --data-file=-`
    (`secrets versions add` for a rotation). The name starts with `outfitter-`, so
    `secret-scope.sh`'s rules cover it.
-3. **Check the router has GA-1** (#491): Google needs `access_type=offline` and `prompt=consent` on
-   the authorize request or it issues no refresh token. Without it a grant dies after an hour.
 4. **Register the server.**
    `DRY_RUN=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./gcloud-mcp-router.sh`, then
    `CONFIRM=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./gcloud-mcp-router.sh`.
    It reads the client secret and the router master key from Secret Manager (never printed), and
-   registers the `gcloud` server as `oauth2` authorization code. Settle the config now: editing an
-   existing server purges every user's grant, so the script only shows an existing server unless
-   `FORCE_PURGE=1`. If GA-1 added a field for the authorize params, pass it in `EXTRA_FIELDS_JSON`. `CONFIRM=1` refuses
-   without it (Google issues no refresh token without those params, and adding them later needs
-   `FORCE_PURGE=1`); `NO_REFRESH_OK=1` overrides that on purpose.
+   registers the `gcloud` server as `oauth2` authorization code. The authorize URL carries
+   `?access_type=offline&prompt=consent` so Google issues a refresh token. Settle the config now:
+   editing an existing server purges every user's grant, so the script only shows an existing
+   server unless `FORCE_PURGE=1`. Keep `allow_all_keys` false (the script does), and never grant
+   the server to teams, access groups or `default_key_generate_params`: that would hand it to
+   non-operators. Users whose key has the `proxy_admin` role and no explicit server list see the
+   whole registry, so keep the proxy_admin keys few.
 5. **Grant IAM and the deny policy.** `DRY_RUN=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./gcloud-mcp-iam.sh`,
    then the same without `DRY_RUN`. It enables `cloudcli.googleapis.com`, grants
    `roles/mcp.toolUser` to the operators (`OUTFITTER_OPERATORS`, override with `GCLOUD_MCP_SYSOPS`),
@@ -52,8 +56,13 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
    value format is unverified against a live call. The policy fails closed and is reversible:
    `gcloud --configuration=outfitter iam policies delete gcloud-mcp-gateway-only --attachment-point=cloudresourcemanager.googleapis.com/projects/outfitter-509211 --kind=denypolicies`,
    then rerun the script with the corrected id.
-6. **Test** as a sysop (next section): connect, run `gcloud projects describe outfitter-509211`,
+6. **Outfitter release.** mgm-pi #508 needs the server registered before the release, because
+   `/key/generate` silently drops unknown `mcp_servers` names. Push the `outfitter-v*` tag
+   (`tag-release.sh`) only after step 4.
+7. **Kernal release**, so laptops have the client side.
+8. **Test** as a sysop (next section): connect, run `gcloud projects describe outfitter-509211`,
    wait over an hour, run it again (refresh works). Tick #495 and #491 only after that.
+
 
 ## Connecting (each sysop)
 

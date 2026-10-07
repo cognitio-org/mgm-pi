@@ -35,21 +35,15 @@ CLIENT_SECRET_NAME="${GCLOUD_MCP_SECRET:-outfitter-gcloud-mcp-oauth-client-secre
 CLIENT_ID="${GCLOUD_MCP_OAUTH_CLIENT_ID:-}"
 SERVER_ID="${GCLOUD_MCP_SERVER_ID:-gcloud}"
 MCP_URL="https://cloudcli.googleapis.com/mcp"
-AUTHORIZATION_URL="https://accounts.google.com/o/oauth2/v2/auth"
+# access_type=offline and prompt=consent make Google issue a refresh token. The router keeps any query
+# string on authorization_url (authorize_with_server merges it), and router-litellm #45 also defaults
+# both for accounts.google.com; stating them here keeps the registration correct on its own.
+AUTHORIZATION_URL="https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent"
 TOKEN_URL="https://oauth2.googleapis.com/token"
 SCOPE="https://www.googleapis.com/auth/cloud-platform"
 DRY_RUN="${DRY_RUN:-0}"
 CONFIRM="${CONFIRM:-0}"
 FORCE_PURGE="${FORCE_PURGE:-0}"
-
-# GA-1 (#491) is adding Google support to the router fork: access_type=offline and prompt=consent on
-# the authorize request, without which Google issues no refresh token (and a token lasts 1 hour).
-# If it adds a server field for them (extra authorize params), put its JSON here, e.g.
-#   EXTRA_FIELDS_JSON='{"authorize_extra_params":{"access_type":"offline","prompt":"consent"}}'
-# Merged into the payload as-is. TODO(GA-1): set the default below to the real field once merged;
-# the field name above is a placeholder, not something the router accepts today.
-EXTRA_FIELDS_JSON="${EXTRA_FIELDS_JSON:-}"
-[[ -n "${EXTRA_FIELDS_JSON}" ]] || EXTRA_FIELDS_JSON='{}'
 
 command -v jq >/dev/null || deploy_fail "jq is required"
 case "${ROUTER_URL}" in
@@ -57,7 +51,6 @@ case "${ROUTER_URL}" in
   http://127.0.0.1|http://127.0.0.1:*|http://localhost|http://localhost:*|http://\[::1\]|http://\[::1\]:*) ;;
   *) deploy_fail "ROUTER_URL=${ROUTER_URL} must be https (or loopback): the master key goes to it" ;;
 esac
-jq -e 'type == "object"' <<<"${EXTRA_FIELDS_JSON}" >/dev/null || deploy_fail "EXTRA_FIELDS_JSON must be a JSON object"
 
 if [[ -z "${CLIENT_ID}" ]]; then
   [[ "${DRY_RUN}" == 1 ]] || deploy_fail "GCLOUD_MCP_OAUTH_CLIENT_ID is required (the Internal Web client's id, <n>-<x>.apps.googleusercontent.com)"
@@ -70,7 +63,6 @@ echo "router=${ROUTER_URL} server=${SERVER_ID} url=${MCP_URL}"
 echo "oauth2 authorization_code: authorize=${AUTHORIZATION_URL} token=${TOKEN_URL} scope=${SCOPE}"
 echo "client_id=${CLIENT_ID} client_secret=gsm:${PROJECT}/${CLIENT_SECRET_NAME} (not printed)"
 echo "redirect URI to register on the client: ${ROUTER_URL}/callback"
-echo "extra fields (GA-1 spot): $(jq -c . <<<"${EXTRA_FIELDS_JSON}")"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "plan: GET /v1/mcp/server; if ${SERVER_ID} is absent, POST it (CONFIRM=1); if present, show it, and PUT only with FORCE_PURGE=1 (purges every user's grant)."
   echo "DRY_RUN=1: stopping before reading any secret."
@@ -78,9 +70,6 @@ if [[ "${DRY_RUN}" == 1 ]]; then
 fi
 
 [[ "${CONFIRM}" == 1 ]] || deploy_fail "CONFIRM=1 is required: this reads the router master key and writes to the router's admin API"
-if [[ "${EXTRA_FIELDS_JSON}" == '{}' && "${NO_REFRESH_OK:-0}" != 1 ]]; then
-  deploy_fail "EXTRA_FIELDS_JSON is empty: Google issues no refresh token without the GA-1 (#491) authorize params (access_type=offline, prompt=consent), so grants would die after an hour, and adding them later needs FORCE_PURGE=1 (every user signs in again). Set EXTRA_FIELDS_JSON, or NO_REFRESH_OK=1 to register anyway."
-fi
 gcloud_exists secrets describe "${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PROJECT}" \
   || deploy_fail "secret ${MASTER_KEY_SECRET} not found in ${MASTER_KEY_PROJECT}; set MASTER_KEY_PROJECT"
 gcloud_exists secrets describe "${CLIENT_SECRET_NAME}" --project="${PROJECT}" \
@@ -141,7 +130,7 @@ CLIENT_SECRET="$(gcloud secrets versions access latest --secret="${CLIENT_SECRET
 # The secret reaches jq as a file (process substitution), the body reaches curl on stdin.
 build() {
   jq -nc --arg id "${SERVER_ID}" --arg rid "${ROW_ID:-${SERVER_ID}}" --arg url "${MCP_URL}" --arg au "${AUTHORIZATION_URL}" --arg tu "${TOKEN_URL}" \
-    --arg cid "${CLIENT_ID}" --arg scope "${SCOPE}" --argjson extra "${EXTRA_FIELDS_JSON}" \
+    --arg cid "${CLIENT_ID}" --arg scope "${SCOPE}" \
     --rawfile secret <(printf '%s' "${CLIENT_SECRET}") '{
       server_id: $rid, server_name: $id, alias: $id,
       description: "Google Cloud CLI (gcloud, bq) on Google'"'"'s side, as the signed-in user. Operators only.",
@@ -150,7 +139,7 @@ build() {
       authorization_url: $au, token_url: $tu,
       credentials: {client_id: $cid, client_secret: $secret, scopes: [$scope]},
       allow_all_keys: false
-    } + $extra'
+    }'
 }
 
 if [[ -n "${existing}" ]]; then

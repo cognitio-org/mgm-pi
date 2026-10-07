@@ -123,6 +123,8 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     // #378 Local Host (local-host.md §5): every listener's sweep (task A's ngrok clean-up, task B's
     // router reconcile). Never fails the tick.
     const localHosts = await ctx.localHostEvents.sweep().catch(() => undefined);
+    // #503 Auto-fix CI: failing checks on watched sessions' pull requests. Never fails the tick.
+    const autofix = await ctx.autofix.sweep().catch(() => undefined);
     return {
       woken,
       ...(previews ? { previews } : {}),
@@ -131,6 +133,7 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
       ...(a2a !== undefined ? { a2a } : {}),
       ...(routerKeys ? { routerKeys } : {}),
       ...(localHosts && Object.keys(localHosts).length ? { localHosts } : {}),
+      ...(autofix && (autofix.sent.length || autofix.capped.length) ? { autofix } : {}),
     };
   });
 

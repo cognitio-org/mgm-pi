@@ -14,6 +14,7 @@ import type { ProviderStatusService } from "../providers-status.ts";
 import type { ModelsService } from "../models.ts";
 import type { SecretAdmin } from "../secrets.ts";
 import type { MailService } from "../mail.ts";
+import type { AutofixWatcher } from "../autofix.ts";
 import type { SandboxProviders } from "../providers/registry.ts";
 import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 import type { VoiceService } from "../voice.ts";
@@ -91,4 +92,6 @@ export interface RouteContext {
   /** #383: the ngrok API for per-host tunnel credentials; undefined while NGROK_API_KEY is unset.
    * Credentials are provisioned only when this and config.localHostDomain are both set. */
   localHostNgrok?: NgrokApi;
+  /** #503 Auto-fix CI: the tick runs its sweep. */
+  autofix: AutofixWatcher;
 }

@@ -1,0 +1,39 @@
+outfitter/packages/web/src/lib/session-prefs.ts
+  s_fe1c4322a69a90::t_e6004374df2c4a 1-51
+outfitter/packages/web/test/flow.test.ts
+  s_fe1c4322a69a90::t_4e7f0c580988ed 1-93
+outfitter/packages/web/src/lib/disk-box.ts
+  s_fe1c4322a69a90::t_592effb58af251 1-89
+outfitter/packages/web/test/scanner.test.ts
+  s_fe1c4322a69a90::t_d746d3a45577d6 1-19,23-72
+  s_fe1c4322a69a90::t_8df9bb01acc2c7 20-22
+outfitter/packages/web/src/lib/tool-rows.ts
+  s_fe1c4322a69a90::t_9b46c1a349e2ef 1-201,205-339
+  s_fe1c4322a69a90::t_7d20587d4f097f 202-204
+outfitter/packages/web/src/lib/flow.ts
+  s_fe1c4322a69a90::t_a97473f3d8bb3a 1-209
+outfitter/packages/web/test/disk-box.test.ts
+  s_fe1c4322a69a90::t_a3bf1d8610cf26 1-69
+outfitter/packages/web/test/tool-rows.test.ts
+  s_fe1c4322a69a90::t_4d48de4220c504 1-118
+outfitter/packages/web/src/lib/live-status.ts
+  s_fe1c4322a69a90::t_4530f8da2d1ee0 1-82
+outfitter/packages/web/src/lib/scanner.ts
+  s_fe1c4322a69a90::t_d1fa0c79ee819d 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "92b14447e397659ab4abb79accc0c5505a665fb1",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

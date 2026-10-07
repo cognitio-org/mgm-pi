@@ -45,16 +45,22 @@ export const RUN_PERMISSIONS = { ...REQUIRED_RUN_PERMISSIONS, ...OPTIONAL_RUN_PE
 /** The API broker's token (#160). Never sent to the sandbox. */
 export const BROKER_PERMISSIONS = RUN_PERMISSIONS;
 
+/** #500: re-running a session's failed workflow runs from the web UI. Its own profile, minted only
+ * by that one route, so an installation without `actions: write` leaves the broker's and the
+ * Drive's mints alone: only this mint fails (permissions-missing) until an owner grants it. */
+export const RERUN_PERMISSIONS = { actions: "write", metadata: "read" } as const;
+
 type RunPermission = keyof typeof RUN_PERMISSIONS;
 type PermissionSet = Partial<Record<RunPermission, "read" | "write">>;
 
 /** Which token a mint is for. Each has its own full set, required subset, token cache entries and
- * remembered reduced set, so the two never stand in for each other. */
-type TokenProfile = "drive" | "broker";
-type InstallationPermissions = typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS;
+ * remembered reduced set, so they never stand in for each other. */
+type TokenProfile = "drive" | "broker" | "rerun";
+type InstallationPermissions = typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS | typeof RERUN_PERMISSIONS;
 const PROFILES: Record<TokenProfile, { all: PermissionSet; required: PermissionSet }> = {
   drive: { all: DRIVE_PERMISSIONS, required: DRIVE_PERMISSIONS },
   broker: { all: RUN_PERMISSIONS, required: REQUIRED_RUN_PERMISSIONS },
+  rerun: { all: RERUN_PERMISSIONS, required: RERUN_PERMISSIONS },
 };
 
 /** Stable across key order, so two permission sets can't be taken for one another. */
@@ -65,10 +71,13 @@ function permissionKey(permissions: PermissionSet): string {
     .join(",");
 }
 
-/** The profile a caller's permission set names. Anything but exactly the broker's set is the
- * Drive's, the narrower of the two. */
+/** The profile a caller's permission set names. Anything but exactly the broker's or the re-run
+ * set is the Drive's, the narrowest. */
 function profileOf(permissions: InstallationPermissions): TokenProfile {
-  return permissionKey(permissions) === permissionKey(BROKER_PERMISSIONS) ? "broker" : "drive";
+  const key = permissionKey(permissions);
+  if (key === permissionKey(BROKER_PERMISSIONS)) return "broker";
+  if (key === permissionKey(RERUN_PERMISSIONS)) return "rerun";
+  return "drive";
 }
 
 /** How long the installation's account (for notes) and a reduced permission set (#172) are reused.
@@ -161,8 +170,8 @@ function isRequired(name: string, profile: TokenProfile): boolean {
   return Object.hasOwn(PROFILES[profile].required, name);
 }
 
-function describePermissions(names: readonly RunPermission[]): string[] {
-  return names.map((name) => `${name}:${RUN_PERMISSIONS[name]}`);
+function describePermissions(names: readonly RunPermission[], profile: TokenProfile): string[] {
+  return names.map((name) => `${name}:${PROFILES[profile].all[name] ?? RUN_PERMISSIONS[name]}`);
 }
 
 /** How long to wait before asking for a replacement. Undefined when `expiresAt` is not a time. */
@@ -377,14 +386,14 @@ export class GithubAppTokens {
         // asked for. Otherwise nothing smaller would help.
         const lacking = within ? (Object.keys(requested) as RunPermission[]).filter((name) => !(name in within.grant)) : [];
         if (lacking.length === 0) return { ok: false, reason: "rejected", ...(message ? { githubMessage: message } : {}) };
-        console.warn(`[github-app] treating that 422 as a permissions one: the installation doesn't grant ${describePermissions(lacking).join(", ")}`);
+        console.warn(`[github-app] treating that 422 as a permissions one: the installation doesn't grant ${describePermissions(lacking, profile).join(", ")}`);
       }
       // An optional permission the installation doesn't grant must not stop the run. Ask again for
       // only what it grants (never more than the profile's set), or for just the required set when
       // the grants can't be read. The Drive's set has nothing optional.
       const missingRequired = within ? within.missing.filter((name) => isRequired(name, profile)) : [];
       if (missingRequired.length > 0) {
-        const missing = describePermissions(missingRequired);
+        const missing = describePermissions(missingRequired, profile);
         console.warn(`[github-app] installation ${installationId} lacks required permissions: ${missing.join(", ")}`);
         return { ok: false, reason: "permissions-missing", missingPermissions: missing, ...accountOf(info) };
       }
@@ -465,7 +474,7 @@ export class GithubAppTokens {
     if (this.warnedOptional.has(warnKey)) return;
     this.warnedOptional.add(warnKey);
     console.warn(
-      `[github-app] installation ${installationId} doesn't grant ${describePermissions(dropped).join(", ")}; ` +
+      `[github-app] installation ${installationId} doesn't grant ${describePermissions(dropped, profile).join(", ")}; ` +
         "minting run tokens without them (broker tools that need them answer \"not permitted\")",
     );
   }

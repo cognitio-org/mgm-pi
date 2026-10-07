@@ -50,6 +50,13 @@
   --warn-contrast: #2a2103;
   --danger: #ff8a8a; /* C64 red, brightened for AA on this bg */
   --danger-contrast: #350a0a;
+  /* #498 Knight Rider scanner, KITT red: non-text, 3.7:1 on --bg, 4.3:1 on --bg-inset (1.4.11 asks 3:1) */
+  --scanner: #ff4636;
+  /* #498 inline diffs: 7.5:1 and 6.3:1 on their own backgrounds, 9.5:1 and 6.2:1 on --bg */
+  --diff-add-bg: #1f4a3a;
+  --diff-add: #a6f29a;
+  --diff-del-bg: #4f2050;
+  --diff-del: #ff9a9a;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-inset);
   --scanline-opacity: 0.05;
@@ -96,6 +103,11 @@
     --warn-contrast: #fbf1de;
     --danger: #b0242b;
     --danger-contrast: #fdeceb;
+    --scanner: #c8141c; /* 4.9:1 on --bg, 4.3:1 on --bg-inset */
+    --diff-add-bg: #dcefdc; /* text 6.8:1 */
+    --diff-add: #1f5a2e;
+    --diff-del-bg: #f6dcdc; /* text 6.8:1 */
+    --diff-del: #8f1d22;
     --titlebar-stripe-a: var(--accent);
     --titlebar-stripe-b: var(--bg-elevated);
     --scanline-opacity: 0;
@@ -141,6 +153,12 @@
   --warn-contrast: #2a2103;
   --danger: #ff8a8a;
   --danger-contrast: #350a0a;
+  --scanner: #ff4636;
+  /* #498 inline diffs: 7.5:1 and 6.3:1 on their own backgrounds, 9.5:1 and 6.2:1 on --bg */
+  --diff-add-bg: #1f4a3a;
+  --diff-add: #a6f29a;
+  --diff-del-bg: #4f2050;
+  --diff-del: #ff9a9a;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-inset);
   --scanline-opacity: 0.05;
@@ -185,6 +203,11 @@
   --warn-contrast: #fbf1de;
   --danger: #b0242b;
   --danger-contrast: #fdeceb;
+  --scanner: #c8141c;
+  --diff-add-bg: #dcefdc;
+  --diff-add: #1f5a2e;
+  --diff-del-bg: #f6dcdc;
+  --diff-del: #8f1d22;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-elevated);
   --scanline-opacity: 0;

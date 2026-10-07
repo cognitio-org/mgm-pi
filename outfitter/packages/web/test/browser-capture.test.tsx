@@ -98,7 +98,7 @@ describe("browser capture transcript entry", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container, unmount } = mount(<EntryItem view={view} sessionId="sess-1" />);
+    const { container, unmount } = mount(<EntryItem view={view as never} sessionId="sess-1" />);
     await act(async () => {
       await fetchMock.mock.results[0]?.value;
     });
@@ -124,7 +124,7 @@ describe("browser capture transcript entry", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container, unmount } = mount(<EntryItem view={view} sessionId="sess-1" />);
+    const { container, unmount } = mount(<EntryItem view={view as never} sessionId="sess-1" />);
     await act(async () => {
       await fetchMock.mock.results[0]?.value;
     });
@@ -141,7 +141,7 @@ describe("browser capture transcript entry", () => {
       entryToViews({ id: "m1", type: "custom", customType: "outfitter.mail", data: { to: "x", text: "hi" } }),
     );
     if (!view) throw new Error("expected a view");
-    const { container, unmount } = mount(<EntryItem view={view} sessionId="sess-1" />);
+    const { container, unmount } = mount(<EntryItem view={view as never} sessionId="sess-1" />);
     expect(container.textContent).toContain("custom: outfitter.mail");
     expect(container.querySelector("img")).toBeNull();
     unmount();
@@ -157,7 +157,7 @@ describe("browser capture transcript entry", () => {
       }),
     );
     if (!view) throw new Error("expected a view");
-    const { container, unmount } = mount(<EntryItem view={view} sessionId="sess-1" />);
+    const { container, unmount } = mount(<EntryItem view={view as never} sessionId="sess-1" />);
     expect(container.textContent).toContain("Playwright");
     expect(container.textContent).toContain("nothing to run");
     expect(container.querySelector("img")).toBeNull();

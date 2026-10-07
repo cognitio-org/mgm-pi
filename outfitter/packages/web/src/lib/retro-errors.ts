@@ -128,8 +128,9 @@ const LIVE_RUN_STATES = new Set(["running", "queued", "provisioning", "stopping"
  * - "idle" (a live run waiting on the user) is the only state that reads READY.;
  * - "running"/"queued"/"provisioning"/"stopping" show nothing here -- <Working> is showing instead;
  * - "failed" reads LOAD ERROR, with the run's own reason appended when there is one;
- * - "stopped", or no run at all yet, reads a plain "stopped - press Play" line rather than READY.,
- *   so a cleanly stopped floppy doesn't look like it's sitting there waiting for a reply. */
+ * - "stopped", or no run at all yet, reads a plain "stopped · sending wakes it" line rather than
+ *   READY., so a cleanly stopped floppy doesn't look like it's sitting there waiting for a reply
+ *   (#498: there's no Play button any more; a message wakes the Drive). */
 export function deriveTransportStatusLine(runState: string | undefined, outcome: TransportOutcome | null, reason?: string): string | null {
   if (outcome) return transportStatusLine(outcome);
   if (runState === "idle") return transportStatusLine("ready");
@@ -139,5 +140,5 @@ export function deriveTransportStatusLine(runState: string | undefined, outcome:
     return said ? `LOAD ERROR — ${inVocabulary(said)}` : "LOAD ERROR";
   }
   // "stopped", or no run recorded at all (a brand-new session, or one whose run never persisted).
-  return "stopped · press Play";
+  return "stopped · sending wakes it";
 }

@@ -679,19 +679,15 @@ button.danger {
 /* Conversation prose a touch larger than the surrounding UI, and held to a readable measure: on a
  * wide window the box spans the column (so code and tables get the room) while paragraphs wrap at
  * about 100 characters instead of running the full width. */
-.entry.user .md,
-.entry.assistant-text .md {
+.flow-user .md,
+.flow-prose .md {
   font-size: 0.94rem;
   line-height: 1.55;
 }
-.entry.user .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
-.entry.assistant-text .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+.flow-user .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
+.flow-prose .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
   max-width: 100ch;
 }
-
-/* Thinking stays visibly secondary. */
-.entry.assistant-thinking .md { font-style: italic; }
-.entry.assistant-thinking .md code, .entry.assistant-thinking .md pre { font-style: normal; }
 
 /* Shown while a code-split page loads (App.tsx Suspense). */
 .page-loading {
@@ -702,14 +698,13 @@ button.danger {
 
 /* Long transcript prose (Markdown.tsx, lib/reading.ts): the whole message, formatted, in a box
  * capped at about half the window that scrolls on its own; a dashed rule under it says there's
- * more. The pop-out sits on the card's top border like the who-mark, so it costs no row of its own.
+ * more. On your own messages the pop-out sits on the block's top border, so it costs no row of its own.
  * The dialog reuses .html-preview-dialog's size. */
 .md-long {
   position: relative;
 }
-.entry.assistant-text > .md-long,
-.entry.user > .md-long {
-  position: static; /* the badge pins to the card's border, not the text box */
+.flow-user > .md-long {
+  position: static; /* the badge pins to the block's border, not the text box */
 }
 .md-scroll {
   max-height: min(55vh, 34rem);
@@ -740,13 +735,9 @@ button.danger {
   border: 1px solid var(--border);
   box-shadow: none;
 }
-.entry.assistant-text > .md-long .md-read {
+.flow-user > .md-long .md-read {
   top: -11px;
   right: 8px;
-}
-.entry.user > .md-long .md-read {
-  top: -11px;
-  right: 36px; /* left of the you-mark */
   border-color: var(--accent);
 }
 .md-long .md-read:hover,

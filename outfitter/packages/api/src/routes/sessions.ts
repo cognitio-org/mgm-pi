@@ -18,6 +18,7 @@ import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts
 import type { Identity } from "../auth.ts";
 import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
 import { loadSessionChanges } from "../session-changes.ts";
+import { autofixView } from "../autofix.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -227,6 +228,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // #501: checkpoint without its snapshot/workspace URLs (checkpoint-wire.ts).
       ...sessionForWire(session),
       canManage: canManageSession(session, req.identity),
+      // #503 Auto-fix CI: the switch, the last message it sent, and its daily-cap notice.
+      autofixCi: session.autofixCi === true,
+      autofix: autofixView(session),
       runState: run?.state,
       runStateReason: runStateReason(run),
       pendingUiRequest,
@@ -474,6 +478,20 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     const guru = await ctx.store.gurus.findById(session.guruId);
     return switchSessionModel(ctx, session, guru, body.model);
+  });
+
+  // #503 Auto-fix CI: { on } → { autofix }. Owner or sysop only: it sends the agent messages on
+  // the owner's Drive. Turning it on again also lifts the daily cap's pause.
+  app.put("/api/sessions/:id/autofix", async (req, reply) => {
+    const session = await getManageableSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const on = (req.body as { on?: unknown } | undefined)?.on;
+    if (typeof on !== "boolean") return reply.code(400).send({ error: "on must be true or false" });
+    if (on && session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
+    if (on && !session.repo) return reply.code(409).send({ error: "this floppy has no repository, so it has no CI to fix" });
+    const updated = await ctx.store.sessions.setAutofixCi(session.id, on);
+    if (!updated) return reply.code(404).send({ error: "session not found" });
+    return { autofixCi: on, autofix: autofixView(updated) };
   });
 
   app.get("/api/sessions/:id/stream", async (req, reply) => {

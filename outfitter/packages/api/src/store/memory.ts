@@ -5,6 +5,7 @@ import { isTokenActive, ownerMatches } from "../tokens.ts";
 import type {
   Store,
   Session,
+  AutofixState,
   SessionListFilter,
   SessionsCollection,
   Entry,
@@ -162,6 +163,30 @@ class MemorySessions implements SessionsCollection {
 
   async delete(id: string): Promise<boolean> {
     return this.rows.delete(id);
+  }
+
+  async setAutofixCi(id: string, on: boolean): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { cappedAt: _c, cappedSha: _s, sends: _sends, ...kept } = row.autofix ?? { rev: 0 };
+    const autofix: AutofixState = on ? { ...kept, rev: kept.rev + 1 } : { ...(row.autofix ?? { rev: 0 }), rev: kept.rev + 1 };
+    const next: Session = { ...row, autofixCi: on, autofix };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.autofixCi !== true || row.archivedAt) return false;
+    if ((row.autofix?.rev ?? 0) !== expectedRev) return false;
+    this.rows.set(id, { ...row, autofix: clone(next) });
+    return true;
+  }
+
+  async listAutofix(updatedSinceIso: string): Promise<Session[]> {
+    return [...this.rows.values()]
+      .filter((s) => s.autofixCi === true && !s.archivedAt && s.repo && s.branch && s.updatedAt >= updatedSinceIso)
+      .map(clone);
   }
 }
 

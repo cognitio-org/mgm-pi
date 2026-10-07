@@ -73,6 +73,21 @@ export interface LastPush {
   pushed: boolean;
 }
 
+/** #503: GET /api/sessions/:id's `autofix` (packages/api/src/autofix.ts's AutofixView). */
+export interface AutofixState {
+  on: boolean;
+  /** The pull request head the last Auto-fix message was sent for, and when (ISO). */
+  lastSha?: string;
+  lastAt?: string;
+  lastPr?: number;
+  lastChecks?: string[];
+  /** Paused after 3 messages in 24 hours; `notice` says so, `resumesAt` is when it resumes by
+   * itself. Turning it on again (setAutofix(id, true)) resumes at once. */
+  capped?: boolean;
+  notice?: string;
+  resumesAt?: string;
+}
+
 export interface SessionDetail {
   id: string;
   name?: string;
@@ -124,6 +139,9 @@ export interface SessionDetail {
   /** When heldMail > 0: "Deploy mismatch: messages held until the service is redeployed", or
    * "Messages held: <reason>. Press Retry once that's fixed." for a run failure (#172). */
   mailNotice?: string;
+  /** #503 Auto-fix CI: when on, a failed check on the floppy's pull request is sent to the agent. */
+  autofixCi?: boolean;
+  autofix?: AutofixState;
   /** Cloud GitHub broker state. Never includes a token. */
   github?: {
     repo: string | null;
@@ -923,6 +941,11 @@ export const api = {
   /** #255: whether replies on this floppy are read aloud. */
   setSessionVoiceSpeak(id: string, speak: boolean): Promise<{ voiceSpeak: boolean }> {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
+  },
+
+  /** #503 Auto-fix CI on or off (owner or sysop; 409 for an archived or repo-less floppy). */
+  setAutofix(id: string, on: boolean): Promise<{ autofixCi: boolean; autofix: AutofixState }> {
+    return request(`/api/sessions/${id}/autofix`, { method: "PUT", body: JSON.stringify({ on }) });
   },
 
   /** Switches the floppy's model, live when a Drive is going; null copies the tape's current model. */

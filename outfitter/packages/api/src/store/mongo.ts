@@ -5,6 +5,7 @@ import { Binary, MongoClient, type Collection as MongoCollection, type Db, type 
 import type {
   Store,
   Session,
+  AutofixState,
   SessionListFilter,
   SessionsCollection,
   Entry,
@@ -178,6 +179,34 @@ class MongoSessions implements SessionsCollection {
 
   async delete(id: string): Promise<boolean> {
     return (await this.col.deleteOne({ _id: id })).deletedCount > 0;
+  }
+
+  async setAutofixCi(id: string, on: boolean): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      on
+        ? { $set: { autofixCi: true }, $inc: { "autofix.rev": 1 }, $unset: { "autofix.cappedAt": "", "autofix.cappedSha": "", "autofix.sends": "" } }
+        : { $set: { autofixCi: false }, $inc: { "autofix.rev": 1 } },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {
+    // `null` matches a missing field: rev 0 is "nothing stored yet".
+    const rev = expectedRev === 0 ? { $in: [null, 0] } : expectedRev;
+    const result = await this.col.updateOne(
+      { _id: id, autofixCi: true, archivedAt: null, "autofix.rev": rev } as Record<string, unknown>,
+      { $set: { autofix: next } },
+    );
+    return result.modifiedCount > 0;
+  }
+
+  async listAutofix(updatedSinceIso: string): Promise<Session[]> {
+    const rows = await this.col
+      .find({ autofixCi: true, archivedAt: null, repo: { $type: "string" }, branch: { $type: "string" }, updatedAt: { $gte: updatedSinceIso } } as Record<string, unknown>)
+      .toArray();
+    return rows.map((r) => stripIdStrict<Session>(r));
   }
 }
 
@@ -1871,6 +1900,8 @@ export class MongoStore implements Store {
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
       db.collection("entries").createIndex({ sessionId: 1, _id: -1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
+      // #503: the Auto-fix CI watcher's list (only sessions with it on are indexed).
+      db.collection("sessions").createIndex({ updatedAt: -1 }, { name: "autofix_updatedAt", partialFilterExpression: { autofixCi: true } }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
       db.collection("previews").createIndex({ runId: 1, closedAt: 1 }),
       db.collection("previews").createIndex({ sessionId: 1, closedAt: 1 }),

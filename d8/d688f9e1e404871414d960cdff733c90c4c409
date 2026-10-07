@@ -1,0 +1,23 @@
+kernal/scripts/package.sh
+  s_0c22637abb3b43::t_cc18294cf53009 87-89
+kernal/scripts/apply-adapter-patch.sh
+  s_0c22637abb3b43::t_cc18294cf53009 1-23
+kernal/tests/mcp-force-reauth.test.ts
+  s_0c22637abb3b43::t_3f601bb8641055 10,18,30-59,93,97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d8d688f9e1e404871414d960cdff733c90c4c409",
+  "prompts": {},
+  "sessions": {
+    "s_0c22637abb3b43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "49aca729-6f5c-461c-99f2-b26ac7e08e84",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

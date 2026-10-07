@@ -69,6 +69,9 @@ export interface AdminCaller {
   /** The person approved this call (see the module doc). */
   approved?: boolean;
   approvalId?: string;
+  /** A Dongle's owner is on the operators list (the route sets it; `operator` stays false for a
+   * Dongle). Only for an `auditNote` op; never set for a Drive. */
+  listedOperator?: boolean;
   /** A Dongle's `laptop` context (E9.9); never set for a Drive. */
   laptop?: LaptopContext;
   /** E9.9: the `approvalId` a Dongle's rerun names (POST body). Unchecked as sent: runAdminOp uses
@@ -104,6 +107,10 @@ export interface AdminOp {
   /** False: never written to adminAudit, although not a read (E9.9 `memory.record`, a laptop's own
    * turns into its own private memory, many a session; the usage log counts them instead). */
   audit?: false;
+  /** GA-4: a laptop's self-reported note for the audit log (`gcloud.note`): a side-effect-free write
+   * whose row is never `approved: true`, whatever the caller says. Needs `laptop`, kind `write`,
+   * capability `admin`. */
+  auditNote?: true;
   /** E9.9: from a Dongle, a call that needs the person's yes waits for it in the web app's approval
    * widget (laptop-approvals.ts), never on `confirmed`, which the laptop's agent could send itself.
    * Needs `laptop`. `laptopCard` says what the widget shows. */
@@ -127,7 +134,7 @@ export interface AdminOp {
    * asking. For ops whose target isn't a tape or environment (E9 `ae.resume`: the execution, read
    * from Agent Engine as this caller). */
   target?: (ctx: AdminContext, args: Args, caller: AdminCaller) => Promise<{ id: string; label: string } | { error: string }>;
-  run: (ctx: AdminContext, caller: AdminCaller, args: Args) => Promise<AdminResult & { target?: string }>;
+  run: (ctx: AdminContext, caller: AdminCaller, args: Args) => Promise<AdminResult & { target?: string; detail?: string }>;
 }
 
 const TAPE_FIELDS = [
@@ -603,8 +610,11 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (op.webApproval && (!op.laptopCard || (!op.asks && !ALWAYS_ASKS.has(op.kind)))) {
     throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
   }
-  // GA-4: `gcloud.note` is the one other laptop op, an audit row for a decision the TUI took.
-  if (op.laptop && !op.webApproval && name !== "gcloud.note" && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
+  // GA-4: an `auditNote` op is the one other laptop op: a self-reported row, no side effects.
+  if (op.auditNote && (op.kind !== "write" || !op.laptop || op.capability !== "admin")) {
+    throw new Error(`admin op ${name}: an auditNote op is a laptop-callable admin write`);
+  }
+  if (op.laptop && !op.webApproval && !op.auditNote && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
     throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
   }
   // Skipping the audit is for a laptop's own memory writes (memory.record) only.
@@ -724,7 +734,7 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
   const webGated = caller.via === "token" && def.webApproval === true;
   if (webGated) caller = { ...caller, approved: false, approvalId: undefined };
 
-  let result: AdminResult & { target?: string };
+  let result: AdminResult & { target?: string; detail?: string };
   try {
     if (def.kind === "operator" && !caller.operator) result = { ok: false, error: "sysop rights required" };
     else {
@@ -755,15 +765,17 @@ export async function runAdminOp(ctx: AdminContext, caller: AdminCaller, op: unk
         target: result.target ?? (typeof a.id === "string" ? a.id : undefined),
         ok: result.ok,
         error: result.ok ? undefined : result.error,
-        approved: caller.approved === true,
+        // An auditNote is the caller's own word: never recorded as approved.
+        approved: def.auditNote ? false : caller.approved === true,
         approvalId: caller.approvalId,
+        ...(result.detail ? { detail: result.detail } : {}),
       });
     } catch (err) {
       // The audit row is best effort; the op already ran.
       ctx.log?.(`admin audit insert failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  const { target: _target, ...out } = result;
+  const { target: _target, detail: _detail, ...out } = result;
   return out;
 }
 

@@ -148,6 +148,44 @@ describe("tricks", () => {
   });
 });
 
+describe("hidden separators and quoted flags", () => {
+  for (const [name, c] of [
+    ["tab", "gcloud projects list\t--impersonate-service-account=sa"],
+    ["tab alone", "gcloud\tprojects\tlist"],
+    ["NBSP", "gcloud projects list\u00a0--impersonate-service-account=sa"],
+    ["U+2028", "gcloud projects list\u2028--account=x"],
+    ["ideographic space", "gcloud\u3000projects list"],
+    ["vertical tab", "gcloud projects list\u000b--account=x"],
+    ["DEL", "gcloud projects list\u007f"],
+    ["zero-width space", "gcloud projects\u200b list"],
+    ["non-ASCII letter", "gcloud projects list --filter=caf\u00e9"],
+    ["quoted flags inside one word", 'gcloud projects list "a --impersonate-service-account=x b"'],
+    ["single-quoted flags inside one word", "gcloud projects list 'a --account=x'"],
+    ["flag glued after quote", 'gcloud projects list --filter="x" --acc=y'],
+  ] as const) {
+    test(`write: ${name}`, () => assert.equal(g(c), "write"));
+  }
+});
+
+describe("verb-like words are not groups", () => {
+  for (const c of [
+    "gcloud app deploy versions list",
+    "gcloud app deploy list",
+    "gcloud run deploy services list",
+    "gcloud sql flags list",
+    "gcloud artifacts docker tags list",
+    "gcloud source repos list",
+    "gcloud compute tags list",
+    "gcloud run run list",
+  ]) {
+    test(`write: ${c}`, () => assert.equal(g(c), "write"));
+  }
+  test("the same nouns after their own group still read", () => {
+    assert.equal(g("gcloud app versions list"), "read");
+    assert.equal(g("gcloud deploy releases list"), "read");
+  });
+});
+
 describe("tokenize", () => {
   test("splits on spaces, groups quotes, rejects syntax", () => {
     assert.deepEqual(tokenize("a  'b c' \"d e\" f=g"), ["a", "b c", "d e", "f=g"]);
@@ -171,10 +209,11 @@ describe("bq", () => {
     "ls",
     "bq --project_id=p ls",
     "bq --format=json show p:d.t",
-    "bq query --use_legacy_sql=false 'SELECT 1'",
-    "bq query --nouse_legacy_sql \"SELECT name FROM `p.d.t` LIMIT 5\"".replace("`p.d.t`", "p.d.t"),
-    "bq query --nouse_legacy_sql --dry_run 'select * from d.t'",
-    "bq query 'WITH x AS (SELECT 1 a) SELECT a FROM x'",
+    "bq query --maximum_bytes_billed=1000000000 --use_legacy_sql=false 'SELECT 1'",
+    "bq query --maximum_bytes_billed=10000000000 --nouse_legacy_sql \"SELECT name FROM p.d.t LIMIT 5\"",
+    "bq query --maximum_bytes_billed=1000 --nouse_legacy_sql --dry_run 'select * from d.t'",
+    "bq query --maximum_bytes_billed=1000 'WITH x AS (SELECT 1 a) SELECT a FROM x'",
+    "bq query --maximum_bytes_billed=1000 'SELECT COUNT(1) FROM d.t'",
   ]) {
     test(`read: ${c}`, () => assert.equal(bq(c), "read"));
   }
@@ -193,9 +232,26 @@ describe("bq", () => {
     "bq query 'CREATE TABLE d.t AS SELECT 1'",
     "bq query 'DROP TABLE d.t'",
     "bq query 'MERGE d.t USING d.s ON true WHEN MATCHED THEN DELETE'",
-    "bq query 'SELECT 1; DROP TABLE d.t'",
+    "bq query --maximum_bytes_billed=1000 'SELECT 1; DROP TABLE d.t'",
+    "bq query --service_account=x --maximum_bytes_billed=1000 'SELECT 1'",
+    "bq ls --credential_file=/tmp/c",
+    "bq ls --bigqueryrc=/tmp/rc",
+    "bq query --maximum_bytes_billed=1000 'SELECT \"a --impersonate_service_account=x b\"'",
     "bq query 'EXPORT DATA OPTIONS(uri=\"gs://b/*\") AS SELECT 1'",
     "bq query 'SELECT 1' 'SELECT 2'",
+    "bq query 'SELECT 1'",
+    "bq query --maximum_bytes_billed=10000000001 'SELECT 1'",
+    "bq query --maximum_bytes_billed=0 'SELECT 1'",
+    "bq query --maximum_bytes_billed=abc 'SELECT 1'",
+    "bq query --maximum_bytes_billed 1000 'SELECT 1'",
+    "bq query --maximum_bytes_billed=1000 \"SELECT * FROM EXTERNAL_QUERY('c', 'select 1')\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT * FROM ML.PREDICT(MODEL d.m, TABLE d.t)\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT AI.GENERATE('x')\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT * FROM VECTOR_SEARCH(TABLE d.t, 'e', TABLE d.q)\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT d.my_udf(x) FROM d.t\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT p.d.fn (x) FROM d.t\"",
+    "bq query --maximum_bytes_billed=1000 \"SELECT NEXTVAL('s')\"",
+    "bq query --maximum_bytes_billed=1000 --destination_table=d.t 'SELECT 1'",
     "bq query --destination_table=d.t 'SELECT 1'",
     "bq query --replace 'SELECT 1'",
     "bq query --append_table 'SELECT 1'",

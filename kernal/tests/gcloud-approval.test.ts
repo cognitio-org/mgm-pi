@@ -4,8 +4,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import register, { APPROVAL_REQUEST_EVENT } from "../.pi/extensions/gcloud-approval/index.ts";
-import { decide, isGcloudServer, needsApproval, shown, type Call, type Ways } from "../.pi/extensions/gcloud-approval/hook.ts";
+import { decide, isGated, isGcloudServer, needsApproval, shown, type Call, type Ways } from "../.pi/extensions/gcloud-approval/hook.ts";
 import type { AdminReply, AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { checkConfigFiles, configWarnings } from "../.pi/extensions/gcloud-approval/config-check.ts";
 import { makePi } from "./harness.ts";
 
 const read: Call = { serverName: "gcloud", tool: "run_gcloud_command", args: { project: "projects/p1", command: "gcloud compute instances list" } };
@@ -24,18 +28,53 @@ function transport(kind: "drive" | "laptop", reply: AdminReply = { ok: true, tex
 }
 
 describe("decide", () => {
-  test("a read abstains: no dialog, no call", async () => {
+  test("a read is allowed explicitly: no dialog, no call", async () => {
     const drive = transport("drive");
     let asked = 0;
-    assert.equal(await decide(read, { drive: false, confirm: async () => (asked++, true) }), "abstain");
-    assert.equal(await decide(read, { drive: true, transport: drive.t }), "abstain");
+    assert.equal(await decide(read, { drive: false, confirm: async () => (asked++, true) }), "allow_once");
+    assert.equal(await decide(read, { drive: true, transport: drive.t }), "allow_once");
     assert.equal(asked, 0);
     assert.equal(drive.calls.length, 0);
   });
 
-  test("another server's call is not ours", async () => {
-    assert.equal(needsApproval({ ...write, serverName: "github" }), false);
-    assert.equal(await decide({ ...write, serverName: "github" }, { drive: false }), "abstain");
+  test("another server's other tools are not ours", async () => {
+    const other = { serverName: "github", tool: "create_issue", args: { command: "gcloud compute instances delete vm-1" } };
+    assert.equal(isGated(other), false);
+    assert.equal(needsApproval(other), false);
+    assert.equal(await decide(other, { drive: false }), "abstain");
+  });
+
+  test("the command tools are gated on any server name (a renamed server in a project .mcp.json)", async () => {
+    const renamed = { ...write, serverName: "totally-innocent" };
+    assert.equal(isGated(renamed), true);
+    assert.equal(needsApproval(renamed), true);
+    assert.equal(await decide(renamed, { drive: false }), "deny");
+    assert.equal(await decide({ ...read, serverName: "totally-innocent" }, { drive: false }), "allow_once");
+    assert.equal(isGated({ ...write, serverName: "x", tool: "run_bq_command" }), true);
+  });
+
+  test("Drive: an abort while the card waits withdraws it", async () => {
+    const calls: string[] = [];
+    const ac = new AbortController();
+    const t: AdminTransport = {
+      kind: "drive",
+      async call(op) {
+        calls.push(op);
+        if (op === "gcloud.run") {
+          ac.abort();
+          return { ok: false, error: "cancelled" };
+        }
+        return { ok: true, text: "cancelled" };
+      },
+    };
+    assert.equal(await decide(write, { drive: true, transport: t }, ac.signal), "deny");
+    assert.deepEqual(calls, ["gcloud.run", "gcloud.cancel"]);
+  });
+
+  test("Drive: a plain decline does not call cancel", async () => {
+    const d = transport("drive", { ok: false, error: "the owner declined", needsApproval: true });
+    await decide(write, { drive: true, transport: d.t });
+    assert.deepEqual(d.calls.map((c) => c.op), ["gcloud.run"]);
   });
 
   test("laptop: a write asks with the project and command; yes allows once and is noted", async () => {
@@ -105,9 +144,10 @@ describe("decide", () => {
     }
   });
 
-  test("run_bq_command writes ask; a plain SELECT does not", async () => {
+  test("run_bq_command writes ask; a capped plain SELECT does not", async () => {
     const bq = (command: string): Call => ({ serverName: "gcloud", tool: "run_bq_command", args: { project: "p", command } });
-    assert.equal(await decide(bq("bq query 'SELECT 1'"), { drive: false }), "abstain");
+    assert.equal(await decide(bq("bq query --maximum_bytes_billed=1000 'SELECT 1'"), { drive: false }), "allow_once");
+    assert.equal(await decide(bq("bq query 'SELECT 1'"), { drive: false }), "deny");
     assert.equal(await decide(bq("bq rm -f d.t"), { drive: false }), "deny");
   });
 
@@ -147,12 +187,34 @@ describe("wiring to the adapter's approval event", () => {
     return r.claimed();
   };
 
-  test("a read is left unclaimed", () => {
-    assert.equal(fireWith({ drive: false }, read), undefined);
+  test("a read is claimed and allowed explicitly (so approveTools is only the fallback)", async () => {
+    const h = fireWith({ drive: false }, read);
+    assert.ok(h);
+    assert.equal(await h(), "allow_once");
   });
 
-  test("another server is left unclaimed", () => {
-    assert.equal(fireWith({ drive: false }, { ...write, serverName: "sentry" }), undefined);
+  test("another server's other tools are left unclaimed", () => {
+    assert.equal(fireWith({ drive: false }, { serverName: "sentry", tool: "get_issue", args: {} }), undefined);
+  });
+
+  test("a renamed server with the gcloud tools is claimed", async () => {
+    const h = fireWith({ drive: false }, { ...write, serverName: "docs" });
+    assert.equal(await h!(), "deny");
+  });
+
+  test("when another extension claimed first, it says so loudly", () => {
+    const pi = makePi();
+    const warned: string[] = [];
+    register(pi as any, { ways: () => ({ drive: false }), warn: (m) => warned.push(m) });
+    const err = console.error;
+    console.error = () => {};
+    try {
+      pi.events.emit(APPROVAL_REQUEST_EVENT, { serverName: "gcloud", originalToolName: "run_gcloud_command", args: write.args, claim: () => false });
+    } finally {
+      console.error = err;
+    }
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /another extension claimed/);
   });
 
   test("a write is claimed synchronously and answered by the decision", async () => {
@@ -175,5 +237,43 @@ describe("wiring to the adapter's approval event", () => {
     pi.events.emit(APPROVAL_REQUEST_EVENT, r.req);
     await r.claimed()!();
     assert.equal(seen[0], ctx);
+  });
+});
+
+describe("startup self-check: approveTools on the gcloud server", () => {
+  const warnings = (cfg: unknown) => configWarnings(cfg, "mcp.json");
+
+  test("warns when the gcloud server has no approveTools: true", () => {
+    assert.equal(warnings({ mcpServers: { gcloud: { url: "https://router.kernal.one/gcloud/mcp" } } }).length, 1);
+    assert.equal(warnings({ mcpServers: { gcloud: { approveTools: ["delete_*"] } } }).length, 1);
+    assert.equal(warnings({ mcpServers: { gcloud: { approveTools: false } } }).length, 1);
+  });
+
+  test("a renamed server pointing at the gcloud URL is recognised", () => {
+    assert.equal(warnings({ mcpServers: { docs: { url: "https://router.kernal.one/gcloud/mcp" } } }).length, 1);
+    assert.equal(warnings({ mcpServers: { docs: { url: "https://cloudcli.googleapis.com/mcp" } } }).length, 1);
+  });
+
+  test("quiet with approveTools: true, per server or in settings", () => {
+    assert.deepEqual(warnings({ mcpServers: { gcloud: { approveTools: true } } }), []);
+    assert.deepEqual(warnings({ settings: { approveTools: true }, mcpServers: { gcloud: {} } }), []);
+  });
+
+  test("quiet for other servers and odd input", () => {
+    assert.deepEqual(warnings({ mcpServers: { sentry: { url: "https://x/sentry/mcp" } } }), []);
+    assert.deepEqual(warnings(null), []);
+    assert.deepEqual(warnings({ mcpServers: 3 }), []);
+  });
+
+  test("session_start reads the config files and warns", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gc-"));
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: { gcloud: { url: "https://router.kernal.one/gcloud/mcp" } } }));
+    const pi = makePi();
+    const warned: string[] = [];
+    register(pi as any, { ways: () => ({ drive: false }), warn: (m) => warned.push(m), configDirs: () => ({ agentDir: dir }) });
+    await pi.emit("session_start", {}, {});
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /approveTools/);
+    assert.deepEqual(checkConfigFiles({ agentDir: join(dir, "nope") }), []);
   });
 });

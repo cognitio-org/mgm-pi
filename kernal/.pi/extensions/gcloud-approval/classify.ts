@@ -22,35 +22,59 @@ const MAX_COMMAND = 2000;
 /** Verbs that only read. `list-*` and `describe-*` are matched by prefix below. */
 const READ_VERBS = new Set(["list", "describe", "get", "get-iam-policy", "get-value", "search-all-resources", "search-all-iam-policies", "read"]);
 
-/** Groups that may precede a read verb. A group not here makes the command `write` (it asks). */
-const KNOWN_GROUPS = new Set([
-  "access-context-manager", "ai", "ai-platform", "api-gateway", "apigee", "app", "artifacts", "asset", "assured", "batch", "bigtable", "builds", "certificate-manager", "composer", "compute", "config", "container", "dataflow", "dataproc", "datastore", "deploy", "deployment-manager",
-  "dns", "domains", "endpoints", "eventarc", "filestore", "firebase", "firestore", "functions", "iam", "iap", "kms", "logging", "memcache", "monitoring",
-  "network-management", "networkservices", "notebooks", "organizations", "policy-troubleshoot", "pubsub", "recommender", "redis", "resource-manager",
-  "run", "scheduler", "secrets", "services", "source", "spanner", "sql", "storage", "tasks", "workflows",
-  "projects", "folders", "instances", "instance-groups", "managed", "unmanaged", "disks", "images", "snapshots", "networks", "subnets", "firewall-rules",
-  "forwarding-rules", "addresses", "routers", "routes", "backend-services", "url-maps", "health-checks", "target-pools", "target-http-proxies",
-  "target-https-proxies", "ssl-certificates", "ssl-policies", "operations", "zones", "regions", "machine-types", "accelerator-types", "commitments",
-  "reservations", "resource-policies", "instance-templates", "node-groups", "node-templates", "vpn-gateways", "vpn-tunnels", "interconnects",
-  "clusters", "node-pools", "images", "repositories", "packages", "versions", "tags", "docker", "revisions", "jobs", "executions", "triggers",
-  "worker-pools", "service-accounts", "roles", "keys", "workload-identity-pools", "providers", "policies", "keyrings", "cryptokeys", "locations",
-  "topics", "subscriptions", "snapshots", "schemas", "databases", "backups", "replicas", "flags", "tiers", "users", "buckets", "objects", "logs", "sinks",
-  "metrics", "views", "buckets", "alert-policies", "channels", "dashboards", "uptime", "zones", "records", "managed-zones", "dns-keys", "functions",
-  "services", "environments", "releases", "pipelines", "targets", "workflow", "ancestors", "hmac", "insights", "recommendations", "recommenders",
+/** The first word of a read command: a top-level gcloud group. Not in here: `write` (it asks). */
+const TOP_GROUPS = new Set([
+  "access-context-manager", "ai", "ai-platform", "api-gateway", "apigee", "app", "artifacts", "asset", "assured", "batch", "bigtable", "builds",
+  "certificate-manager", "composer", "compute", "config", "container", "dataflow", "dataproc", "datastore", "deploy", "deployment-manager", "dns",
+  "domains", "endpoints", "eventarc", "filestore", "firebase", "firestore", "folders", "functions", "iam", "iap", "kms", "logging", "memcache",
+  "monitoring", "network-management", "networkservices", "notebooks", "organizations", "policy-troubleshoot", "projects", "pubsub", "recommender",
+  "redis", "resource-manager", "run", "scheduler", "secrets", "services", "source", "spanner", "sql", "storage", "tasks", "workflows",
 ]);
 
-/** Flags that change identity, credentials or arguments, whatever the verb: always ask. */
-const FORBIDDEN_FLAGS = new Set([
-  "--impersonate-service-account",
-  "--account",
-  "--configuration",
-  "--access-token-file",
-  "--credential-file-override",
-  "--flags-file",
-  "--billing-project",
-  "--authorization-token-file",
-  "--token-host",
+/**
+ * Words that may sit between the top-level group and the read verb: resource nouns only. Nothing here
+ * can be a verb or a group that is also a command (`deploy`, `source`, `run`, `app`, `tags`, `flags`
+ * are left out on purpose), so `app deploy versions list` is a `write`.
+ */
+const NOUNS = new Set([
+  "instances", "instance-groups", "managed", "unmanaged", "disks", "images", "snapshots", "networks", "subnets", "firewall-rules", "forwarding-rules",
+  "addresses", "routers", "routes", "backend-services", "url-maps", "health-checks", "target-pools", "target-http-proxies", "target-https-proxies",
+  "ssl-certificates", "ssl-policies", "operations", "zones", "regions", "machine-types", "accelerator-types", "commitments", "reservations",
+  "resource-policies", "instance-templates", "node-groups", "node-templates", "vpn-gateways", "vpn-tunnels", "interconnects", "clusters", "node-pools",
+  "repositories", "packages", "versions", "docker", "revisions", "jobs", "executions", "triggers", "worker-pools", "service-accounts", "roles", "keys",
+  "workload-identity-pools", "providers", "policies", "keyrings", "cryptokeys", "locations", "topics", "subscriptions", "schemas", "databases",
+  "backups", "replicas", "tiers", "users", "buckets", "objects", "logs", "sinks", "metrics", "views", "alert-policies", "channels", "dashboards",
+  "uptime", "records", "managed-zones", "dns-keys", "services", "functions", "environments", "releases", "pipelines", "delivery-pipelines", "targets",
+  "ancestors", "hmac", "insights", "recommendations", "recommenders", "projects", "organizations", "folders",
 ]);
+
+/** Flags that change identity, credentials or arguments, whatever the verb: always ask. Compared with
+ * `_` read as `-`, since bq spells them with underscores. */
+const FORBIDDEN_FLAGS = new Set(
+  [
+    "--impersonate-service-account",
+    "--account",
+    "--configuration",
+    "--access-token-file",
+    "--credential-file-override",
+    "--flags-file",
+    "--billing-project",
+    "--authorization-token-file",
+    "--token-host",
+    // bq
+    "--service-account",
+    "--service-account-credential-file",
+    "--service-account-private-key-file",
+    "--credential-file",
+    "--application-default-credential-file",
+    "--bigqueryrc",
+    "--use-gce-service-account",
+    "--oauth-access-token",
+  ].map((f) => f.replace(/_/g, "-")),
+);
+
+/** The most a `bq query` read may bill (10 GB); the flag is required for a read. */
+const BQ_MAX_BYTES_BILLED = 10_000_000_000;
 
 /** bq flags a plain SELECT may carry (always `--flag=value`, except the bare ones below). */
 const BQ_QUERY_FLAGS = new Set(["--use_legacy_sql", "--format", "--max_rows", "--project_id", "--location", "--maximum_bytes_billed"]);
@@ -64,12 +88,20 @@ const BQ_BARE_FLAGS = new Set(["--headless", "--quiet", "--dry_run", "--nodry_ru
 /** What a SELECT must not contain: DDL, DML, scripting, and exports a query can run. */
 const BQ_WRITE_WORDS = /\b(insert|update|delete|merge|create|drop|alter|truncate|call|execute|export|load|grant|revoke|begin|declare|set|assert|raise|into)\b/i;
 
+/** `name.fn(`, `ml . predict (`: a call through a dotted name. */
+const BQ_DOTTED_CALL = /[A-Za-z_][A-Za-z0-9_-]*\s*\.\s*[A-Za-z_][A-Za-z0-9_]*\s*\(/;
+/** Functions that reach other systems, or change state. */
+const BQ_EFFECT_WORDS = /\b(external_query|vector_search|nextval|ml|ai|text_embedding|session_user|remote_function)\b\s*[.(]|\b(external_query|vector_search|nextval)\b/i;
+
 /**
  * Splits like a shell, but only accepts the plain part: single and double quotes group words, and
  * anything that could start another command or expand (outside quotes `; | & < > ( ) { } * ? ~ !`
  * and newlines; anywhere `$`, backtick, backslash, NUL) makes the whole command unparseable.
  */
 export function tokenize(command: string): string[] | undefined {
+  // Plain printable ASCII and the space only: another whitespace or control character (tab, NBSP,
+  // U+2028, ...) is one thing to us and may be a separator to the server.
+  if (/[^\x20-\x7e]/.test(command)) return undefined;
   const words: string[] = [];
   let cur = "";
   let has = false;
@@ -107,7 +139,7 @@ const flagName = (w: string): string => w.split("=")[0];
 function usesForbiddenFlag(words: string[]): boolean {
   return words.some((w) => {
     if (!w.startsWith("-")) return false;
-    const name = flagName(w);
+    const name = flagName(w).replace(/_/g, "-");
     if (FORBIDDEN_FLAGS.has(name)) return true;
     return name.startsWith("--") && name.length >= 4 && [...FORBIDDEN_FLAGS].some((f) => f.startsWith(name));
   });
@@ -128,7 +160,7 @@ function classifyGcloud(words: string[]): Risk {
   if (path.length === 0) return words.length === 1 && (words[0] === "--version" || words[0] === "--help") ? "read" : "write";
   if (path.length === 1 && (path[0] === "info" || path[0] === "version")) return "read";
   // `storage ls`: the one verb that is not one of the above.
-  const groupsThenVerb = (verbAt: number) => path.slice(0, verbAt).every((g) => KNOWN_GROUPS.has(g));
+  const groupsThenVerb = (verbAt: number) => TOP_GROUPS.has(path[0]) && path.slice(1, verbAt).every((g) => NOUNS.has(g));
   for (let i = 1; i < path.length; i++) {
     const w = path[i];
     if (!isReadVerb(w) && !(w === "ls" && path[i - 1] === "storage")) continue;
@@ -160,10 +192,16 @@ function classifyBq(words: string[]): Risk {
 /** A plain SELECT/WITH: one statement, harmless flags, no DML/DDL/scripting words. */
 function classifyBqQuery(rest: string[]): Risk {
   if (!bqFlagsOk(rest, BQ_QUERY_FLAGS, BQ_BARE_FLAGS)) return "write";
+  // A read must cap what it can bill.
+  const cap = rest.find((w) => w.startsWith("--maximum_bytes_billed="))?.split("=")[1] ?? "";
+  if (!/^\d{1,12}$/.test(cap) || Number(cap) > BQ_MAX_BYTES_BILLED || Number(cap) <= 0) return "write";
   const positional = rest.filter((w) => !w.startsWith("-"));
   if (positional.length !== 1) return "write";
   const sql = positional[0].trim();
   if (sql.includes(";") || !/^(select|with)\b/i.test(sql)) return "write";
+  // No function call through a dotted name (UDFs, ML.*, AI.*, VECTOR_SEARCH, table functions), nor the
+  // functions that reach other systems or have side effects.
+  if (BQ_DOTTED_CALL.test(sql) || BQ_EFFECT_WORDS.test(sql)) return "write";
   return BQ_WRITE_WORDS.test(sql) ? "write" : "read";
 }
 
@@ -178,6 +216,9 @@ export function classifyCommand(tool: string, command: unknown): Risk {
   if (!text || text.length > MAX_COMMAND) return "write";
   const words = tokenize(text);
   if (!words || words.length === 0) return "write";
+  // Flags are looked for in every whitespace-separated piece, the raw string's and each quoted word's,
+  // so `"a --impersonate-service-account=x b"` is seen however the server splits it.
+  if (usesForbiddenFlag([...text.split(/\s+/), ...words.flatMap((w) => w.split(/\s+/))])) return "write";
   // `gcloud ...` / `bq ...` prefix is optional; the other tool's name means a mismatch: ask.
   const own = tool === "run_gcloud_command" ? "gcloud" : "bq";
   const other = own === "gcloud" ? "bq" : "gcloud";

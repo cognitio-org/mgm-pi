@@ -7,8 +7,8 @@ import { seedGuru } from "./helpers.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { DriveAdmin } from "../src/admin/drive.ts";
 import { decideApproval } from "../src/admin/approvals.ts";
-import { runAdminOp } from "../src/admin/ops.ts";
-import { gcloudArgs } from "../src/admin/gcloud-ops.ts";
+import { registerAdminOp, runAdminOp } from "../src/admin/ops.ts";
+import { NOTE_LIMIT_PER_HOUR, gcloudArgs } from "../src/admin/gcloud-ops.ts";
 
 const models = { list: async () => [] };
 const fast = { pollMs: 5, timeoutMs: 2_000 };
@@ -90,23 +90,44 @@ describe("gcloud.run from a Drive", () => {
 });
 
 describe("gcloud.note from a laptop", () => {
-  const ctx = (store: MemoryStore) => ({ store, models });
-  const dongle = { email: OWNER, via: "token" as const, operator: false };
+  const ctx = (store: MemoryStore, now?: () => number) => ({ store, models, now });
+  const dongle = { email: OWNER, via: "token" as const, operator: false, listedOperator: true };
 
-  test("records an allowed decision as approved", async () => {
+  test("is self-reported: never approved, even when the caller says confirmed", async () => {
     const store = new MemoryStore();
     const r = await runAdminOp(ctx(store), { ...dongle, approved: true }, "gcloud.note", { ...ARGS, decision: "allowed" });
     assert.deepEqual(r, { ok: true, text: "noted" });
     const [row] = await store.adminAudit.listRecent(1);
-    assert.deepEqual([row.via, row.ok, row.approved], ["token", true, true]);
+    assert.deepEqual([row.via, row.ok, row.approved], ["token", true, false]);
+    assert.match(row.detail ?? "", /^self-reported: allowed/);
     assert.match(row.target ?? "", /instances delete vm-1/);
   });
 
-  test("records a denied decision as a failure", async () => {
+  test("a denied decision is a failure row, also self-reported", async () => {
     const store = new MemoryStore();
     await runAdminOp(ctx(store), dongle, "gcloud.note", { ...ARGS, decision: "denied" });
     const [row] = await store.adminAudit.listRecent(1);
     assert.deepEqual([row.ok, row.approved], [false, false]);
+    assert.match(row.detail ?? "", /^self-reported: denied/);
+  });
+
+  test("needs a listed operator", async () => {
+    const store = new MemoryStore();
+    const r = await runAdminOp(ctx(store), { ...dongle, listedOperator: false }, "gcloud.note", { ...ARGS, decision: "allowed" });
+    assert.deepEqual(r, { ok: false, error: "sysop rights required" });
+  });
+
+  test("is rate limited per user", async () => {
+    const store = new MemoryStore();
+    const caller = { ...dongle, email: "busy@example.com" };
+    let t = 1_000_000;
+    for (let i = 0; i < NOTE_LIMIT_PER_HOUR; i++) {
+      assert.equal((await runAdminOp(ctx(store, () => t), caller, "gcloud.note", { ...ARGS, decision: "allowed" })).ok, true);
+    }
+    const over = await runAdminOp(ctx(store, () => t), caller, "gcloud.note", { ...ARGS, decision: "allowed" });
+    assert.equal(over.ok, false);
+    t += 3_600_001;
+    assert.equal((await runAdminOp(ctx(store, () => t), caller, "gcloud.note", { ...ARGS, decision: "allowed" })).ok, true);
   });
 
   test("a Drive cannot write its own decisions", async () => {
@@ -114,4 +135,31 @@ describe("gcloud.note from a laptop", () => {
     const r = await runAdminOp(ctx(store), { email: OWNER, via: "drive", operator: true, capabilities: ["admin"] }, "gcloud.note", { ...ARGS, decision: "allowed" });
     assert.equal(r.ok, false);
   });
+
+  test("registration: auditNote must be a laptop admin write; other laptop ops stay refused", () => {
+    assert.throws(() => registerAdminOp("zz.note", { kind: "read", capability: "admin", laptop: true, auditNote: true, run: async () => ({ ok: true, text: "" }) } as never));
+    assert.throws(() => registerAdminOp("zz.other", { kind: "write", capability: "admin", laptop: true, run: async () => ({ ok: true, text: "" }) } as never));
+  });
 });
+
+describe("gcloud.cancel", () => {
+  test("withdraws the pending card; the waiting call ends as an audited refusal", async () => {
+    const { store, admin } = await fixture();
+    const waiting = admin.handle("r1", "gcloud.run", ARGS);
+    await pending(store);
+    assert.deepEqual(await admin.handle("r1", "gcloud.cancel", {}), { ok: true, text: "cancelled" });
+    const r = await waiting;
+    assert.equal(r.ok, false);
+    assert.equal(await store.adminApprovals.get("r1"), null);
+    const rows = await store.adminAudit.listRecent(5);
+    assert.ok(rows.some((x) => x.op === "gcloud.run" && !x.ok && /instances delete vm-1/.test(x.target ?? "")));
+  });
+
+  test("with nothing pending it says so, and a laptop can't use it", async () => {
+    const { admin, store } = await fixture();
+    assert.deepEqual(await admin.handle("r1", "gcloud.cancel", {}), { ok: true, text: "nothing pending" });
+    const r = await runAdminOp({ store, models }, { email: OWNER, via: "token", operator: false }, "gcloud.cancel", {});
+    assert.equal(r.ok, false);
+  });
+});
+

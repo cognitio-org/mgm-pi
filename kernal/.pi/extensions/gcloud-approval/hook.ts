@@ -41,9 +41,21 @@ export function isGcloudServer(name: string): boolean {
   return name === GCLOUD_SERVER || name.endsWith(`__${GCLOUD_SERVER}`);
 }
 
+/** The gcloud server's two command tools, whatever the MCP server is called. */
+export const GCLOUD_TOOLS: ReadonlySet<string> = new Set(["run_gcloud_command", "run_bq_command"]);
+
+/**
+ * Whether this call is ours to judge: the gcloud server by name, or either command tool on any
+ * server. A cloned repo's `.mcp.json` can name a server anything and point it at the same router
+ * URL, so the tool name counts too.
+ */
+export function isGated(call: Call): boolean {
+  return isGcloudServer(call.serverName) || GCLOUD_TOOLS.has(call.tool);
+}
+
 /** Whether this call needs an answer from a person before it runs. */
 export function needsApproval(call: Call): boolean {
-  if (!isGcloudServer(call.serverName)) return false;
+  if (!isGated(call)) return false;
   return classifyCommand(call.tool, call.args?.command) === "write";
 }
 
@@ -74,7 +86,10 @@ async function note(transport: AdminTransport | undefined, call: Call, allowed: 
 }
 
 export async function decide(call: Call, ways: Ways, signal?: AbortSignal): Promise<Decision> {
-  if (!needsApproval(call)) return "abstain";
+  if (!isGated(call)) return "abstain";
+  // A read is allowed explicitly, so the adapter's own `approveTools` gate (set on the server) is the
+  // fallback only when this extension is absent or broken.
+  if (!needsApproval(call)) return "allow_once";
   const { project, command } = fields(call);
 
   if (ways.drive) {
@@ -85,6 +100,14 @@ export async function decide(call: Call, ways: Ways, signal?: AbortSignal): Prom
     }
     const reply = await ways.transport.call("gcloud.run", fields(call), { signal });
     if (reply.ok) return "allow_once";
+    // Aborted while the card waited: withdraw it, so the owner isn't left a card for a call that is gone.
+    if (signal?.aborted) {
+      try {
+        await ways.transport.call("gcloud.cancel", {}, { signal: AbortSignal.timeout(NOTE_TIMEOUT_MS) });
+      } catch {
+        // The card expires by itself in 10 minutes.
+      }
+    }
     ways.notify?.(`gcloud: denied (${reply.error})`);
     return "deny";
   }

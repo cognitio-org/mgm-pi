@@ -615,6 +615,37 @@ export interface GithubRepoDetail extends GithubRepoSummary {
   contributions: { weeks: number[] } | { pending: true } | null;
 }
 
+/** #499: one changed file. A/M/D/R/C, or U for an unmerged (conflicted) file. Mirrors
+ * packages/api/src/session-changes.ts. */
+export interface ChangedFile {
+  path: string;
+  oldPath?: string;
+  status: "A" | "M" | "D" | "R" | "C" | "U";
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+  /** The file's hunks, from its first `@@`. Absent for binary files, pure renames, and patches over
+   * the size caps (then `patchOmitted`). */
+  patch?: string;
+  patchOmitted?: boolean;
+}
+
+/** #499: GET /api/sessions/:id/changes. */
+export interface SessionChanges {
+  source: "drive" | "github" | "none";
+  /** For `none`: no-repository, no-branch, not-found (nothing pushed), not-installed, ... */
+  reason?: string;
+  base: string | null;
+  branch: string | null;
+  head?: string;
+  ahead?: number;
+  behind?: number;
+  /** The last checkpoint that landed on GitHub. */
+  pushed?: { sha: string; at?: string };
+  truncated: boolean;
+  files: ChangedFile[];
+}
+
 export interface GithubSessionStatus {
   connected: boolean;
   reason?: string;
@@ -943,6 +974,11 @@ export const api = {
 
   diff(id: string): Promise<{ base: string; patch: string }> {
     return request(`/api/sessions/${id}/diff`);
+  },
+
+  /** #499: changed files vs the base branch, from the live Drive or (asleep) the pushed branch. */
+  changes(id: string): Promise<SessionChanges> {
+    return request(`/api/sessions/${encodeURIComponent(id)}/changes`);
   },
 
   previews(sessionId: string): Promise<PreviewsState> {

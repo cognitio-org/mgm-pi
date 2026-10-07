@@ -336,7 +336,7 @@
 }
 
 .pop-menu-list > a,
-.pop-menu-list > button {
+.pop-menu-list > button:not(.menu-item) {
   grid-template-columns: 1fr;
 }
 
@@ -1420,7 +1420,9 @@
 }
 
 .session-shell.is-phone .composer-mode-compact {
-  min-width: 6.5rem;
+  flex: none;
+  width: 5.75rem;
+  max-width: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

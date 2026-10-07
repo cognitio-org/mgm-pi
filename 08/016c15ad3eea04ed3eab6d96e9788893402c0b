@@ -1,0 +1,73 @@
+outfitter/packages/api/src/routes/sessions.ts
+  s_fe1c4322a69a90::t_dd33de91beefd6 639
+outfitter/packages/api/src/github-app.ts
+  s_fe1c4322a69a90::t_225c909aa87028 48-52,57-59,63
+  s_fe1c4322a69a90::t_b29693aea5de15 74-75,77-80
+  s_fe1c4322a69a90::t_5ecd71edeb218d 173-174,389,396,477
+outfitter/packages/api/src/github-broker.ts
+  s_fe1c4322a69a90::t_7463ffeeeae4de 1682
+  s_fe1c4322a69a90::t_6ff7a59aef8c10 102,884,936-939
+  s_fe1c4322a69a90::t_0897f8ccb457fb 1152,1293
+  s_fe1c4322a69a90::t_c1b9eed053b5db 9
+  s_fe1c4322a69a90::t_b48fb6bb7dc03f 275-293,295,298-299,307,314-315,321,324,326-327,334,336,338
+  s_fe1c4322a69a90::t_6e171be572228c 1640-1646
+  s_fe1c4322a69a90::t_4c9dffbcdeb609 2000-2004,2008-2011,2013-2015,2018-2029,2033-2035,2037-2038,2042-2053
+  s_fe1c4322a69a90::t_c87e10f1d055a4 1108,1119,1289
+  s_fe1c4322a69a90::t_c1b71737f0a380 1957-1991
+  s_fe1c4322a69a90::t_66724b9a840084 379-578,581-824
+  s_fe1c4322a69a90::t_830479873e1626 2067
+  s_fe1c4322a69a90::t_b61664d8a9b4d2 74-80
+  s_fe1c4322a69a90::t_69f20934ec7fdf 579-580,1618-1624
+  s_fe1c4322a69a90::t_2d9865a081474f 1572
+  s_fe1c4322a69a90::t_a663225d056988 1071
+  s_fe1c4322a69a90::t_de6d0a2dd6b0ed 826-830,832,841-845
+  s_fe1c4322a69a90::t_da1806a0052021 1548-1571,1573-1590,1593-1617,1625-1639,1647-1681,1683-1700
+  s_fe1c4322a69a90::t_123cc72cb4fe9d 1591-1592
+  s_fe1c4322a69a90::t_28f04c4679336a 2077
+outfitter/packages/api/src/routes/context.ts
+  s_fe1c4322a69a90::t_dd33de91beefd6 22
+  s_fe1c4322a69a90::t_25396749caec36 80-82
+outfitter/packages/api/test/github-session-pr.test.ts
+  s_fe1c4322a69a90::t_ccfa2eb90aab96 1-217,222-229,233,235-514
+  s_fe1c4322a69a90::t_574d4c610da544 218-221
+  s_fe1c4322a69a90::t_c6b42c4a212e57 230-232,234
+outfitter/packages/api/src/secrets.ts
+  s_fe1c4322a69a90::t_17b6ee9c7c82bd 13,250
+  s_fe1c4322a69a90::t_0dda2b0fc963ff 122-125
+  s_fe1c4322a69a90::t_faeee44908041a 48-55
+  s_fe1c4322a69a90::t_e59d9e25e79531 203-210
+outfitter/packages/web/test/client.test.ts
+  s_fe1c4322a69a90::t_a8dfc5e6fdacb4 204-243
+outfitter/packages/api/test/github-app.test.ts
+  s_fe1c4322a69a90::t_f828dbc1ccf45b 10
+  s_fe1c4322a69a90::t_3d9b6a6ace7449 586-605
+outfitter/packages/web/src/api/client.ts
+  s_fe1c4322a69a90::t_9a0a0d6cbdde26 468,470-471,473,475-476,487,494,502
+  s_fe1c4322a69a90::t_b0d207d5790590 479-483
+  s_fe1c4322a69a90::t_ed1f367ef7f03c 610-698
+  s_fe1c4322a69a90::t_135b33dbfccae6 435-439
+  s_fe1c4322a69a90::t_27b354704621aa 988-1042
+outfitter/packages/api/src/github-catalog.ts
+  s_fe1c4322a69a90::t_836dd66c1a6caf 474-482
+outfitter/packages/api/src/server.ts
+  s_fe1c4322a69a90::t_026c105ed05efa 356
+outfitter/packages/api/src/routes/github.ts
+  s_fe1c4322a69a90::t_81273962fd74b9 8-9,11
+  s_fe1c4322a69a90::t_1ae3ba03fa4207 45-47,51-56,58-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "08016c15ad3eea04ed3eab6d96e9788893402c0b",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,18 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client.ts";
-import type { GroupedEntry } from "../lib/thinking.ts";
-import { groupBeats } from "../lib/beats.ts";
+import type { PassView } from "../lib/flow.ts";
 import { BROWSER_CAPTURE_TYPE, PLAYWRIGHT_CHECK_TYPE, failedAttemptCopy } from "../lib/entry-view.ts";
 import { GEMINI_EMPTY_STOP_TYPE } from "../lib/gemini-empty-stop.ts";
 import { apiErrorKind, noticeContent, systemErrorContent } from "../lib/retro-errors.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
 import type { ApiErrorState } from "./SystemErrorDialog.tsx";
 import { Markdown } from "./Markdown.tsx";
-import { BeatView } from "./TranscriptRail.tsx";
 import { ImageViewer } from "./ImageViewer.tsx";
 
-// Passthrough rows (system, compaction, browser captures, …) stay full-width lines.
-// User, assistant, thinking, and tool views are one beat: see lib/beats.ts and TranscriptRail.tsx.
+// Passthrough rows (system, compaction, browser captures, …) stay full-width lines. Prompts, prose,
+// thoughts and tool calls are TranscriptFlow.tsx's (lib/flow.ts).
 
 function captureErrorCopy(error: ApiErrorState): { headline: string; message: string } {
   const kind = apiErrorKind(error.status);
@@ -96,23 +94,11 @@ function BrowserCapture({
 export function EntryItem({
   view,
   sessionId,
-  defaultThinkingExpanded,
 }: {
-  view: GroupedEntry;
+  view: PassView;
   sessionId?: string;
-  defaultThinkingExpanded?: boolean;
 }) {
   switch (view.kind) {
-    case "thinking-group":
-    case "user":
-    case "assistant-text":
-    case "tool-call":
-    case "tool-result": {
-      const beat = groupBeats([view])[0];
-      return beat && beat.kind !== "passthrough" ? (
-        <BeatView beat={beat} defaultThinkingExpanded={defaultThinkingExpanded} />
-      ) : null;
-    }
     case "system":
       return (
         <div className="entry system boot-line">

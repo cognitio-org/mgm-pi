@@ -93,8 +93,41 @@ export interface Session {
   /** #208: set by DELETE /api/sessions/:id when it claims the session, just before erasing it.
    * Restore refuses a session that has it, so a restore can't race a format. */
   formattingAt?: string;
+  /** #503: Auto-fix CI. On: when a check on the session's open pull request fails, Outfitter sends
+   * the agent one message with the failing checks' log tails (autofix.ts). Absent: off. */
+  autofixCi?: boolean;
+  /** #503: the watcher's bookkeeping, changed only through casAutofix / setAutofixCi. */
+  autofix?: AutofixState;
   createdAt: string;
   updatedAt: string;
+}
+
+/** #503: Auto-fix CI's state on a session. Every write bumps `rev` and is conditional on the rev it
+ * read (SessionsCollection.casAutofix), so of several API instances only one polls or sends. */
+export interface AutofixState {
+  rev: number;
+  /** When an instance last claimed this session's poll. */
+  polledAt?: string;
+  /** The pull request head the last message was sent for, and when. */
+  lastSha?: string;
+  lastAt?: string;
+  lastPr?: number;
+  lastChecks?: string[];
+  /** When messages were sent, oldest first; only the last AUTOFIX_MAX_PER_DAY are kept. */
+  sends?: string[];
+  /** A send was refused for the daily cap: when, and for which head. */
+  cappedAt?: string;
+  cappedSha?: string;
+  /** When the next poll is due (the back-off: longer unless a failure is settling). */
+  nextPollAt?: string;
+  /** When the watcher first saw this head fail (the settle cutoff for a check with no times). */
+  failSeen?: { sha: string; at: string };
+  /** A message whose insert failed, kept so the retry doesn't refetch logs. */
+  draft?: { sha: string; text: string };
+  /** The daily cap's run of consecutive (UTC) days. */
+  capDays?: { last: string; count: number };
+  /** Set when the watcher turned the switch off itself (the cap on too many days running). */
+  offNotice?: string;
 }
 
 /** A pi session entry, exactly as pi writes it to JSONL (message, model_change, compaction, custom...). */
@@ -837,6 +870,19 @@ export interface SessionsCollection {
   releaseFormatClaim(id: string): Promise<void>;
   /** #208: removes the session document itself. false if there was none. */
   delete(id: string): Promise<boolean>;
+  /** #503: turns Auto-fix CI on or off. Bumps autofix.rev (so a watcher mid-poll can't send after
+   * an off). Turning it on clears the daily cap, its day streak, the turned-off notice and the poll
+   * back-off, and with `nowIso` also moves updatedAt (so the 7-day activity filter includes it).
+   * null if the session doesn't exist. */
+  setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null>;
+  /** #503: how many sessions of this owner have Auto-fix on and aren't archived. */
+  countAutofixForOwner(ownerEmail: string): Promise<number>;
+  /** #503: replaces `autofix` with `next` (whose rev must be `expectedRev + 1`) only if the stored
+   * rev is still `expectedRev` (0: none stored yet), Auto-fix is on and the session isn't archived.
+   * false when another writer got there first. */
+  casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean>;
+  /** #503: sessions with Auto-fix on, not archived, with a repository and branch, updated since. */
+  listAutofix(updatedSinceIso: string): Promise<Session[]>;
 }
 
 /** #208: a formatted (deleted) session's id, kept so teleport import can't bring it back. */

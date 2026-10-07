@@ -73,6 +73,24 @@ export interface LastPush {
   pushed: boolean;
 }
 
+/** #503: GET /api/sessions/:id's `autofix` (packages/api/src/autofix.ts's AutofixView). */
+export interface AutofixState {
+  on: boolean;
+  /** The pull request head the last Auto-fix message was sent for, and when (ISO). */
+  lastSha?: string;
+  lastAt?: string;
+  lastPr?: number;
+  lastChecks?: string[];
+  /** Paused after 3 messages in 24 hours; `notice` says so, `resumesAt` is when it resumes by
+   * itself. Turning it on again (setAutofix(id, true)) resumes at once. */
+  capped?: boolean;
+  /** The pause notice, or (with `on: false`) "Auto-fix turned itself off after 3 days of failing CI." */
+  notice?: string;
+  resumesAt?: string;
+  /** An A2A task's session: Auto-fix isn't available (turning it on is a 409 autofix-a2a). */
+  a2a?: boolean;
+}
+
 export interface SessionDetail {
   id: string;
   name?: string;
@@ -124,6 +142,9 @@ export interface SessionDetail {
   /** When heldMail > 0: "Deploy mismatch: messages held until the service is redeployed", or
    * "Messages held: <reason>. Press Retry once that's fixed." for a run failure (#172). */
   mailNotice?: string;
+  /** #503 Auto-fix CI: when on, a failed check on the floppy's pull request is sent to the agent. */
+  autofixCi?: boolean;
+  autofix?: AutofixState;
   /** Cloud GitHub broker state. Never includes a token. */
   github?: {
     repo: string | null;
@@ -615,6 +636,37 @@ export interface GithubRepoDetail extends GithubRepoSummary {
   contributions: { weeks: number[] } | { pending: true } | null;
 }
 
+/** #499: one changed file. A/M/D/R/C, or U for an unmerged (conflicted) file. Mirrors
+ * packages/api/src/session-changes.ts. */
+export interface ChangedFile {
+  path: string;
+  oldPath?: string;
+  status: "A" | "M" | "D" | "R" | "C" | "U";
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+  /** The file's hunks, from its first `@@`. Absent for binary files, pure renames, and patches over
+   * the size caps (then `patchOmitted`). */
+  patch?: string;
+  patchOmitted?: boolean;
+}
+
+/** #499: GET /api/sessions/:id/changes. */
+export interface SessionChanges {
+  source: "drive" | "github" | "none";
+  /** For `none`: no-repository, no-branch, not-found (nothing pushed), not-installed, ... */
+  reason?: string;
+  base: string | null;
+  branch: string | null;
+  head?: string;
+  ahead?: number;
+  behind?: number;
+  /** The last checkpoint that landed on GitHub. */
+  pushed?: { sha: string; at?: string };
+  truncated: boolean;
+  files: ChangedFile[];
+}
+
 export interface GithubSessionStatus {
   connected: boolean;
   reason?: string;
@@ -894,6 +946,13 @@ export const api = {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
   },
 
+  /** #503 Auto-fix CI on or off (owner or sysop). Turning it on is a 409 for an archived or
+   * repo-less floppy, `code: "autofix-a2a"` for an A2A task's, and `code: "autofix-limit"` past 10
+   * floppies per owner. */
+  setAutofix(id: string, on: boolean): Promise<{ autofixCi: boolean; autofix: AutofixState }> {
+    return request(`/api/sessions/${id}/autofix`, { method: "PUT", body: JSON.stringify({ on }) });
+  },
+
   /** Switches the floppy's model, live when a Drive is going; null copies the tape's current model. */
   setSessionModel(id: string, model: string | null): Promise<ModelSwitch> {
     return request(`/api/sessions/${id}/model`, { method: "PUT", body: JSON.stringify({ model }) });
@@ -943,6 +1002,11 @@ export const api = {
 
   diff(id: string): Promise<{ base: string; patch: string }> {
     return request(`/api/sessions/${id}/diff`);
+  },
+
+  /** #499: changed files vs the base branch, from the live Drive or (asleep) the pushed branch. */
+  changes(id: string): Promise<SessionChanges> {
+    return request(`/api/sessions/${encodeURIComponent(id)}/changes`);
   },
 
   previews(sessionId: string): Promise<PreviewsState> {

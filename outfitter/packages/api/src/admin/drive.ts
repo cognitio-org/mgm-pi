@@ -24,6 +24,7 @@ import {
   CARD_FIELDS,
   adminOp,
   approvalNeeded,
+  auditId,
   capabilityOff,
   resolveTarget,
   runAdminOp,
@@ -32,6 +33,7 @@ import {
   type AdminResult,
 } from "./ops.ts";
 import { clip } from "./render.ts";
+import { gcloudArgs, gcloudTarget } from "./gcloud-ops.ts";
 
 export interface DriveAdminDeps {
   store: Store;
@@ -147,6 +149,29 @@ export class DriveAdmin {
     return result;
   }
 
+  /** GA-4: a gcloud command the owner declined or never answered is audited too; no op ran. */
+  private async auditRefusal(caller: AdminCaller, op: string, args: Record<string, unknown>, why: string): Promise<void> {
+    if (op !== "gcloud.run") return;
+    const a = gcloudArgs(args);
+    try {
+      await this.deps.store.adminAudit.insert({
+        id: auditId(Date.now()),
+        at: new Date().toISOString(),
+        actor: caller.email,
+        via: "drive",
+        sessionId: caller.sessionId,
+        runId: caller.runId,
+        op,
+        target: "error" in a ? undefined : gcloudTarget(a),
+        ok: false,
+        error: why,
+        approved: false,
+      });
+    } catch (err) {
+      this.deps.log?.(`admin audit insert failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async run(runId: string, op: unknown, rawArgs: unknown): Promise<AdminResult> {
     const { store } = this.deps;
     const first = await this.context(runId, op);
@@ -176,6 +201,7 @@ export class DriveAdmin {
         "run ended": "the run ended before the owner answered",
         superseded: "the approval was replaced before the owner answered",
       }[outcome.reason];
+      await this.auditRefusal(first.caller, String(op), args, why);
       return { ok: false, error: why, needsApproval: true };
     }
     // The wait can be long: act with the tape and rights as they are now, not as they were.

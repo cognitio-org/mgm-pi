@@ -82,10 +82,13 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 #    built for other platforms (open-codebase-index ships all six in one package, ~250 MB).
 (cd "$STAGE/.pi/npm" && npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
 # pi-mcp-adapter 2.37.0 treats a stored refresh token as already signed in, so explicit
-# /mcp-auth never opens the browser. npm ci replaces this file; reapply until the pin moves.
-MCP_REAUTH_FLOW="$STAGE/.pi/npm/node_modules/pi-mcp-adapter/mcp-auth-flow.ts"
-if ! grep -q 'forceReauthorization: options.forceReauthorization === true' "$MCP_REAUTH_FLOW"; then
-  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+# /mcp-auth never opens the browser, and it reuses a client registered for an earlier callback
+# port. npm ci replaces these files; reapply until the pin moves.
+# Skipped only when the whole patch reverses cleanly (already applied). A partly patched stage
+# fails --forward and stops the build rather than shipping half a fix.
+MCP_REAUTH_PATCH="$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+if ! patch -d "$STAGE/.pi/npm/node_modules" -p1 -R --dry-run --batch --fuzz=0 -s < "$MCP_REAUTH_PATCH" >/dev/null 2>&1; then
+  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch --forward --fuzz=0 < "$MCP_REAUTH_PATCH"
 fi
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;

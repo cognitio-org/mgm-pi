@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, type UIEvent } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
+import { useContext, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, ApiError, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
+import { PHONE_QUERY, WIDE_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
+import { canBreakTurn, escBreaks } from "../lib/break-keys.ts";
+import { AppNavContext, AppVersionContext } from "../lib/nav.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
-import { groupBeats, liveThinkingItem, railThinkingText } from "../lib/beats.ts";
+import { STREAMED_THOUGHT_ID, buildFlow, lastVsCodeToolId, liveThinkingId, runningTool, thinkingSeconds } from "../lib/flow.ts";
 import { isThoughtBubbleEnabled, setThoughtBubbleEnabled } from "../lib/thought-bubble.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
@@ -18,37 +21,50 @@ import {
 import { sessionLamp } from "../lib/session-lamp.ts";
 import { githubCluster, looseRepoClause } from "../lib/session-facts.ts";
 import { toApiErrorState } from "../lib/api-error.ts";
-import { EntryItem } from "../components/EntryItem.tsx";
-import { BeatView, StreamedThought, YouMark, beatOpensVsCode } from "../components/TranscriptRail.tsx";
-import { ThoughtBubbleToggle } from "../components/ThoughtBubbleToggle.tsx";
+import { formatElapsed, formatTokens, toolVerb, turnOutputTokens, turnStartedAt } from "../lib/live-status.ts";
+import {
+  loadDiskBoxOpen,
+  loadPaneOpen,
+  loadScannerColour,
+  saveDiskBoxOpen,
+  savePaneOpen,
+  saveScannerColour,
+  type ScannerColour,
+} from "../lib/session-prefs.ts";
+import { ThinkingRow, TranscriptFlow, UserBlock } from "../components/TranscriptFlow.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
-import { GithubChip } from "../components/GithubChip.tsx";
-import { GithubStatus } from "../components/GithubStatus.tsx";
+import { ChangesFullView, ChangesPane } from "../components/ChangesPane.tsx";
+import { CreatePrDialog } from "../components/CreatePrDialog.tsx";
+import { GitChips, GitStrip, type GitChipAction } from "../components/GitChips.tsx";
+import { useSessionGit } from "../hooks/useSessionGit.ts";
+import { useDiffNotes } from "../hooks/useDiffNotes.ts";
 import { PreviewChips } from "../components/PreviewChips.tsx";
 import { IdeChip } from "../components/IdeChip.tsx";
 import { IdeProvider } from "../components/IdeProvider.tsx";
-import { StartupTime } from "../components/StartupTime.tsx";
-import { NerdOutPanel } from "../components/NerdOutPanel.tsx";
 import { TransportDot } from "../components/TransportDot.tsx";
 import { UiRequestPanel } from "../components/UiRequestPanel.tsx";
 import { Working } from "../components/Working.tsx";
 import { NotFoundError } from "../components/NotFoundError.tsx";
 import { SystemErrorDialog, type ApiErrorState } from "../components/SystemErrorDialog.tsx";
 import { DeviceNotPresent } from "../components/DeviceNotPresent.tsx";
+import { DiskBoxSidebar } from "../components/DiskBoxSidebar.tsx";
+import { KnightRiderScanner } from "../components/KnightRiderScanner.tsx";
+import { PopMenu } from "../components/PopMenu.tsx";
+import { SessionDetails } from "../components/SessionDetails.tsx";
+import { SessionMenu } from "../components/SessionMenu.tsx";
+import { SessionSheet } from "../components/SessionSheet.tsx";
+import { SoundToggle } from "../components/SoundToggle.tsx";
+import { ThemeToggle } from "../components/ThemeToggle.tsx";
+import { BackIcon, ContextRing, MoreIcon, PaneIcon, SideIcon } from "../components/SessionIcons.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
-import { floppyActions, transport, transportLabel } from "../lib/vocabulary.ts";
+import { floppyActions, vocabulary } from "../lib/vocabulary.ts";
 import { FormatFloppyDialog } from "../components/FormatFloppyDialog.tsx";
 import { SwitchModelDialog } from "../components/SwitchModelDialog.tsx";
 import { deriveSessionActivity, nextSendAnchor, notePendingRunState, type PendingSend } from "../lib/send-status.ts";
 import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 import { teleportCommand } from "../lib/webmcp.ts";
-import {
-  HtmlPreviewAccessContext,
-  beatEntryId,
-  previewAccessByEntry,
-  previewAccessFor,
-} from "../lib/html-preview-access.ts";
+import { previewAccessByEntry, previewAccessFor } from "../lib/html-preview-access.ts";
 
 type PendingAction = "abort" | "stop" | "wake" | null;
 
@@ -56,6 +72,23 @@ type PendingAction = "abort" | "stop" | "wake" | null;
  * READY. -- long enough to read, short enough that it doesn't linger past its relevance. */
 const OUTCOME_FLASH_MS = 3000;
 
+/** How long a "Copied" note stays in the dock. */
+const TOAST_MS = 2000;
+
+/** The right pane's tabs (#502: Changes first). */
+const PANE_TABS = [
+  { id: "changes", label: "Changes" },
+  { id: "details", label: "Details" },
+] as const;
+type PaneTab = (typeof PANE_TABS)[number]["id"];
+
+/**
+ * A floppy's page (#498, docs/design/sessions-redesign-demo.html): the Disk Box down the left, the
+ * conversation in the middle under a one-line header, and a Details pane on the right that opens
+ * with ◫. The transcript flows without boxes; the dock under it holds the live status line, any
+ * notes, a waiting question, and the composer. On a phone the floppy fills the screen, with a back
+ * arrow to the Disk Box and the menu and details in a bottom sheet.
+ */
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const sessionId = id ?? "";
@@ -67,8 +100,8 @@ export function SessionPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
-  const [copied, setCopied] = useState(false);
   const [copiedGuruId, setCopiedGuruId] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [models, setModels] = useState<ModelRow[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [transportOutcome, setTransportOutcome] = useState<TransportOutcome | null>(null);
@@ -84,14 +117,12 @@ export function SessionPage() {
     agentSeenAt,
     piActiveAt,
     liveThought: streamedThought,
+    lastPush,
   } = useSessionStream(sessionId, session?.id === sessionId ? session.lastPush : undefined);
   const { providers } = useProviders();
+  const phone = useMediaQuery(PHONE_QUERY);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  // The status line under the title bar hides once the person scrolls. The jump to the
-  // latest entry is not that scroll -- the facts stay up until they move.
-  const [compact, setCompact] = useState(false);
-  // Scroll position the page jumped to on its own. Events that only report that spot
-  // are not the person scrolling, so they must not tuck the status line away.
+  // Scroll position the page jumped to on its own, so its scroll event isn't taken for the reader's.
   const landedAt = useRef<number | null>(null);
   // #285: follow a growing thought only when the reader was already at the bottom.
   const followThought = useRef(true);
@@ -104,20 +135,32 @@ export function SessionPage() {
   const [now, setNow] = useState(() => Date.now());
   const chromePlace = useChromeCompanion(sessionId);
   const [splitTargets, setSplitTargets] = useState<{ id: string; name?: string }[]>([]);
-  const [splitTarget, setSplitTarget] = useState("");
-  // #198: the "nerd out" panel, closed on every visit so it never crowds the transcript. Held as
-  // the session it was opened on, so moving to another session closes it in the same render --
-  // it never renders, or fetches, with one session's id and the other's run.
-  const [nerdOutFor, setNerdOutFor] = useState<string | null>(null);
-  const nerdOut = nerdOutFor === sessionId;
+  // #498: the layout's own choices, remembered on this browser.
+  const [diskBoxOpen, setDiskBoxOpen] = useState(() => loadDiskBoxOpen());
+  // #498 review: open by default on a wide desktop, until the person toggles it once.
+  const wide = useMediaQuery(WIDE_QUERY);
+  const [paneChoice, setPaneChoice] = useState<boolean | null>(() => loadPaneOpen());
+  const paneOpen = paneChoice ?? wide;
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const navItems = useContext(AppNavContext);
+  const versionText = useContext(AppVersionContext);
+  const [paneTab, setPaneTab] = useState<PaneTab>("changes");
+  // #502: the Create PR dialog, and the phone's full-screen Changes view, held as the floppy they
+  // were opened on so moving to another one closes them.
+  const [prDialogFor, setPrDialogFor] = useState<string | null>(null);
+  const [changesFullFor, setChangesFullFor] = useState<string | null>(null);
+  const [scannerColour, setScannerColour] = useState<ScannerColour>(() => loadScannerColour());
+  // The phone's bottom sheet, held as the session it was opened on, like the model switcher.
+  const [sheetFor, setSheetFor] = useState<string | null>(null);
+  const sheetOpen = phone && sheetFor === sessionId;
   // #285: optional live thought bubble. A display choice on this browser, remembered like the
-  // floppy-drive sound. Off leaves thinking on the rail glyph only.
+  // floppy-drive sound. Off leaves thinking folded to its one line.
   const [thoughtBubbles, setThoughtBubbles] = useState(() => isThoughtBubbleEnabled());
   const navigate = useNavigate();
   // #209: Archive, Restore and Format. Archived floppies are read-only (api 409s wake and send).
   const [shelving, setShelving] = useState<"archive" | "restore" | null>(null);
   const [formatOpen, setFormatOpen] = useState(false);
-  // The model switcher, held as the session it was opened on like the nerd-out panel.
+  // The model switcher, held as the session it was opened on, so moving to another floppy closes it.
   const [modelOpenFor, setModelOpenFor] = useState<string | null>(null);
   const modelOpen = modelOpenFor === sessionId;
   // The route reuses this component across sessions, so an archive that returns after the user
@@ -131,9 +174,10 @@ export function SessionPage() {
   useEffect(() => {
     setPendingSend(null);
     setLastProgressAt(Date.now());
-    setCompact(false);
     setFormatOpen(false);
     setShelving(null);
+    setSession(null);
+    setNotFound(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -147,13 +191,9 @@ export function SessionPage() {
           .filter((row) => row.id !== sessionId)
           .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
         setSplitTargets(others.map((row) => ({ id: row.id, name: row.name })));
-        setSplitTarget((current) => (others.some((row) => row.id === current) ? current : (others[0]?.id ?? "")));
       })
       .catch(() => {
-        if (!cancelled) {
-          setSplitTargets([]);
-          setSplitTarget("");
-        }
+        if (!cancelled) setSplitTargets([]);
       });
     return () => {
       cancelled = true;
@@ -191,6 +231,7 @@ export function SessionPage() {
   });
   const ticking =
     activity.phase === "sending" || activity.phase === "waking" || activity.phase === "working" || activity.phase === "quiet";
+  const canBreak = canBreakTurn({ canAbort: activity.canAbort, pendingQuestion: pendingUiRequest != null, runState, phase: activity.phase });
 
   useEffect(() => {
     if (!ticking) return;
@@ -208,11 +249,17 @@ export function SessionPage() {
     setTimeout(() => setTransportOutcome((current) => (current === outcome ? null : current)), OUTCOME_FLASH_MS);
   }
 
+  function flashToast(text: string) {
+    setToast(text);
+    setTimeout(() => setToast((current) => (current === text ? null : current)), TOAST_MS);
+  }
+
   function loadSession() {
     if (!sessionId) return;
     api
       .session(sessionId)
       .then((s) => {
+        if (currentSessionId.current !== s.id) return;
         setSession(s);
         setNotFound(false);
       })
@@ -247,21 +294,53 @@ export function SessionPage() {
   // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
   // previous turn even when the next run is already "running" again.
   const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
-  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries, { runSettled })), { runSettled });
-  // #285. The streamed text is the open message, which is not in the transcript yet, so it
-  // wins over a persisted tail from earlier in the turn. Once that message is stored the
-  // stream clears; the beat keeps the bubble up while later tool calls from the same turn run.
-  const runLive = thoughtBubbles && runState === "running";
-  const persistedThought = runLive ? liveThinkingItem(beats, true) : null;
-  const showStreamedThought =
-    runLive && streamedThought !== null && !(persistedThought && railThinkingText(persistedThought) === streamedThought);
-  const liveThoughtText = showStreamedThought ? streamedThought : persistedThought ? railThinkingText(persistedThought) : "";
+  // Memoised on the transcript itself: the page re-renders every second while a turn runs, and with
+  // every streamed thought token, and none of that should re-group or re-diff the transcript.
+  const flow = useMemo(
+    () =>
+      buildFlow(groupThinkingBlocks(entriesToViews(entries, { runSettled })), {
+        runSettled,
+        seconds: thinkingSeconds(entries),
+      }),
+    [entries, runSettled],
+  );
+  const previewAccess = useMemo(
+    () => previewAccessByEntry(entries, session?.htmlPreviewAccessByRun, previewAccessFor(session?.allowExternalHtmlResources)),
+    [entries, session?.htmlPreviewAccessByRun, session?.allowExternalHtmlResources],
+  );
+  // #502: the branch, PR and checks, read once for the chips, the Changes tab and the phone strip.
+  // Messages for the agent (Fix CI, a conflict, diff notes) go through the normal send path.
+  const git = useSessionGit({
+    sessionId,
+    repo: session?.id === sessionId ? session.repo : undefined,
+    lastPush,
+    runState,
+    send: (text) => handleSend(text),
+  });
+  const diffNotes = useDiffNotes(sessionId);
+  const changesFull = phone && changesFullFor === sessionId;
+  const prDialog = prDialogFor === sessionId;
 
-  // Follow the latest entry. Remember where that jump landed so its scroll event does
-  // not tuck the status line away before it has been seen.
+  const header = useMemo(() => {
+    const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
+    return deriveSessionHeader(entries, (id) => windowById.get(id));
+  }, [entries, models]);
+  // #285. The streamed text is the open message, which is not in the transcript yet, so it wins
+  // over a persisted thought from earlier in the turn. Once that message is stored the stream
+  // clears, and the newest stored thought stays open while later tool calls from the same reply run.
+  const runLive = thoughtBubbles && runState === "running";
+  const persistedThoughtId = liveThinkingId(flow, runLive);
+  const persistedThought = persistedThoughtId ? flow.find((item) => item.id === persistedThoughtId) : undefined;
+  const persistedThoughtText =
+    persistedThought?.kind === "thinking" ? persistedThought.blocks.map((b) => b.text).join("\n\n") : null;
+  const showStreamedThought = runLive && streamedThought !== null && streamedThought !== persistedThoughtText;
+  const liveThoughtText = showStreamedThought ? streamedThought : (persistedThoughtText ?? "");
+
+  // Follow the latest entry. Remember where that jump landed so its scroll event is not taken for
+  // the reader scrolling away.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || getComputedStyle(el).overflowY === "visible") return;
+    if (!el) return;
     if (el.scrollHeight <= el.clientHeight + 16) {
       landedAt.current = null;
       return;
@@ -269,36 +348,43 @@ export function SessionPage() {
     el.scrollTo({ top: el.scrollHeight });
     landedAt.current = el.scrollTop;
     followThought.current = true;
-  }, [entries.length, pendingSend?.localId]);
+  }, [entries.length, pendingSend?.localId, sessionId]);
+
+  // The column changes size without a new entry: the dock grows (a question, a note, a taller
+  // draft) or a row opens. A reader who was at the bottom stays there.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (!followThought.current) return;
+      el.scrollTo({ top: el.scrollHeight });
+      landedAt.current = el.scrollTop;
+    });
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [sessionId]);
 
   // A live thought grows inside one entry, so the entry-count follow above never sees it.
   // Stay with the newest line only when the reader was already at the bottom.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !liveThoughtText) return;
-    if (getComputedStyle(el).overflowY === "visible") return;
     if (!followThought.current) return;
     el.scrollTo({ top: el.scrollHeight });
     landedAt.current = el.scrollTop;
   }, [liveThoughtText]);
 
-  // Phones scroll the page, not the conversation panel, so the same shrink follows window scroll.
-  useEffect(() => {
-    const onScroll = () => {
-      if (!window.matchMedia("(max-width: 700px)").matches) return;
-      const top = window.scrollY;
-      setCompact((prev) => (top > 16 ? true : top < 4 ? false : prev));
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
   async function reload() {
     const fresh = await api.session(sessionId);
-    setSession(fresh);
+    if (currentSessionId.current === fresh.id) setSession(fresh);
   }
 
-  async function handleSend(text: string, behavior?: "steer" | "followUp") {
+  /** Sends, or queues behind the running turn. A stopped or sleeping floppy needs nothing else: the
+   * api stores the message as mail and wakes a Drive for it (session-create.ts's postUserMail), and
+   * the status line says "Waking a drive" meanwhile. */
+  /** Resolves true once the api accepted (stored) the message. */
+  async function handleSend(text: string, behavior?: "steer" | "followUp"): Promise<boolean> {
     const sentAt = Date.now();
     const localId = `local-${sentAt}`;
     setNow(sentAt);
@@ -320,9 +406,10 @@ export function SessionPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setPendingSend((p) => (p?.localId === localId ? { ...p, error: message } : p));
-      return;
+      return false;
     }
     await reload().catch(() => {});
+    return true;
   }
 
   /** Retry on the status line: a failed send or a stuck turn re-sends; a drive that didn't come up
@@ -339,6 +426,7 @@ export function SessionPage() {
         if (!p) await api.wake(sessionId);
         await reload();
       } catch (err) {
+        flashOutcome("loadError");
         setApiError(toApiErrorState(err, "Failed to wake"));
       }
       return;
@@ -389,7 +477,22 @@ export function SessionPage() {
 
   const handleAbort = () => runAction("abort", () => api.abort(sessionId));
   const handleStop = () => runAction("stop", () => api.stop(sessionId));
+  // Start Drive (the ⋯ menu): a Drive without a prompt, for VS Code or previews.
   const handleWake = () => runAction("wake", () => api.wake(sessionId));
+
+  // Esc breaks the running turn when nothing else wants it (lib/break-keys.ts).
+  const abortRef = useRef<(() => void) | null>(null);
+  abortRef.current = canBreak && pendingAction === null ? handleAbort : null;
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!escBreaks(event)) return;
+      if (!abortRef.current) return;
+      event.preventDefault();
+      abortRef.current();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   async function handleUiResponse(requestId: string, value: unknown) {
     await api.uiResponse(sessionId, requestId, value);
@@ -399,8 +502,7 @@ export function SessionPage() {
     const cmd = teleportCommand(sessionId);
     try {
       await navigator.clipboard.writeText(cmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flashToast(`Copied: ${cmd}`);
     } catch {
       // clipboard access denied -- nothing more we can do from here
     }
@@ -411,36 +513,54 @@ export function SessionPage() {
     try {
       await navigator.clipboard.writeText(session.guruId);
       setCopiedGuruId(true);
-      setTimeout(() => setCopiedGuruId(false), 2000);
+      flashToast("Copied the tape id");
+      setTimeout(() => setCopiedGuruId(false), TOAST_MS);
     } catch {
       // clipboard access denied -- nothing more we can do from here
     }
   }
 
+  /** A git chip: open the Changes tab (the full-screen view on a phone), or do its action. */
+  function onGitAction(action: GitChipAction) {
+    if (action === "create-pr") {
+      setPrDialogFor(sessionId);
+      return;
+    }
+    if (action === "fix-ci") void git.fixCi();
+    if (phone) {
+      setChangesFullFor(sessionId);
+      return;
+    }
+    setPaneTab("changes");
+    if (!paneOpen) {
+      savePaneOpen(true);
+      setPaneChoice(true);
+    }
+  }
+
+  function togglePane() {
+    savePaneOpen(!paneOpen);
+    setPaneChoice(!paneOpen);
+  }
+
+  function setDiskBox(open: boolean) {
+    saveDiskBoxOpen(open);
+    setDiskBoxOpen(open);
+  }
+
   if (notFound) return <NotFoundError subject="This floppy" />;
 
   const archived = Boolean(session?.archivedAt);
-
-  // #273: only the latest VS Code chip in the conversation is live.
-  const lastVsCodeBeat = [...beats].reverse().find((b) => b.kind !== "passthrough" && b.kind !== "user" && beatOpensVsCode(b))?.id;
-  const previewAccess = previewAccessByEntry(
-    entries,
-    session?.htmlPreviewAccessByRun,
-    previewAccessFor(session?.allowExternalHtmlResources),
-  );
   const cost = costEstimate ?? session?.cost;
-  const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
-  const header = deriveSessionHeader(entries, (id) => windowById.get(id));
   const percent = header.context?.percent;
   const oomMessage = typeof percent === "number" ? contextMeterMessage(percent) : null;
   // Bug 7 (docs/reports/cloud-fixes.md): a pi RPC command agentd's run rejected. Also the api's own
   // reason when it refuses the run's agent connection (agentlink.ts's refuse()) or gives up on its
   // sandbox (runs.ts's reconciler) -- for a run that never started, this note is the only thing a
-  // person gets, since the one-line statusLine above only has room for the short reason.
+  // person gets, since the transcript's end line only has room for the short reason.
   const detailNote = runStateNote(statusDetail);
-  // Same source as the pill and buttons: while a send is in flight (or timed out) the composer's
-  // status line speaks for the run, so the header must not also say READY. or "stopped · press Play".
-  // The composer keeps READY. as its empty prompt. The lamp beside the pill is the human state.
+  // Same source as the pill and Break: while a send is in flight (or timed out) the live status line
+  // speaks for the run, so the transcript must not also end on READY. The lamp is the human state.
   const statusLine =
     activity.phase === "none"
       ? deriveTransportStatusLine(activity.pillState, transportOutcome, runStateReason)
@@ -454,19 +574,6 @@ export function SessionPage() {
     statusLine,
   });
   const statusError = activity.errorHeadline;
-  const composerStatus = statusError ? (
-    <span className="send-status send-status-error" role="alert">
-      <strong>{statusError}</strong>
-      <span className="send-status-detail">{activity.label}</span>
-      {!archived && (
-        <button type="button" className="btn btn-small" onClick={handleRetry}>
-          Retry
-        </button>
-      )}
-    </span>
-  ) : activity.label ? (
-    <Working label={activity.label.replace(/…$/, "")} srOnly={false} className={`send-status send-status-${activity.phase}`} />
-  ) : null;
 
   // A session's current model reads "provider/model" (deriveSessionHeader); if that provider's
   // own Peripherals row reports "down", the run can't reach it -- surface the same
@@ -485,6 +592,15 @@ export function SessionPage() {
   const modelProviderDown = modelProviderKind
     ? providers.find((p) => p.kind === modelProviderKind)?.status === "down"
     : false;
+  const canSwitchModel = !archived && Boolean(session);
+  const startup = streamStartup !== undefined ? streamStartup : session?.startup;
+
+  // The live status line: what it's doing, how long, how many tokens.
+  const toolInFlight = runningTool(flow);
+  const liveVerb = toolInFlight && activity.phase === "working" ? toolVerb(toolInFlight) : (activity.label ?? "Working").replace(/…$/, "");
+  const startedAt = turnStartedAt(entries, pendingSend?.sentAt);
+  const outTokens = turnOutputTokens(entries);
+  const sentWhileBusy = pendingSend?.runStateAtSend === "running" && pendingSend.behavior !== "steer";
 
   function onSessionScroll(event: UIEvent<HTMLDivElement>) {
     const el = event.currentTarget;
@@ -494,373 +610,486 @@ export function SessionPage() {
     // Same slop as the jump recorded above. A short scroll up is the reader, and the next
     // thought line must not pull them back to the bottom.
     followThought.current = el.scrollHeight - top - el.clientHeight < 2;
-    setCompact((prev) => (top > 16 ? true : top < 4 ? false : prev));
   }
 
-  return (
-    // #273: one view of the Drive's IDE for the status-bar chip and any chat chips (the vscode tool).
-    <IdeProvider sessionId={sessionId} runState={runState} onError={setApiError}>
-    <div className="session-view">
-      {apiError && (
-        <SystemErrorDialog
-          error={apiError}
-          onRestart={() => {
-            setApiError(null);
-            loadSession();
-          }}
-          onResume={() => setApiError(null)}
-        />
-      )}
-      <div className="panel session-window">
-        <div className={`session-chrome${compact ? " is-min" : ""}`}>
-          <div className="panel-titlebar session-titlebar">
-            <h2 className="panel-label session-window-name" title={floppyTitle}>
-              {floppyTitle}
-            </h2>
-            <span className="session-window-status">
-              <TransportDot tone={lamp.tone} label={lamp.detail === lamp.label ? undefined : lamp.label} />
-              <StatusPill state={activity.pillState} />
-            </span>
-            {lamp.detail && (
-              <span className={`session-transport-detail${lamp.detail === "BREAK" ? " is-attention" : ""}`} title={lamp.detail}>
-                {lamp.detail}
-              </span>
-            )}
-            <div className="run-controls">
-              {chromePlace.ready && (
-                <>
-                  <button
-                    type="button"
-                    className="btn"
-                    title="Open this Floppy in its own tab group"
-                    onClick={() => chromePlace.place("own", floppyTitle)}
-                  >
-                    This Floppy's group
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    title="Open this Floppy in the shared Floppies group"
-                    onClick={() => chromePlace.place("shared", floppyTitle)}
-                  >
-                    Floppies group
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    title="Open this Floppy in a new window"
-                    onClick={() => chromePlace.place("window", floppyTitle)}
-                  >
-                    New window
-                  </button>
-                  {chromePlace.split && (
-                    <>
-                      {splitTargets.length > 0 && (
-                        <select aria-label="Floppy to split beside" value={splitTarget} onChange={(event) => setSplitTarget(event.target.value)}>
-                          {splitTargets.map((row) => (
-                            <option key={row.id} value={row.id}>
-                              {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={!splitTarget}
-                        title="Split this Floppy beside another"
-                        onClick={() => chromePlace.splitWith(splitTarget)}
-                      >
-                        Split
-                      </button>
-                    </>
-                  )}
-                </>
-              )}
-              <button className="btn session-transport" onClick={copyTeleport} title={transport.eject.hint}>
-                {copied ? "Copied!" : transportLabel("eject")}
-              </button>
-              {session?.canManage && !archived && (
-                <button className="btn session-transport" onClick={() => shelve("archive")} disabled={shelving !== null} title={floppyActions.archive.hint}>
-                  {shelving === "archive" ? <Working label="Archiving" /> : floppyActions.archive.word}
-                </button>
-              )}
-              <button
-                className="btn btn-danger session-transport"
-                onClick={handleAbort}
-                disabled={!activity.canAbort}
-                title="Interrupt the current turn, like the C64 RUN/STOP key"
-              >
-                {pendingAction === "abort" ? <Working label="Breaking" /> : transportLabel("abort")}
-              </button>
-              <button className="btn btn-danger session-transport" onClick={handleStop} disabled={!activity.canStop} title="Stop this floppy's run">
-                {pendingAction === "stop" ? <Working label="Stopping" /> : transportLabel("stop")}
-              </button>
-              <button
-                className="btn btn-primary session-transport"
-                onClick={handleWake}
-                disabled={!activity.canWake || archived}
-                title="Wake this floppy and start the run"
-              >
-                {pendingAction === "wake" ? <Working label="Waking" /> : transportLabel("wake")}
-              </button>
-            </div>
-          </div>
-          <div className="session-statusbar">
-            <button
-              type="button"
-              className={`nerd-out-toggle${nerdOut ? " is-open" : ""}`}
-              aria-expanded={nerdOut}
-              aria-controls={nerdOut ? "nerd-out-panel" : undefined}
-              title="Drive details, stats and logs"
-              onClick={() => setNerdOutFor(nerdOut ? null : sessionId)}
-            >
-              Nerd out
-            </button>
-            <ThoughtBubbleToggle
-              on={thoughtBubbles}
-              onChange={(next) => {
-                setThoughtBubbleEnabled(next);
-                setThoughtBubbles(next);
-              }}
-            />
-            {session?.guruId && (
-              <span className="session-guru-id">
-                <span className="mono" title={session.guruId}>
-                  {session.guruId.slice(0, 8)}
-                </span>
-                <button
-                  type="button"
-                  className="copy-chip"
-                  onClick={copyGuruId}
-                  aria-label="Copy full tape id"
-                  title="Copy full tape id"
-                >
-                  {copiedGuruId ? "✓" : "⧉"}
-                </button>
-              </span>
-            )}
-            {looseRepo && (
-              <span className="session-repo-branch" title={looseRepo}>
-                {looseRepo}
-              </span>
-            )}
-            {typeof cost === "number" && <span>${cost.toFixed(4)}</span>}
-            {/* The stream's value once a status event has said anything (null included), else the
-                session detail's from page load. */}
-            <StartupTime
-              startup={streamStartup !== undefined ? streamStartup : session?.startup}
-              runState={runState}
-              collapsed={compact}
-            />
-            {cluster && <GithubChip cluster={cluster} />}
-            {session?.repo && (
-              <GithubStatus key={`${sessionId}:${session.repo}`} sessionId={sessionId} repo={session.repo} />
-            )}
-            <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
-            <IdeChip />
-            <span className="session-model-info">
-              <button
-                type="button"
-                className="session-model-switch"
-                onClick={() => setModelOpenFor(sessionId)}
-                disabled={archived || !session}
-                title={archived ? "Restore the floppy to switch its model" : "Switch model"}
-              >
-                {shownModel ? <span className="mono">{shownModel}</span> : "model unknown yet"}
-              </button>
-              {/* Chosen but not in use yet: no Drive is going, or pi hasn't taken it. */}
-              {pendingModel ? (
-                <span className="session-model-pending" title="The floppy switches to this model">
-                  → <span className="mono">{pendingModel}</span>
-                </span>
-              ) : null}
-              {header.thinking ? <span>thinking {header.thinking}</span> : null}
-              {header.context ? (
-                <span className="context-usage">
-                  {header.context.window
-                    ? `${header.context.tokens.toLocaleString()} / ${header.context.window.toLocaleString()} tokens`
-                    : `${header.context.tokens.toLocaleString()} tokens`}
-                  {typeof percent === "number" && (
-                    <span
-                      className={`meter context-meter${percent >= 80 ? " meter-danger" : percent >= 50 ? " meter-warn" : ""}`}
-                      role="meter"
-                      aria-label="Context used"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.round(percent)}
-                    >
-                      <span className="meter-fill" style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
-                    </span>
-                  )}
-                </span>
-              ) : null}
-            </span>
-          </div>
-          {oomMessage && (
-            <p className="context-oom-note" role="alert">
-              {oomMessage}
-            </p>
-          )}
-          {modelProviderDown && (
-            <DeviceNotPresent reason={`the ${modelProviderKind} peripheral is down -- this run can't reach its model right now.`} />
-          )}
-          {detailNote && (
-            <p className="status-detail-note" role="alert">
-              {detailNote}
-            </p>
-          )}
-          {session?.mailNotice && (
-            <p className="mail-held-note" role="alert">
-              <span>
-                {session.mailNotice}
-                {session.heldMail ? ` (${session.heldMail})` : ""}
-              </span>
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={handleMailRetry}
-                disabled={archived}
-                title={archived ? "Restore this floppy to deliver its messages" : undefined}
-              >
-                Retry
-              </button>
-            </p>
-          )}
-          {archived && (
-            <p className="archived-note" role="status">
-              <span>This floppy is archived: it can't run or take messages until it's restored.</span>
-              {session?.canManage && (
-                <>
-                  <button type="button" className="btn btn-small" onClick={() => shelve("restore")} disabled={shelving !== null} title={floppyActions.restore.hint}>
-                    {shelving === "restore" ? <Working label="Restoring" /> : floppyActions.restore.word}
-                  </button>
-                  <button type="button" className="btn btn-small btn-danger" onClick={() => setFormatOpen(true)} disabled={shelving !== null} title={floppyActions.format.hint}>
-                    {floppyActions.format.word}…
-                  </button>
-                </>
-              )}
-            </p>
-          )}
-          {chromePlace.note && (
-            <p className="status-detail-note" role="alert">
-              {chromePlace.note}
-            </p>
-          )}
-        </div>
-        {nerdOut && (
-          <div id="nerd-out-panel" className="nerd-out-slot">
-            <NerdOutPanel
-              key={sessionId}
-              sessionId={sessionId}
-              runState={runState}
-              startup={streamStartup !== undefined ? streamStartup : session?.startup}
-              onClose={() => setNerdOutFor(null)}
-            />
-          </div>
-        )}
-        <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
-        <div className="transcript">
-          {beats.length === 0 && !activity.showOptimistic && !showStreamedThought ? (
-            <p className="empty-state">No entries yet. Send a message below to start the run.</p>
-          ) : (
-            // #132/#147: each beat's HTML previews start the way the prompt of the run that wrote
-            // it described. The Composer's own Markdown preview is outside these and stays sealed.
-            beats.map((beat) => (
-              <HtmlPreviewAccessContext.Provider key={beat.id} value={previewAccess(beatEntryId(beat))}>
-                {beat.kind === "passthrough" ? (
-                  <EntryItem view={beat.view} sessionId={sessionId} />
-                ) : (
-                  <BeatView
-                    beat={beat}
-                    defaultThinkingExpanded={defaultThinkingExpanded}
-                    vscodeLive={beat.id === lastVsCodeBeat}
-                    liveThinkingId={showStreamedThought ? undefined : persistedThought?.id}
-                  />
-                )}
-              </HtmlPreviewAccessContext.Provider>
-            ))
-          )}
-          <StreamedThought text={showStreamedThought ? streamedThought : null} drop={persistedThought !== null} />
-          {activity.showOptimistic && pendingSend && (
-            <div
-              className={`entry user entry-optimistic${pendingSend.error !== undefined ? " entry-failed" : ""}`}
-              data-local-id={pendingSend.localId}
-            >
-              <YouMark />
-              {pendingSend.text}
-              {pendingSend.acceptedAt === undefined && pendingSend.error === undefined && (
-                <span className="entry-sending-note">Sending</span>
-              )}
-              {pendingSend.error !== undefined && (
-                <span className="entry-failed-note" role="alert">
-                  Not sent{pendingSend.error ? `: ${pendingSend.error}` : ""}.{" "}
-                  <button type="button" className="btn btn-small" onClick={handleRetry}>
-                    Retry
-                  </button>
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-        </div>
-      </div>
+  const liveChips = (
+    <>
+      <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
+      <IdeChip />
+    </>
+  );
 
-      {modelOpen && session && (
-        <SwitchModelDialog
-          sessionId={sessionId}
-          current={shownModel}
-          modelOverride={session.modelOverride}
-          guruModel={session.guruModel}
-          models={models}
-          live={driveGoing}
-          onCancel={() => setModelOpenFor(null)}
-          onError={(error) => {
-            setModelOpenFor(null);
-            // The api may have stored the choice before the Drive's send failed: show what it has.
-            if (currentSessionId.current === session.id) {
-              setApiError(error);
-              loadSession();
+  const changesPane = (
+    <ChangesPane
+      git={git}
+      notes={diffNotes}
+      lastPush={lastPush}
+      onCreatePr={() => setPrDialogFor(sessionId)}
+      autofix={
+        session?.repo
+          ? {
+              state: session.autofix,
+              canManage: Boolean(session.canManage),
+              archived,
+              onToggle: async (on) => {
+                // Bound to the floppy it started on, like the git writes (#502).
+                const id = sessionId;
+                try {
+                  const result = await api.setAutofix(id, on);
+                  setSession((s) => (s && s.id === id ? { ...s, autofixCi: result.autofixCi, autofix: result.autofix } : s));
+                  return null;
+                } catch (err) {
+                  return err instanceof ApiError ? err.message : "Auto-fix couldn't be changed. Try again.";
+                }
+              },
             }
-          }}
-          onSwitched={(result) => {
-            setModelOpenFor(null);
-            setSession((s) => (s && s.id === sessionId ? { ...s, modelOverride: result.modelOverride ?? undefined } : s));
-          }}
-        />
-      )}
-      {formatOpen && (
-        <FormatFloppyDialog
-          sessionId={sessionId}
-          title={floppyTitle}
-          onCancel={() => setFormatOpen(false)}
-          onError={(error) => {
-            setFormatOpen(false);
-            setApiError(error);
-          }}
-          onFormatted={() => navigate("/fleet?archived=only")}
-        />
-      )}
+          : undefined
+      }
+      onSendNotes={async (text) => {
+        const ok = await handleSend(text);
+        if (ok) setChangesFullFor(null);
+        return ok;
+      }}
+    />
+  );
 
-      {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
+  const details = (withChips: boolean) => (
+    <SessionDetails
+      sessionId={sessionId}
+      runState={runState}
+      startup={startup}
+      model={shownModel}
+      pendingModel={pendingModel}
+      thinking={header.thinking}
+      onSwitchModel={() => {
+        setSheetFor(null);
+        setModelOpenFor(sessionId);
+      }}
+      canSwitchModel={canSwitchModel}
+      guruId={session?.guruId}
+      onCopyGuruId={copyGuruId}
+      copiedGuruId={copiedGuruId}
+      cost={cost}
+      looseRepo={looseRepo}
+      context={header.context}
+      oomMessage={oomMessage}
+      cluster={cluster}
+      chips={withChips ? liveChips : undefined}
+      thoughtBubbles={thoughtBubbles}
+      onThoughtBubbles={(next) => {
+        setThoughtBubbleEnabled(next);
+        setThoughtBubbles(next);
+      }}
+      scannerColour={scannerColour}
+      onScannerColour={(next) => {
+        saveScannerColour(next);
+        setScannerColour(next);
+      }}
+    />
+  );
 
-      <Composer
-        // One composer per session: a draft (and its Preview state) never follows the user to
-        // another session, where Enter would send it to the wrong agent.
-        key={sessionId}
-        sessionId={sessionId}
-        voiceEngine={session?.voiceEngine}
-        voiceSpeak={session?.voiceSpeak}
-        entries={entries}
-        entriesLoaded={entriesLoaded}
-        agentBusy={ticking}
-        onSend={handleSend}
-        disabled={activity.composerDisabled || archived}
-        sending={activity.phase === "sending"}
-        status={composerStatus}
-        placeholderOverride={statusLine === "READY." ? "READY." : undefined}
-      />
-    </div>
+  const menu = (close: () => void) => (
+    <SessionMenu
+      close={close}
+      sessionId={sessionId}
+      floppyTitle={floppyTitle}
+      onEject={copyTeleport}
+      chrome={chromePlace}
+      splitTargets={splitTargets}
+      onSwitchModel={() => setModelOpenFor(sessionId)}
+      canSwitchModel={canSwitchModel}
+      onStop={handleStop}
+      canStop={activity.canStop}
+      onStart={handleWake}
+      canStart={activity.canWake && !archived}
+      canManage={Boolean(session?.canManage)}
+      archived={archived}
+      shelving={shelving !== null}
+      onArchive={() => shelve("archive")}
+      onRestore={() => shelve("restore")}
+      onFormat={() => setFormatOpen(true)}
+      guruId={session?.guruId}
+      onCopyGuruId={copyGuruId}
+    />
+  );
+
+  const placeholder = archived
+    ? "This floppy is archived"
+    : ticking && activity.canAbort
+      ? "Add a follow-up. It sends when this turn ends"
+      : runState === "idle"
+        ? `Message ${floppyTitle}`
+        : "Drive is asleep. Sending wakes it";
+
+  // The transcript's last line when nothing is running: READY. and its cursor, or how it stopped.
+  const endLine =
+    !ticking && !pendingUiRequest && statusLine ? (
+      statusLine === "READY." ? (
+        <div className="flow-end is-ready" role="status">
+          READY.<span className="flow-cursor" aria-hidden="true" />
+        </div>
+      ) : (
+        <div className={`flow-end${statusLine.startsWith("LOAD ERROR") || statusLine === "BREAK" ? " is-error" : ""}`} role="status">
+          {statusLine}
+        </div>
+      )
+    ) : null;
+
+  return (
+    // #273: one view of the Drive's IDE for the header chip, the menu and any chat chips.
+    <IdeProvider sessionId={sessionId} runState={runState} onError={setApiError}>
+      <div className={`session-shell${phone ? " is-phone" : ""}`} data-scanner={scannerColour}>
+        {apiError && (
+          <SystemErrorDialog
+            error={apiError}
+            onRestart={() => {
+              setApiError(null);
+              loadSession();
+            }}
+            onResume={() => setApiError(null)}
+          />
+        )}
+        {!phone && diskBoxOpen && (
+          <DiskBoxSidebar
+            currentId={sessionId}
+            needsYou={pendingUiRequest != null}
+            refreshKey={`${sessionId}|${runState ?? ""}|${session?.name ?? ""}|${session?.archivedAt ?? ""}`}
+            archiveKey={`${sessionId}|${session?.archivedAt ?? ""}`}
+            onHide={() => setDiskBox(false)}
+          />
+        )}
+        <div className="session-main">
+          <header className="session-head">
+            {phone ? (
+              <Link to="/fleet" className="icon-btn" aria-label={`Back to the ${vocabulary.sessionList.one}`} title={vocabulary.sessionList.one}>
+                <BackIcon />
+              </Link>
+            ) : !diskBoxOpen ? (
+              <button type="button" className="icon-btn" onClick={() => setDiskBox(true)} aria-label="Show the Disk Box" title="Show the Disk Box">
+                <SideIcon />
+              </button>
+            ) : null}
+            <div className="session-head-title">
+              <h1 title={floppyTitle}>{floppyTitle}</h1>
+              <span className="session-state">
+                <TransportDot tone={lamp.tone} label={lamp.detail === lamp.label ? undefined : lamp.label} />
+                <StatusPill state={activity.pillState} />
+                {lamp.detail && (
+                  <span className={`session-transport-detail${lamp.detail === "BREAK" ? " is-attention" : ""}`} title={lamp.detail}>
+                    {lamp.detail}
+                  </span>
+                )}
+              </span>
+            </div>
+            {!phone && (
+              <div className="session-chips">
+                <GitChips git={git} onAction={onGitAction} />
+                {liveChips}
+              </div>
+            )}
+            {!phone && (
+              <button
+                type="button"
+                className="icon-btn"
+                aria-pressed={paneOpen}
+                aria-controls={paneOpen ? "session-pane" : undefined}
+                aria-label="Changes and details pane"
+                title="Changes and details: the branch and PR, model, context, Drive stats and logs"
+                onClick={togglePane}
+              >
+                <PaneIcon />
+              </button>
+            )}
+            {phone ? (
+              <button
+                ref={moreRef}
+                type="button"
+                className="icon-btn"
+                aria-label="More actions and details"
+                aria-expanded={sheetOpen}
+                onClick={() => setSheetFor(sheetOpen ? null : sessionId)}
+              >
+                <MoreIcon />
+              </button>
+            ) : (
+              <PopMenu label="More actions" icon={<MoreIcon />}>
+                {menu}
+              </PopMenu>
+            )}
+          </header>
+          {phone && <GitStrip git={git} onOpen={() => setChangesFullFor(sessionId)} />}
+          <div className="session-body">
+            <div className="session-col">
+              <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
+                <div className="transcript flow" aria-label="Transcript">
+                  {flow.length === 0 && !activity.showOptimistic && !showStreamedThought ? (
+                    <p className="empty-state">No entries yet. Send a message below to start the run.</p>
+                  ) : (
+                    <TranscriptFlow
+                      items={flow}
+                      sessionId={sessionId}
+                      previewAccess={previewAccess}
+                      liveThinkingId={showStreamedThought ? null : persistedThoughtId}
+                      defaultThinkingExpanded={defaultThinkingExpanded}
+                      vscodeLiveId={lastVsCodeToolId(flow)}
+                    />
+                  )}
+                  {showStreamedThought && streamedThought !== null && (
+                    <ThinkingRow blocks={[{ id: STREAMED_THOUGHT_ID, text: streamedThought }]} live />
+                  )}
+                  {activity.showOptimistic && pendingSend && (
+                    <UserBlock text={pendingSend.text} queued={sentWhileBusy && pendingSend.error === undefined}>
+                      <span className="flow-user-local" data-local-id={pendingSend.localId} hidden />
+                      {pendingSend.acceptedAt === undefined && pendingSend.error === undefined && (
+                        <span className="entry-sending-note">Sending</span>
+                      )}
+                      {pendingSend.error !== undefined && (
+                        <span className="entry-failed-note" role="alert">
+                          Not sent{pendingSend.error ? `: ${pendingSend.error}` : ""}.{" "}
+                          <button type="button" className="btn btn-small" onClick={handleRetry}>
+                            Retry
+                          </button>
+                        </span>
+                      )}
+                    </UserBlock>
+                  )}
+                  {endLine}
+                </div>
+              </div>
+              <div className="scanner-seam">{ticking && !pendingUiRequest && <KnightRiderScanner />}</div>
+              <div className="session-dock">
+                {ticking && !statusError && !pendingUiRequest && (
+                  <div className="live-status" role="status">
+                    <span className="live-spin" aria-hidden="true">
+                      ✻
+                    </span>
+                    <span className="live-verb">{liveVerb}…</span>
+                    <span className="live-meta">
+                      {startedAt !== undefined ? formatElapsed(now - startedAt) : null}
+                      {outTokens > 0 ? ` · ↓ ${formatTokens(outTokens)} tokens` : null}
+                    </span>
+                    {canBreak && <span className="live-hint">esc to break</span>}
+                  </div>
+                )}
+                {statusError && (
+                  <p className="dock-note is-error send-status-error" role="alert">
+                    <strong>{statusError}</strong>
+                    <span className="send-status-detail">{activity.label}</span>
+                    {!archived && (
+                      <button type="button" className="btn btn-small" onClick={handleRetry}>
+                        Retry
+                      </button>
+                    )}
+                  </p>
+                )}
+                {oomMessage && (
+                  <p className="dock-note is-warn context-oom-note" role="alert">
+                    {oomMessage}
+                  </p>
+                )}
+                {modelProviderDown && (
+                  <DeviceNotPresent reason={`the ${modelProviderKind} peripheral is down -- this run can't reach its model right now.`} />
+                )}
+                {detailNote && (
+                  <p className="dock-note is-error status-detail-note" role="alert">
+                    {detailNote}
+                  </p>
+                )}
+                {session?.mailNotice && (
+                  <p className="dock-note is-warn mail-held-note" role="alert">
+                    <span>
+                      {session.mailNotice}
+                      {session.heldMail ? ` (${session.heldMail})` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={handleMailRetry}
+                      disabled={archived}
+                      title={archived ? "Restore this floppy to deliver its messages" : undefined}
+                    >
+                      Retry
+                    </button>
+                  </p>
+                )}
+                {archived && (
+                  <p className="dock-note archived-note" role="status">
+                    <span>This floppy is archived: it can't run or take messages until it's restored.</span>
+                    {session?.canManage && (
+                      <>
+                        <button type="button" className="btn btn-small" onClick={() => shelve("restore")} disabled={shelving !== null} title={floppyActions.restore.hint}>
+                          {shelving === "restore" ? <Working label="Restoring" /> : floppyActions.restore.word}
+                        </button>
+                        <button type="button" className="btn btn-small btn-danger" onClick={() => setFormatOpen(true)} disabled={shelving !== null} title={floppyActions.format.hint}>
+                          {floppyActions.format.word}…
+                        </button>
+                      </>
+                    )}
+                  </p>
+                )}
+                {shelving === "archive" && (
+                  <p className="dock-note" role="status">
+                    <Working label="Archiving" srOnly={false} />
+                  </p>
+                )}
+                {chromePlace.note && (
+                  <p className="dock-note is-error status-detail-note" role="alert">
+                    {chromePlace.note}
+                  </p>
+                )}
+                {pendingUiRequest && <UiRequestPanel request={pendingUiRequest} onRespond={handleUiResponse} />}
+                <Composer
+                  // One composer per session: a draft (and its Preview state) never follows the user to
+                  // another session, where Enter would send it to the wrong agent.
+                  key={sessionId}
+                  sessionId={sessionId}
+                  voiceEngine={session?.voiceEngine}
+                  voiceSpeak={session?.voiceSpeak}
+                  entries={entries}
+                  entriesLoaded={entriesLoaded}
+                  agentBusy={ticking}
+                  onSend={async (text, behavior) => {
+                    await handleSend(text, behavior);
+                  }}
+                  disabled={activity.composerDisabled || archived}
+                  sending={activity.phase === "sending"}
+                  placeholderOverride={placeholder}
+                  busy={canBreak}
+                  onBreak={handleAbort}
+                  breaking={pendingAction === "abort"}
+                  modelChip={
+                    <button
+                      type="button"
+                      className="composer-pill mono"
+                      onClick={() => setModelOpenFor(sessionId)}
+                      disabled={!canSwitchModel}
+                      title={archived ? "Restore the floppy to switch its model" : `Switch model${pendingModel ? ` (switching to ${pendingModel})` : ""}`}
+                    >
+                      {shownModel ? (phone ? shownModel.split("/").pop() : shownModel) : "model"}
+                      {pendingModel ? " →" : ""} ▾
+                    </button>
+                  }
+                  contextChip={
+                    typeof percent === "number" && header.context ? (
+                      <span
+                        className="composer-pill mono"
+                        title={`Context used: ${header.context.tokens.toLocaleString()} of ${header.context.window?.toLocaleString()} tokens`}
+                      >
+                        <ContextRing percent={percent} />
+                        <span className="composer-pill-text">{Math.round(percent)}%</span>
+                        <span className="sr-only"> of the context window used</span>
+                      </span>
+                    ) : null
+                  }
+                />
+                {toast && (
+                  <div className="session-toast" role="status">
+                    {toast}
+                  </div>
+                )}
+              </div>
+            </div>
+            {!phone && paneOpen && (
+              <aside id="session-pane" className="session-pane" aria-label="Changes and details">
+                <div className="pane-tabs" role="tablist" aria-label="Pane">
+                  {PANE_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      id={`pane-tab-${tab.id}`}
+                      aria-selected={paneTab === tab.id}
+                      aria-controls={`pane-panel-${tab.id}`}
+                      onClick={() => setPaneTab(tab.id)}
+                    >
+                      {tab.label}
+                      {tab.id === "changes" && git.changes && git.changes.files.length > 0 ? ` ${git.changes.files.length}` : ""}
+                    </button>
+                  ))}
+                </div>
+                <div className="pane-panel" role="tabpanel" id={`pane-panel-${paneTab}`} aria-labelledby={`pane-tab-${paneTab}`}>
+                  {paneTab === "changes" && changesPane}
+                  {paneTab === "details" && details(false)}
+                </div>
+              </aside>
+            )}
+          </div>
+        </div>
+
+        {changesFull && (
+          <ChangesFullView title={floppyTitle} onClose={() => setChangesFullFor(null)}>
+            {changesPane}
+          </ChangesFullView>
+        )}
+
+        {prDialog && (
+          <CreatePrDialog
+            defaultTitle={floppyTitle}
+            repo={session?.repo ?? null}
+            branch={git.changes?.branch ?? git.status?.branch ?? null}
+            base={git.changes?.base ?? git.status?.baseBranch ?? null}
+            onSubmit={git.createPr}
+            onClose={() => setPrDialogFor(null)}
+          />
+        )}
+
+        {sheetOpen && (
+          <SessionSheet onClose={() => setSheetFor(null)} returnFocus={moreRef} menu={menu(() => setSheetFor(null))}>
+            {details(true)}
+            {/* On a phone the app bar is gone too: its links and toggles live at the sheet's foot. */}
+            <section className="details-sec sheet-foot" aria-label="Outfitter">
+              <nav className="sheet-pages" aria-label="Pages">
+                {navItems.map((item) => (
+                  <NavLink key={item.to} to={item.to} end={item.end} title={item.hint}>
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+              <div className="sheet-toggles">
+                <SoundToggle />
+                <ThemeToggle />
+              </div>
+              {versionText && <p className="details-empty">Outfitter {versionText}</p>}
+            </section>
+          </SessionSheet>
+        )}
+
+        {modelOpen && session && (
+          <SwitchModelDialog
+            sessionId={sessionId}
+            current={shownModel}
+            modelOverride={session.modelOverride}
+            guruModel={session.guruModel}
+            models={models}
+            live={driveGoing}
+            onCancel={() => setModelOpenFor(null)}
+            onError={(error) => {
+              setModelOpenFor(null);
+              // The api may have stored the choice before the Drive's send failed: show what it has.
+              if (currentSessionId.current === session.id) {
+                setApiError(error);
+                loadSession();
+              }
+            }}
+            onSwitched={(result) => {
+              setModelOpenFor(null);
+              setSession((s) => (s && s.id === sessionId ? { ...s, modelOverride: result.modelOverride ?? undefined } : s));
+            }}
+          />
+        )}
+        {formatOpen && (
+          <FormatFloppyDialog
+            sessionId={sessionId}
+            title={floppyTitle}
+            onCancel={() => setFormatOpen(false)}
+            onError={(error) => {
+              setFormatOpen(false);
+              setApiError(error);
+            }}
+            onFormatted={() => navigate("/fleet?archived=only")}
+          />
+        )}
+      </div>
     </IdeProvider>
   );
 }

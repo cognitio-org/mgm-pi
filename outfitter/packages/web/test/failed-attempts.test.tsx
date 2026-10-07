@@ -8,10 +8,10 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { PiEntry } from "../src/api/client.ts";
 import { entriesToViews, entryToViews, failedAttemptCopy, hiddenEntryIds } from "../src/lib/entry-view.ts";
-import { groupBeats, collapseRail, type RailTool } from "../src/lib/beats.ts";
+import { buildFlow, type FlowTool } from "../src/lib/flow.ts";
 import { groupThinkingBlocks } from "../src/lib/thinking.ts";
 import { EntryItem } from "../src/components/EntryItem.tsx";
-import { TranscriptRail, beatOpensVsCode } from "../src/components/TranscriptRail.tsx";
+import { ToolRow } from "../src/components/TranscriptFlow.tsx";
 import { deriveSessionActivity, isFinalAssistant, notePendingRunState, type PendingSend } from "../src/lib/send-status.ts";
 
 const DROPPED =
@@ -57,7 +57,6 @@ function show(view: unknown): HTMLElement {
 }
 
 function mount(node: React.ReactNode): HTMLElement {
-  // TranscriptRail places its card with matchMedia (desktop here); jsdom has none.
   window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as never;
   container = document.createElement("div");
   document.body.append(container);
@@ -166,27 +165,27 @@ describe("failed attempts", () => {
   it("an interrupted call is not running, not batched, not paired with a later result, and says it never ran", () => {
     const entries = [user, failedAttempt("a1"), hide("x1", "a1"), failedAttempt("a2"), hide("x2", "a2")];
     const late: PiEntry = { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "call-a1", toolName: "html_report", content: "late", isError: false } };
-    const beats = groupBeats(groupThinkingBlocks(entriesToViews([...entries, late])));
-    const tools = beats.flatMap((b) => ("rail" in b ? b.rail : [])).filter((i): i is RailTool => i.kind === "tool");
+    const items = buildFlow(groupThinkingBlocks(entriesToViews([...entries, late])));
+    const tools = items.filter((i): i is FlowTool => i.kind === "tool");
     const interrupted = tools.filter((t) => t.interrupted);
     expect(interrupted).toHaveLength(2);
     expect(interrupted.every((t) => !t.running && t.output === undefined)).toBe(true);
-    expect(collapseRail(interrupted).every((g) => g.kind === "single")).toBe(true);
-    expect(beats.filter((b) => b.kind === "passthrough" && b.view.kind === "assistant-failed")).toHaveLength(2);
+    // Never folded with the look-ups, and the late result doesn't fill them in.
+    expect(items.some((i) => i.kind === "lookups")).toBe(false);
+    expect(items.filter((i) => i.kind === "passthrough" && i.view.kind === "assistant-failed")).toHaveLength(2);
 
-    const el = mount(<TranscriptRail items={interrupted.slice(0, 1)} />);
-    const glyph = el.querySelector(".rail-glyph")!;
-    expect(glyph.getAttribute("aria-label")).toBe("Show tool html_report, interrupted");
-    expect(glyph.classList.contains("is-error")).toBe(true);
-    act(() => (glyph as HTMLButtonElement).click());
-    expect(el.querySelector(".rail-card")?.classList.contains("is-error")).toBe(true);
-    expect(el.querySelector(".rail-card-body")?.textContent).toContain("the reply was cut off, so this call never ran");
+    const el = mount(<ToolRow tool={interrupted[0]!} />);
+    expect(el.querySelector(".flow-tool")?.classList.contains("is-error")).toBe(true);
+    expect(el.querySelector(".flow-tool-line")?.textContent).toContain("html_report");
+    expect(el.querySelector(".flow-tool-sum")?.textContent).toBe("interrupted: this call never ran");
   });
 
   it("an interrupted vscode call opens no VS Code chip", () => {
-    const tool = (interrupted: boolean): RailTool => ({ kind: "tool", id: "t", toolName: "vscode", toolCallId: "c", isError: false, running: false, ...(interrupted ? { interrupted } : {}) });
-    expect(beatOpensVsCode({ kind: "tools-only", rail: [tool(true)] })).toBe(false);
-    expect(beatOpensVsCode({ kind: "tools-only", rail: [tool(false)] })).toBe(true);
+    const tool = (interrupted: boolean): FlowTool => ({ kind: "tool", id: "t", toolName: "vscode", toolCallId: "c", output: "ok", isError: false, running: false, ...(interrupted ? { interrupted } : {}) });
+    expect(mount(<ToolRow tool={tool(true)} />).querySelector(".flow-tool-extra")).toBeNull();
+    act(() => root?.unmount());
+    container?.remove();
+    expect(mount(<ToolRow tool={tool(false)} />).querySelector(".flow-tool-extra")).not.toBeNull();
   });
 });
 

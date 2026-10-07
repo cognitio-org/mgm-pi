@@ -17,6 +17,8 @@ import { createSession, postUserMail } from "../session-create.ts";
 import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
 import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
+import { loadSessionChanges } from "../session-changes.ts";
+import { AUTOFIX_MAX_PER_OWNER, autofixView } from "../autofix.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -226,6 +228,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // #501: checkpoint without its snapshot/workspace URLs (checkpoint-wire.ts).
       ...sessionForWire(session),
       canManage: canManageSession(session, req.identity),
+      // #503 Auto-fix CI: the switch, the last message it sent, and its daily-cap notice.
+      autofixCi: session.autofixCi === true,
+      autofix: autofixView(session),
       runState: run?.state,
       runStateReason: runStateReason(run),
       pendingUiRequest,
@@ -475,6 +480,31 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     return switchSessionModel(ctx, session, guru, body.model);
   });
 
+  // #503 Auto-fix CI: { on } → { autofix }. Owner or sysop only: it sends the agent messages on
+  // the owner's Drive. Turning it on again also lifts the daily cap's pause.
+  app.put("/api/sessions/:id/autofix", async (req, reply) => {
+    const session = await getManageableSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const on = (req.body as { on?: unknown } | undefined)?.on;
+    if (typeof on !== "boolean") return reply.code(400).send({ error: "on must be true or false" });
+    if (on && session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
+    if (on && !session.repo) return reply.code(409).send({ error: "this floppy has no repository, so it has no CI to fix" });
+    // An A2A task's session: its caller's text must not get a standing message channel.
+    if (on && isA2ASession(session)) {
+      return reply.code(409).send({ error: "Auto-fix isn't available on an A2A task's session", code: "autofix-a2a" });
+    }
+    if (on && session.autofixCi !== true && session.ownerEmail) {
+      const count = await ctx.store.sessions.countAutofixForOwner(session.ownerEmail);
+      if (count >= AUTOFIX_MAX_PER_OWNER) {
+        return reply.code(409).send({ error: `Auto-fix is already on for ${AUTOFIX_MAX_PER_OWNER} floppies; turn it off on one first`, code: "autofix-limit" });
+      }
+    }
+    // Turning it on counts as activity, so the watcher's 7-day filter includes the floppy.
+    const updated = await ctx.store.sessions.setAutofixCi(session.id, on, new Date().toISOString());
+    if (!updated) return reply.code(404).send({ error: "session not found" });
+    return { autofixCi: on, autofix: autofixView(updated) };
+  });
+
   app.get("/api/sessions/:id/stream", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
@@ -528,6 +558,33 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // #499: the Changes pane's file list. A live Drive answers from its working tree (the same diff
+  // as above, split per file); otherwise, or if it can't answer, GitHub's compare of the pushed
+  // branch. Always 200 for a session that exists: `source: "none"` says why there is nothing.
+  // A page polling the pane doesn't re-run git on the Drive more than once per LIVE_DIFF_TTL_MS.
+  const liveDiffs = new Map<string, { at: number; result: Promise<Record<string, unknown>> }>();
+  app.get("/api/sessions/:id/changes", async (req, reply) => {
+    const session = await getSessionOr404(ctx, req, reply);
+    if (!session) return;
+    const run = await ctx.store.runs.findActiveForSession(session.id);
+    const live = run && ctx.agentLink.hasSocket(run.id) ? run : null;
+    const liveDiff = (runId: string): Promise<Record<string, unknown>> => {
+      const now = Date.now();
+      for (const [id, entry] of liveDiffs) if (now - entry.at >= LIVE_DIFF_TTL_MS) liveDiffs.delete(id);
+      const hit = liveDiffs.get(runId);
+      if (hit) return hit.result;
+      const result = ctx.agentLink.request(runId, { t: "diff" });
+      liveDiffs.set(runId, { at: now, result });
+      // A failure isn't kept: the next request asks again.
+      result.catch(() => liveDiffs.delete(runId));
+      return result;
+    };
+    return loadSessionChanges(session, {
+      ...(live ? { liveDiff: () => liveDiff(live.id) } : {}),
+      compare: (args) => ctx.githubCatalog.compareBranch(args),
+    });
   });
 
   // #207: Archive hides a floppy and makes it read-only; Restore undoes it. Both are idempotent and
@@ -629,7 +686,10 @@ async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
   return ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
 }
 
-export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
+/** #499: how long one live Drive's diff answers GET /changes. */
+const LIVE_DIFF_TTL_MS = 5_000;
+
+export const ARCHIVED_ERROR ="this floppy is archived; restore it first";
 
 /** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no
  * ownerEmail (teleport-imported, or created before the field) is sysop-only. This is the first

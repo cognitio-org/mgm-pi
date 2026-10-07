@@ -90,12 +90,12 @@ describe("deriveTransportStatusLine (bug 3: READY. shown when nothing is running
     expect(deriveTransportStatusLine("stopping", null)).toBeNull();
   });
 
-  it("a cleanly stopped run reads 'stopped - press Play', not READY.", () => {
-    expect(deriveTransportStatusLine("stopped", null)).toBe("stopped · press Play");
+  it("a cleanly stopped run reads 'stopped · sending wakes it', not READY.", () => {
+    expect(deriveTransportStatusLine("stopped", null)).toBe("stopped · sending wakes it");
   });
 
-  it("no run recorded at all also reads 'stopped - press Play'", () => {
-    expect(deriveTransportStatusLine(undefined, null)).toBe("stopped · press Play");
+  it("no run recorded at all also reads 'stopped · sending wakes it'", () => {
+    expect(deriveTransportStatusLine(undefined, null)).toBe("stopped · sending wakes it");
   });
 
   it("a failed run reads LOAD ERROR with its reason, in the UI's vocabulary", () => {

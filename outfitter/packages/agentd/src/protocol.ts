@@ -650,6 +650,8 @@ export interface UpDiffResult {
   base?: string;
   patch?: string;
   files?: string[];
+  /** #499: `patch` stopped at a file boundary under 2 MB (git.ts's capPatch). */
+  truncated?: boolean;
 }
 
 export interface UpReadResult {

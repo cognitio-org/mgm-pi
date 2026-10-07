@@ -58,6 +58,39 @@ async function exercise(sessions: SessionsCollection): Promise<Record<string, un
   return result;
 }
 
+/** #503: Auto-fix CI's switch and conditional writes. The Mongo side leans on `"autofix.rev": null`
+ * matching a missing field, $inc creating it, and the $unset of the cap on switching on. */
+async function exerciseAutofix(sessions: SessionsCollection): Promise<Record<string, unknown>> {
+  const tag = randomUUID().slice(0, 8);
+  const id = `af-${tag}`;
+  const since = "2026-10-01T00:00:00.000Z";
+  await sessions.insert(sessionRow(id, { ownerEmail: `${tag}@example.com`, repo: "acme/widgets", branch: "feature", updatedAt: "2026-10-07T00:00:00.000Z" }));
+  await sessions.insert(sessionRow(`chat-${tag}`, { autofixCi: true, updatedAt: "2026-10-07T00:00:00.000Z" }));
+  await sessions.insert(sessionRow(`old-${tag}`, { autofixCi: true, repo: "acme/widgets", branch: "x", updatedAt: "2026-09-01T00:00:00.000Z" }));
+  const listed = async () => (await sessions.listAutofix(since)).filter((s) => s.id.endsWith(tag)).map((s) => s.id.slice(0, 2));
+  const result: Record<string, unknown> = { offList: await listed(), offCas: await sessions.casAutofix(id, 0, { rev: 1 }) };
+  const on = await sessions.setAutofixCi(id, true);
+  result.onRev = on?.autofix?.rev;
+  result.onList = await listed();
+  result.staleCas = await sessions.casAutofix(id, 0, { rev: 1, polledAt: "x" });
+  result.cas = await sessions.casAutofix(id, 1, { rev: 2, polledAt: "p", lastSha: "a".repeat(40), sends: ["s1", "s2", "s3"], cappedAt: "c", cappedSha: "b".repeat(40), capDays: { last: "2026-10-07", count: 2 }, offNotice: "n", nextPollAt: "z", failSeen: { sha: "f", at: "t" } });
+  result.again = await sessions.casAutofix(id, 1, { rev: 2 });
+  const reOn = await sessions.setAutofixCi(id, true, "2026-10-08T00:00:00.000Z");
+  result.reOnUpdatedAt = reOn?.updatedAt;
+  result.count = await sessions.countAutofixForOwner(`${tag}@example.com`);
+  result.reOn = reOn?.autofix;
+  const off = await sessions.setAutofixCi(id, false);
+  result.off = { autofixCi: off?.autofixCi, rev: off?.autofix?.rev };
+  result.offCasAfter = await sessions.casAutofix(id, 4, { rev: 5 });
+  await sessions.setAutofixCi(id, true);
+  await sessions.setArchivedAt(id, "2026-10-07T00:00:00.000Z");
+  result.archivedCas = await sessions.casAutofix(id, 5, { rev: 6 });
+  result.archivedList = await listed();
+  result.countAfter = await sessions.countAutofixForOwner(`${tag}@example.com`);
+  result.missing = await sessions.setAutofixCi("no-such-session", true);
+  return result;
+}
+
 /** #208: format's deletes. Rows of the formatted session go; another session's rows, and mail the
  * formatted session sent (keyed by the recipient), stay. */
 async function exerciseFormat(store: Store): Promise<Record<string, unknown>> {
@@ -155,6 +188,30 @@ describe("MongoSessions archive filter against a real MongoDB", () => {
       streamFacts: { checkpoint: { head: "a".repeat(40), pushedAt: "2026-10-07T00:00:00.000Z" }, ownerEmail: "ada@example.com" },
       streamFactsBare: {},
       streamFactsMissing: null,
+    });
+  });
+
+  test("#503 Auto-fix's switch, list and conditional writes behave the same as MemoryStore", async () => {
+    const mongo = await exerciseAutofix(store.sessions);
+    const memory = await exerciseAutofix(new MemoryStore().sessions);
+    assert.deepEqual(mongo, memory);
+    assert.deepEqual(mongo, {
+      offList: [],
+      offCas: false,
+      onRev: 1,
+      onList: ["af"],
+      staleCas: false,
+      cas: true,
+      again: false,
+      reOn: { rev: 3, polledAt: "p", lastSha: "a".repeat(40), failSeen: { sha: "f", at: "t" } },
+      reOnUpdatedAt: "2026-10-08T00:00:00.000Z",
+      count: 1,
+      countAfter: 0,
+      off: { autofixCi: false, rev: 4 },
+      offCasAfter: false,
+      archivedCas: false,
+      archivedList: [],
+      missing: null,
     });
   });
 

@@ -34,6 +34,7 @@ import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { MailService, CloudTasksWakeScheduler, NoopWakeScheduler, type WakeScheduler } from "./mail.ts";
 import { GithubBroker } from "./github-broker.ts";
+import { AutofixWatcher } from "./autofix.ts";
 import type { A2AHandlerFactory } from "./a2a/handler.ts";
 import { GithubCatalog } from "./github-catalog.ts";
 import { createAgentEngine, type AgentEngine } from "./agentengine/index.ts";
@@ -41,6 +42,8 @@ import { MemoryRecorder } from "./agentengine/recorder.ts";
 import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
+// GA-4: registers gcloud.run / gcloud.note (approval cards for the gcloud MCP).
+import "./admin/gcloud-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 import { applySentrySettings, installSentryErrorHandler, sentryEnabled, sentryLogMethod, Sentry, type SentryRuntime } from "./sentry.ts";
 import { FleetSettingsCache } from "./fleet-settings.ts";
@@ -108,6 +111,8 @@ export interface App {
   a2a: A2ATasks;
   /** #378 Local Host: tests register listeners and call changed()/sweep() through it. */
   localHostEvents: LocalHostEvents;
+  /** #503 Auto-fix CI's watcher (tests call checkSession()/sweep() through it). */
+  autofix: AutofixWatcher;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -174,6 +179,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   // One broker for agentd's github.request frames and the A2A result's pull request lookup.
   const github = opts.github ?? new GithubBroker(store, secretsBroker);
   const agentLink = new AgentLink(store, config, secretsBroker, sse, laptopProbe, mail, github, opts.githubRefresh);
+  // #503 Auto-fix CI: a failing check becomes mail from `system`, on the same path as a person's
+  // message (queued behind a busy agent, waking an asleep Drive).
+  const autofix = new AutofixWatcher({
+    store,
+    github,
+    insert: async (sessionId, mailId, text) => {
+      await mail.post({ id: mailId, sessionId, from: { kind: "system" }, text });
+    },
+    deliver: (sessionId) => agentLink.deliverMailForSession(sessionId),
+    log: (msg, err) => fastify.log.warn({ err }, msg),
+  });
   // Session search (#289): chunks follow entries as they arrive, and imports and formats.
   const indexer = new SessionIndexer(store, (msg) => fastify.log.warn(msg));
   agentLink.setIndexer(indexer);
@@ -358,14 +374,18 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ...(litellmKeys ? { litellmKeys } : {}),
     localHostEvents,
     ...(localHostNgrok ? { localHostNgrok } : {}),
+    autofix,
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
   // doc comment. The web role never holds a socket for any run, so it's never started there.
   let stopDownQueuePoller: (() => void) | undefined;
+  let stopAutofix: (() => void) | undefined;
   if (config.role !== "web") {
     agentLink.register(fastify);
     stopDownQueuePoller = agentLink.startDownQueuePoller();
+    // #503: between ticks too, while this instance is up (it is while it holds Drives' sockets).
+    stopAutofix = autofix.start();
   }
 
   const stopRunReconciler = runs.startReconciler();
@@ -376,10 +396,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const stopBackgroundTasks = () => {
     stopRunReconciler();
     stopDownQueuePoller?.();
+    stopAutofix?.();
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, localHostEvents, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, localHostEvents, autofix, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

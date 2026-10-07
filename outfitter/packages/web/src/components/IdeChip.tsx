@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useIde, startingLabel } from "./IdeProvider.tsx";
 import { VsCodeIcon } from "./VsCodeIcon.tsx";
+import { DRIVE_FIRST } from "./SessionMenu.tsx";
 import { Working } from "./Working.tsx";
 
 /**
@@ -96,7 +97,7 @@ export function IdeChip() {
         aria-disabled={working || undefined}
         aria-busy={working || undefined}
         aria-describedby={note ? noteId : undefined}
-        title={openable ? "Open this Drive's files in VS Code in the browser, with a terminal. Only the floppy's owner and sysops can open it." : "The Drive has to be running first."}
+        title={openable ? "Open this Drive's files in VS Code in the browser, with a terminal. Only the floppy's owner and sysops can open it." : DRIVE_FIRST}
       >
         {working ? (
           <Working label={startingLabel(busy === "open" && !starting ? "requested" : ide.state)} srOnly={false} />

@@ -1,0 +1,1998 @@
+/* #498: a floppy's page, Claude Code's shape in Outfitter's dress (docs/design/
+ * sessions-redesign-demo.html). Disk Box sidebar | transcript column (one-line header, flowing
+ * transcript, the Knight Rider seam, the dock) | optional Details pane. Phones (<720px) get the
+ * floppy full screen and a bottom sheet. Square corners, Silkscreen only for labels and states,
+ * hard offset shadows on primary buttons, as everywhere else. */
+
+/* ---------- the page takes the whole window; the app bar steps aside ---------- */
+
+.app-shell.is-session {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-main.is-session {
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+  padding: 0;
+  display: flex;
+}
+
+.session-shell {
+  /* A softer rule than --border for the many hairlines this layout needs. */
+  --rule: color-mix(in srgb, var(--border) 45%, var(--bg));
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  background: var(--bg);
+}
+
+/* Buttons in this layout's chrome are flat until hovered; the app-wide button look (border, offset
+ * shadow) is kept for real actions (.btn) only. */
+.session-shell .icon-btn,
+.session-shell .disk-box-row,
+.session-shell .flow-tool-line,
+.session-shell .flow-think-line,
+.session-shell .menu-item,
+.session-shell .pane-tabs button,
+.session-shell .details-link,
+.session-shell .composer-pill,
+.pop-menu-list > a,
+.pop-menu-list > button {
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+  transform: none;
+  color: inherit;
+  font-weight: 400;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.session-shell .icon-btn:hover,
+.pop-menu .icon-btn:hover {
+  border-color: var(--rule);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.session-shell .icon-btn[aria-pressed="true"],
+.session-shell .icon-btn[aria-expanded="true"] {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+/* ---------- lamps: the states a person waits on ---------- */
+
+.lamp {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  flex: none;
+  background: var(--text-dim);
+  opacity: 0.55;
+}
+
+.lamp-running {
+  background: var(--ok);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--ok);
+  animation: lamp-blink 1.2s steps(2) infinite;
+}
+
+.lamp-needsYou {
+  background: var(--warn);
+  opacity: 1;
+}
+
+.lamp-ready {
+  background: var(--ok);
+  opacity: 0.8;
+}
+
+.lamp-error {
+  background: var(--danger);
+  opacity: 1;
+}
+
+@keyframes lamp-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------- Disk Box sidebar ---------- */
+
+.disk-box {
+  width: 272px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--rule);
+  background: var(--bg-inset);
+}
+
+.disk-box-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 8px 12px;
+}
+
+.disk-box-logo {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.14em;
+}
+
+.disk-box-logo:visited {
+  color: var(--text);
+}
+
+.session-shell .disk-box-new {
+  margin: 0 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent);
+  color: var(--title-label-text);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--border-strong);
+}
+
+.disk-box-search {
+  position: relative;
+  margin: 0 12px 6px;
+  display: block;
+  color: var(--text-dim);
+}
+
+.disk-box-search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.disk-box-search input {
+  width: 100%;
+  padding-left: 28px;
+  background: var(--bg);
+  border-color: var(--rule);
+  font-family: var(--font-body);
+}
+
+.disk-box-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 12px;
+}
+
+.disk-box-group-label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  padding: 12px 8px 4px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.disk-box-empty {
+  padding: 8px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.session-shell .disk-box-row {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 7px 8px;
+  text-align: left;
+  color: var(--text);
+}
+
+.session-shell .disk-box-row:hover {
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-inset));
+}
+
+/* --bg, not --bg-elevated: the row's --text-dim keeps AA on it in both themes. */
+.session-shell .disk-box-row[aria-current="page"] {
+  background: var(--bg);
+  border-color: var(--border);
+  box-shadow: 2px 2px 0 var(--rule);
+}
+
+.disk-box-row-title {
+  font-weight: 600;
+  font-size: 0.86rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.disk-box-row-meta {
+  grid-column: 2 / 4;
+  font: 12px var(--font-mono);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.disk-box-row-time {
+  font: 11px var(--font-mono);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.disk-box-row-flag {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 1px 4px;
+  background: var(--warn);
+  color: var(--warn-contrast);
+}
+
+.disk-box-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.8rem;
+}
+
+.disk-box-foot-spacer {
+  flex: 1;
+}
+
+.disk-box-foot .provider-strip-popover {
+  bottom: calc(100% + 6px);
+  top: auto;
+}
+
+/* ---------- pop-up menus (⋯, Pages) ---------- */
+
+.pop-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.pop-menu-list {
+  position: absolute;
+  z-index: 60;
+  min-width: 240px;
+  max-height: min(70vh, 32rem);
+  overflow-y: auto;
+  display: grid;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: 4px 4px 0 var(--bg-inset);
+}
+
+.pop-menu-list.is-below {
+  top: calc(100% + 4px);
+}
+
+.pop-menu-list.is-above {
+  bottom: calc(100% + 4px);
+}
+
+.pop-menu-list.is-end {
+  right: 0;
+}
+
+.pop-menu-list.is-start {
+  left: 0;
+}
+
+.pop-menu-list > a,
+.pop-menu-list > button,
+.menu-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.86rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.pop-menu-list > a,
+.pop-menu-list > button:not(.menu-item) {
+  grid-template-columns: 1fr;
+}
+
+.pop-menu-list > a:visited {
+  color: var(--text);
+}
+
+.pop-menu-list > a:hover,
+.pop-menu-list > a:focus-visible,
+.pop-menu-list > button:hover:not(:disabled),
+.pop-menu-list > button:focus-visible,
+.session-shell .menu-item:hover:not(:disabled),
+.session-shell .menu-item:focus-visible {
+  background: var(--accent);
+  color: var(--title-label-text);
+  outline-offset: -2px;
+}
+
+.pop-menu-list > a.active {
+  font-weight: 600;
+}
+
+.menu-scroll {
+  display: grid;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.menu-item small {
+  font: 11px var(--font-mono);
+  opacity: 0.8;
+}
+
+.menu-item.is-danger {
+  color: var(--danger);
+}
+
+.menu-item-glyph {
+  text-align: center;
+}
+
+.pop-menu-list hr,
+.sheet-menu hr {
+  margin: 4px 0;
+  border-top-color: var(--rule);
+}
+
+/* ---------- one-line header ---------- */
+
+.session-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+}
+
+.session-head-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-head-title h1 {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.session-state .status-pill {
+  border: 0;
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.session-state .status-pill::before {
+  content: none;
+}
+
+.session-transport-detail {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--danger);
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The live chips: GitHub facts, previews, the IDE. #502's git chips join them here. One line;
+ * what doesn't fit is cut, and all of it is in the Details pane. */
+.session-chips {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.session-chips > * {
+  flex: none;
+}
+
+.session-chips .preview-cluster {
+  flex-wrap: nowrap;
+}
+
+/* ---------- body: transcript column + pane ---------- */
+
+.session-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.session-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.transcript.flow {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 22px 20px 20px;
+  gap: 14px;
+  min-height: 0;
+}
+
+/* ---------- transcript pieces ---------- */
+
+.flow-user {
+  position: relative;
+  align-self: flex-end;
+  max-width: min(85%, 52rem);
+  padding: 9px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--rule);
+  word-break: break-word;
+}
+
+.flow-user.is-queued {
+  border-style: dashed;
+  background: var(--bg-inset);
+}
+
+.flow-user-tag {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.flow-user .md > :first-child,
+.flow-prose .md > :first-child {
+  margin-top: 0;
+}
+
+.flow-user .md > :last-child,
+.flow-prose .md > :last-child {
+  margin-bottom: 0;
+}
+
+.flow-ai,
+.flow-tool,
+.flow-think {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 0 10px;
+}
+
+.flow-bullet {
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  background: var(--text);
+}
+
+.flow-prose {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.flow-caret {
+  display: inline-block;
+  width: 10px;
+  color: var(--text-dim);
+  transition: transform 0.12s;
+}
+
+[aria-expanded="true"] > .flow-caret {
+  transform: rotate(90deg);
+}
+
+/* Thinking: one line, opened on demand. */
+.flow-think > .flow-think-line {
+  grid-column: 2;
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  justify-self: start;
+  min-height: 0;
+  padding: 0;
+  font: italic 0.86rem var(--font-body);
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.flow-think > .flow-think-line:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.flow-think-star {
+  font-style: normal;
+}
+
+.flow-think.is-live .flow-think-star {
+  color: var(--ok);
+  animation: lamp-blink 1s steps(2) infinite;
+}
+
+.flow-think-body {
+  grid-column: 2;
+  margin-top: 4px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--rule);
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 0.86rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+/* Tool rows: ● name argument, └ summary. */
+.flow-tool {
+  font: 13px/1.45 var(--font-mono);
+}
+
+.flow-tool-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border: 1.5px solid var(--text-dim);
+}
+
+.flow-tool.is-ok > .flow-tool-dot {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.flow-tool.is-error > .flow-tool-dot {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.flow-tool.is-running > .flow-tool-dot {
+  border-color: var(--ok);
+  animation: lamp-blink 1s steps(2) infinite;
+}
+
+.session-shell .flow-tool-line {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  align-items: baseline;
+  text-align: left;
+  font: inherit;
+}
+
+.session-shell .flow-tool-line:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.flow-tool-line:hover:not(:disabled) .flow-tool-name {
+  text-decoration: underline;
+}
+
+.flow-tool-name {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.flow-tool-arg {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.flow-tool-sum {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.flow-tool-sum::before {
+  content: "└ ";
+  opacity: 0.6;
+}
+
+.flow-tool-sum.is-pass {
+  color: var(--ok);
+}
+
+.flow-tool-sum.is-fail {
+  color: var(--danger);
+}
+
+.flow-tool-out,
+.flow-diff,
+.flow-lookups-list,
+.flow-tool-extra {
+  grid-column: 2;
+  margin-top: 6px;
+}
+
+.flow-tool-out {
+  max-height: 240px;
+  overflow: auto;
+  margin-bottom: 0;
+  padding: 8px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: pre;
+}
+
+.flow-tool-out.is-error {
+  color: var(--danger);
+}
+
+.flow-tool-out.is-input {
+  color: var(--text);
+}
+
+.flow-lookups-list {
+  display: grid;
+  gap: 6px;
+}
+
+/* Inline diffs, from the edit's own arguments. */
+.flow-diff {
+  border: 1px solid var(--rule);
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.flow-diff-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--rule);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.flow-diff pre {
+  margin: 0;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.flow-dl {
+  display: block;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.flow-dl.is-add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.flow-dl.is-del {
+  background: var(--diff-del-bg);
+  color: var(--diff-del);
+}
+
+.flow-dl-mark {
+  display: inline-block;
+  width: 16px;
+  user-select: none;
+}
+
+.flow-diff-hunk + .flow-diff-hunk {
+  display: block;
+  border-top: 1px dashed var(--rule);
+}
+
+.flow-diff-add {
+  color: var(--diff-add);
+}
+
+.flow-diff-del {
+  color: var(--diff-del);
+}
+
+/* Passthrough lines (system, compaction, captures) keep their own look, quieter. */
+.transcript.flow > .entry {
+  font-size: 0.82rem;
+}
+
+/* The idle floppy's last line: READY. and the blinking cursor. */
+.flow-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 24px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.flow-end.is-ready {
+  color: var(--ok);
+}
+
+.flow-end.is-error {
+  color: var(--danger);
+}
+
+.flow-cursor {
+  width: 8px;
+  height: 13px;
+  background: var(--ok);
+  animation: lamp-blink 1s steps(2) infinite;
+}
+
+/* ---------- the seam: Knight Rider scanner ---------- */
+
+.scanner-seam {
+  flex: none;
+  height: 5px;
+  margin-bottom: 8px;
+}
+
+.kitt-scanner {
+  display: block;
+  width: 100%;
+  height: 5px;
+  color: var(--scanner);
+}
+
+.session-shell[data-scanner="phosphor"] .kitt-scanner {
+  color: var(--ok);
+}
+
+/* ---------- the dock: live status, notes, a question, the composer ---------- */
+
+.session-dock {
+  position: relative;
+  width: 100%;
+  max-width: 852px;
+  margin: 0 auto;
+  padding: 0 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.live-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 0 4px;
+  font: 13px var(--font-mono);
+  color: var(--text-dim);
+}
+
+.live-spin {
+  color: var(--ok);
+  animation: lamp-blink 1s steps(2) infinite;
+}
+
+.live-verb {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60ch;
+}
+
+.live-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.live-hint {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* Retro notes (OOM, provider down, held mail, archived, …) as one compact line each. */
+.session-dock .dock-note,
+.session-dock .device-not-present {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 5px 10px;
+  border-left: 3px solid var(--rule);
+  background: var(--bg-inset);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.session-dock .dock-note.is-error {
+  border-left-color: var(--danger);
+}
+
+.session-dock .dock-note.is-warn {
+  border-left-color: var(--warn);
+}
+
+.session-dock .send-status-error strong {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--danger);
+}
+
+.session-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: calc(100% - 32px);
+  padding: 6px 12px;
+  background: var(--text);
+  color: var(--bg);
+  font: 12px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The waiting question, docked above the composer. */
+.session-dock .ui-request {
+  display: grid;
+  gap: 6px;
+  padding: 0 0 10px;
+  border: 1px solid var(--warn);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--warn);
+}
+
+.session-dock .ui-request > :not(.ui-request-head) {
+  margin: 0 10px;
+}
+
+.session-dock .ui-request p {
+  margin-top: 0;
+  margin-bottom: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.ui-request-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.ui-request-head .ui-request-source {
+  display: inline;
+  margin: 0;
+  font-size: 10px;
+}
+
+.session-dock .ui-request-outfitter {
+  border: 2px solid var(--danger);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--danger);
+}
+
+.ui-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-request-actions input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.ui-request-keys {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ui-request-keys kbd {
+  font-size: 11px;
+}
+
+/* The composer: one card, text on top, one row of controls under it. */
+.session-dock .composer {
+  display: block;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--bg-inset);
+  padding: 0;
+}
+
+.session-dock .composer:focus-within {
+  border-color: var(--border-strong);
+}
+
+.session-dock .composer .md-editor-wrap {
+  border: 0;
+}
+
+.session-dock .composer .md-editor,
+.session-dock .composer .md-editor-input,
+.session-dock .composer .md-editor-mirror {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.session-dock .composer .md-editor .md-editor-input {
+  min-height: 3rem;
+  max-height: min(18rem, 40vh);
+}
+
+.session-dock .composer-status-row {
+  padding: 6px 10px 0;
+}
+
+.session-dock .composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+
+.session-dock .composer-controls .md-tools-toggle,
+.session-dock .composer-size-toggle {
+  min-width: 30px;
+  min-height: 30px;
+  align-self: center;
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.session-dock .composer-controls .md-tools-toggle:hover,
+.session-dock .composer-size-toggle:hover {
+  border-color: var(--rule);
+}
+
+.session-dock .composer-size-toggle[aria-pressed="true"],
+.session-dock .composer-controls .md-tools-toggle[aria-expanded="true"] {
+  border-color: var(--border);
+}
+
+.session-dock .composer-mode-select,
+.session-dock .composer-mode-compact {
+  min-height: 30px;
+  padding: 2px 6px;
+  background: transparent;
+  border-color: transparent;
+  font-size: 0.8rem;
+}
+
+.session-dock .composer-mode-select:hover,
+.session-dock .composer-mode-compact:hover {
+  border-color: var(--rule);
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+/* Text stays --text here: --text-dim on --bg-elevated is under AA in the C64 theme. */
+.session-shell .composer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  max-width: 22ch;
+  padding: 2px 7px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-shell button.composer-pill:hover:not(:disabled) {
+  border-color: var(--rule);
+}
+
+.session-dock .voice-wrap {
+  margin-left: 0;
+}
+
+.session-dock .send-button,
+.session-dock .break-button {
+  min-width: 36px;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 1rem;
+}
+
+.session-dock .send-button {
+  border-color: var(--border-strong);
+  box-shadow: 2px 2px 0 var(--border-strong);
+}
+
+.session-dock .send-button[aria-disabled="true"] {
+  box-shadow: none;
+}
+
+.session-dock .send-glyph {
+  display: inline-grid;
+  font-size: 1em;
+}
+
+.session-dock .break-button {
+  display: inline-grid;
+  place-items: center;
+  background: var(--danger);
+  color: var(--danger-contrast);
+  border-color: var(--danger);
+  box-shadow: 2px 2px 0 var(--bg-inset);
+}
+
+.session-dock .break-button:hover {
+  border-color: var(--border-strong);
+}
+
+.session-dock .voice-note {
+  padding: 0 10px 6px;
+}
+
+/* ---------- right pane: tabs, Details ---------- */
+
+.session-pane {
+  width: 344px;
+  flex: none;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--rule);
+  background: var(--bg-inset);
+}
+
+.pane-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg-inset);
+}
+
+.session-shell .pane-tabs button {
+  flex: 1;
+  padding: 9px 8px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.session-shell .pane-tabs button[aria-selected="true"] {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--ok);
+}
+
+.details-sec {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.details-sec h2 {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.details-kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.details-kv dt {
+  color: var(--text-dim);
+}
+
+.details-kv dd {
+  margin: 0;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.session-shell .details-link {
+  min-height: 0;
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--link);
+  text-decoration: underline dotted;
+  font-size: inherit;
+}
+
+.details-pending {
+  display: block;
+  color: var(--text-dim);
+}
+
+.details-line {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.details-empty {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.details-sec .context-meter {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.details-sec .context-oom-note {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--danger);
+}
+
+.details-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.details-chips .github-chip {
+  max-width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+.details-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 0.84rem;
+}
+
+.details-toggle small {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+/* #503: why the Auto-fix switch couldn't change. */
+.details-toggle small.git-error {
+  color: var(--danger);
+}
+
+.session-shell .details-switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  min-width: 36px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.details-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-dim);
+}
+
+.session-shell .details-switch[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.details-switch[aria-checked="true"]::after {
+  left: 19px;
+  background: var(--ok);
+}
+
+/* The Nerd out panel, inside Details: no window chrome, its cards stacked. */
+.nerd-out.is-embedded {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.nerd-out.is-embedded .nerd-out-titlebar:empty {
+  display: none;
+}
+
+.nerd-out.is-embedded .nerd-out-body {
+  padding: 0;
+}
+
+.nerd-out.is-embedded .nerd-out-grid {
+  grid-template-columns: 1fr;
+}
+
+/* ---------- #502: git chips, the phone strip, the Changes tab ---------- */
+
+.git-add {
+  color: var(--diff-add);
+}
+
+.git-del {
+  color: var(--diff-del);
+}
+
+.git-st-pass {
+  color: var(--ok);
+}
+
+.git-st-fail {
+  color: var(--danger);
+}
+
+.git-st-run {
+  color: var(--warn);
+}
+
+.session-shell .git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  box-shadow: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.session-shell .git-chip:hover {
+  border-color: var(--border);
+  transform: none;
+}
+
+.git-chip svg,
+.git-strip svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.git-chip-branch {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-shell .git-chip.is-fail {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.session-shell .git-chip.is-behind {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.session-shell .git-chip.is-merged {
+  color: var(--text-dim);
+}
+
+.session-shell .git-action {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-shell .git-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+  box-shadow: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.git-strip-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.git-strip-part:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.git-strip-part.is-fail {
+  color: var(--danger);
+}
+
+.git-strip-part.is-behind {
+  color: var(--warn);
+}
+
+.git-strip-caret {
+  margin-left: auto;
+}
+
+.pane-pad {
+  padding: 12px 14px;
+}
+
+.changes-pane {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.git-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--ok);
+  font-size: 0.8rem;
+}
+
+.git-notice > span {
+  flex: 1;
+}
+
+.git-notice.is-warn {
+  border-left-color: var(--warn);
+}
+
+.git-notice.is-error {
+  border-left-color: var(--danger);
+}
+
+.git-pushed {
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.git-branch-line {
+  overflow-wrap: anywhere;
+}
+
+.git-callout {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  font-size: 0.8rem;
+}
+
+.git-callout.is-fail {
+  border-color: var(--danger);
+}
+
+.git-callout.is-warn {
+  border-color: var(--warn);
+}
+
+.git-callout-note {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.git-log {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  font: 11px var(--font-mono);
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.git-callout .git-actions {
+  margin-top: 0;
+}
+
+.git-link {
+  font-size: 0.8rem;
+}
+
+.git-pr-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+  font-size: 0.86rem;
+}
+
+.git-pr-sub {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.git-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font: 12px var(--font-mono);
+}
+
+.git-check {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.git-check a,
+.git-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-check-time {
+  color: var(--text-dim);
+}
+
+.git-merge-why {
+  margin-top: 6px;
+}
+
+.git-others {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.git-others a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-others-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.git-files-head {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.git-file {
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-shell .git-file-row {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 14px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  font: 12px var(--font-mono);
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+}
+
+.session-shell .git-file-row:hover {
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-inset));
+}
+
+.git-file-st.is-A {
+  color: var(--diff-add);
+}
+
+.git-file-st.is-M,
+.git-file-st.is-R,
+.git-file-st.is-C {
+  color: var(--warn);
+}
+
+.git-file-st.is-D,
+.git-file-st.is-U {
+  color: var(--danger);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-empty {
+  margin: 0 14px 10px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.pane-diff {
+  margin: 0 10px 10px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  font: 12px var(--font-mono);
+  overflow-x: auto;
+}
+
+.session-shell .diff-row,
+.diff-row {
+  display: grid;
+  grid-template-columns: 34px 34px max-content;
+  min-width: 100%;
+  min-height: 0;
+  width: max-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  font: inherit;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
+  line-height: 1.5;
+}
+
+.session-shell button.diff-row:hover,
+.session-shell button.diff-row:focus-visible {
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+.diff-row.is-add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.diff-row.is-del {
+  background: var(--diff-del-bg);
+  color: var(--diff-del);
+}
+
+.diff-row.is-hunk,
+.diff-row.is-meta {
+  background: var(--bg-inset);
+  color: var(--text-dim);
+}
+
+.diff-ln {
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.diff-row.is-add .diff-ln,
+.diff-row.is-del .diff-ln {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.diff-text {
+  padding-right: 10px;
+  white-space: pre;
+}
+
+.diff-mark {
+  display: inline-block;
+  width: 14px;
+  user-select: none;
+}
+
+.diff-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 3px 8px 5px 68px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--bg-elevated);
+  font: 12px/1.4 var(--font-body);
+  white-space: normal;
+}
+
+.diff-note > span:nth-child(2) {
+  flex: 1;
+}
+
+.diff-note-who {
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.diff-note-form {
+  display: grid;
+  gap: 6px;
+  margin: 4px 8px 6px;
+  font-family: var(--font-body);
+}
+
+.diff-note-form textarea {
+  width: 100%;
+  font: 13px var(--font-body);
+  resize: vertical;
+}
+
+.diff-note-error,
+.git-notes-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: normal;
+}
+
+.diff-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.git-notes-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--warn);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+}
+
+.git-notes-bar > span {
+  flex: 1;
+}
+
+.changes-full {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.changes-full-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-inset);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.changes-full .session-head-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.create-pr-where {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.create-pr-draft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  font-size: 0.86rem;
+}
+
+.create-pr-draft input {
+  min-height: 0;
+}
+
+.create-pr-error {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--danger);
+  background: var(--bg-inset);
+  font-size: 0.84rem;
+}
+
+/* ---------- phone: the floppy fills the screen; ⋯ opens a sheet ---------- */
+
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgb(10 8 30 / 45%);
+}
+
+.session-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 71;
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-elevated);
+  border-top: 2px solid var(--border-strong);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.sheet-grip {
+  width: 40px;
+  height: 4px;
+  margin: 8px auto;
+  background: var(--rule);
+}
+
+.sheet-menu {
+  display: grid;
+  padding: 0 6px 6px;
+}
+
+.session-sheet .menu-item {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.sheet-foot {
+  display: grid;
+  gap: 10px;
+}
+
+.sheet-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.sheet-pages a {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.sheet-toggles {
+  display: flex;
+  gap: 8px;
+}
+
+.session-sheet .session-details {
+  background: var(--bg-inset);
+}
+
+.session-shell.is-phone .session-head {
+  gap: 6px;
+  padding: 4px 6px;
+  min-height: 52px;
+  position: relative;
+  z-index: 2;
+}
+
+.session-shell.is-phone .session-head-title {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.session-shell.is-phone .session-head-title h1 {
+  max-width: 100%;
+}
+
+.session-shell.is-phone .transcript.flow {
+  padding: 14px 12px 16px;
+  gap: 12px;
+}
+
+.session-shell.is-phone .flow-user {
+  max-width: 92%;
+}
+
+.session-shell.is-phone .flow-tool {
+  font-size: 12.5px;
+}
+
+.session-shell.is-phone .session-dock {
+  padding: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.session-shell.is-phone .live-hint {
+  display: none;
+}
+
+.session-shell.is-phone .composer-pill-text {
+  display: none;
+}
+
+.session-shell.is-phone .composer-pill {
+  max-width: 14ch;
+}
+
+.session-shell.is-phone .composer-mode-compact {
+  flex: none;
+  width: 5.75rem;
+  max-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp-running,
+  .flow-cursor,
+  .flow-tool.is-running > .flow-tool-dot,
+  .flow-think.is-live .flow-think-star,
+  .live-spin {
+    animation: none;
+  }
+
+  .flow-caret {
+    transition: none;
+  }
+}

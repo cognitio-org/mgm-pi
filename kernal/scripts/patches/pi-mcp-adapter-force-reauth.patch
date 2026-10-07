@@ -1,23 +1,37 @@
 --- a/pi-mcp-adapter/mcp-auth-flow.ts
 +++ b/pi-mcp-adapter/mcp-auth-flow.ts
-@@ -68,6 +68,12 @@
+@@ -68,6 +68,14 @@
    runtime?: McpOAuthRuntime
    skipIssuerMetadataValidation?: boolean
    definition?: Pick<ServerEntry, "headers" | "oauth">
 +  /**
 +   * Skip a stored refresh token and open the authorization server again.
 +   * Explicit /mcp-auth sets this. Reconnect must not: a gateway session that
-+   * still refreshes would otherwise never return a browser URL.
++   * still refreshes would otherwise never return a browser URL. The SDK skips
++   * the refresh; the provider skips a client registered for another callback
++   * port and persists nothing until the flow saves tokens.
 +   */
 +  forceReauthorization?: boolean
  }
  
  type AuthDiscovery = Pick<AuthOptions, "resourceMetadataUrl" | "scope" | "skipIssuerMetadataValidation">
-@@ -580,7 +586,12 @@
+@@ -565,7 +573,9 @@
+         if (!redirectUriMatches && !storedAuth.tokens.refreshToken) {
+           // A stale redirect URI only blocks the interactive leg; refresh does
+           // not send redirect_uri, so keep refresh-capable credentials intact.
+-          clearClientInfo(serverName, authStorageOptions)
++          // A forced flow keeps the saved entry: the provider skips the stale
++          // client, and an abandoned sign-in leaves the saved session as it was.
++          if (options.forceReauthorization !== true) clearClientInfo(serverName, authStorageOptions)
+           clearCodeVerifier(serverName, authStorageOptions)
+           clearOAuthState(serverName, authStorageOptions)
+         }
+@@ -580,7 +590,13 @@
      const discovery = applyOAuthConfig(await probeAuthDiscovery(serverUrl, definition, signal), config)
      authority()
      throwIfAborted(signal)
 -    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn }), signal)
++    if (options.forceReauthorization === true) authProvider.skipStaleClient()
 +    const result = await abortable(runSdkAuth(authProvider, {
 +      serverUrl,
 +      ...discovery,
@@ -27,6 +41,159 @@
      authority()
      throwIfAborted(signal)
      if (result === "AUTHORIZED") {
+--- a/pi-mcp-adapter/mcp-oauth-provider.ts
++++ b/pi-mcp-adapter/mcp-oauth-provider.ts
+@@ -20,6 +20,8 @@
+ } from "@modelcontextprotocol/client"
+ import {
+   getAuthForUrl,
++  getAuthEntry,
++  saveAuthEntry,
+   updateTokens,
+   updateClientInfo,
+   clearAllCredentials,
+@@ -256,6 +258,12 @@
+   private authFetch: OAuthFetch
+   private active = true
+   private flowClientInfo: StoredClientInfo | undefined
++  // Explicit /mcp-auth: a saved client registered for another callback port is skipped, and a
++  // client registered for this flow is persisted only with its tokens.
++  private skippingStaleClient = false
++  private deferredClientInfo: StoredClientInfo | undefined
++  // Set once the browser redirect is issued: only tokens after it come from this flow's code.
++  private authorizationRedirected = false
+   private flowCodeVerifier: string | undefined
+   private flowDiscoveryState: OAuthDiscoveryState | undefined
+   private flowIssuerMismatch = false
+@@ -305,6 +313,9 @@
+ 
+   deactivate(): void {
+     this.active = false
++    this.skippingStaleClient = false
++    this.deferredClientInfo = undefined
++    this.authorizationRedirected = false
+     this.invalidatedAccessToken = undefined
+     this.invalidatedClientId = undefined
+     this.staleRedirectClientId = undefined
+@@ -432,6 +443,11 @@
+     // another runtime writes the shared persistent entry for the same name.
+     const clientInfo = this.flowClientInfo ?? stored?.clientInfo
+     if (clientInfo?.clientId === this.invalidatedClientId) return undefined
++    // A metadata-document (CIMD) client is not bound to a registered redirect URI.
++    if (this.skippingStaleClient && clientInfo !== this.flowClientInfo && clientInfo
++      && clientInfo.clientId !== this.clientMetadataUrl && this.isRedirectStale(clientInfo)) {
++      return undefined
++    }
+ 
+     const clientMetadataUrl = this.clientMetadataUrl
+     const supportsClientMetadataDocument = this.flowDiscoveryState
+@@ -479,14 +495,15 @@
+         clientInfo.issuer = issuer
+         this.flowClientInfo = clientInfo
+         this.throwIfInactive()
+-        updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
++        if (clientInfo !== this.deferredClientInfo) {
++          updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
++        }
+       }
+       // Keep a stale dynamic registration available for its refresh attempt,
+       // but suppress it if that attempt invalidates the token and auth falls
+       // back to an interactive flow. The next clientInformation() call then
+       // makes the SDK register the current callback URI.
+-      const redirectUriIsStale = this.redirectUrl !== undefined
+-        && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))
++      const redirectUriIsStale = this.isRedirectStale(clientInfo)
+       this.staleRedirectClientId = redirectUriIsStale ? clientInfo.clientId : undefined
+       // Return all registration metadata and the local issuer extension.
+       // This keeps the SDK OAuth view and the stored issuer binding consistent.
+@@ -511,6 +528,26 @@
+     return undefined
+   }
+ 
++  private isRedirectStale(clientInfo: StoredClientInfo): boolean {
++    return this.redirectUrl !== undefined
++      && (!Array.isArray(clientInfo.redirectUris) || !clientInfo.redirectUris.includes(this.redirectUrl))
++  }
++
++  /**
++   * Explicit /mcp-auth (the SDK's forceReauthorization skips the refresh).
++   * The callback port is random per run, so a saved dynamic client usually
++   * lists another redirect URI, and the authorization server rejects it
++   * ("redirect_uri is not registered for this client"). Skip such a client
++   * so the SDK registers the current callback. A flag rather than an
++   * invalidated id, so an SDK credential reset cannot bring it back. The new
++   * client is persisted only with its tokens, so an abandoned sign-in leaves
++   * the saved client and refresh token paired and usable.
++   */
++  skipStaleClient(): void {
++    this.throwIfInactive()
++    this.skippingStaleClient = true
++  }
++
+   /**
+    * Save client information from dynamic registration.
+    */
+@@ -544,6 +581,10 @@
+     this.flowClientInfo = clientInfo
+     this.invalidatedClientId = undefined
+     this.lastObservedClientId = clientInfo.clientId
++    if (this.skippingStaleClient) {
++      this.deferredClientInfo = clientInfo
++      return
++    }
+     updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
+   }
+ 
+@@ -594,7 +635,24 @@
+       ...(issuer !== undefined ? { issuer } : {}),
+     }
+     this.throwIfInactive()
+-    updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
++    // The SDK also re-saves the saved tokens on the browser leg (to stamp an issuer). Those still
++    // belong to the saved client: commit the deferred client only with tokens from the code.
++    if (this.deferredClientInfo !== undefined && this.authorizationRedirected) {
++      // One write, so no reader or failed write sees the new client with the old tokens.
++      const entry: AuthEntry = getAuthEntry(this.serverName, this.storageOptions) ?? {}
++      if (entry.serverUrl !== this.serverUrl) {
++        delete entry.codeVerifier
++        delete entry.oauthState
++      }
++      entry.clientInfo = this.deferredClientInfo
++      entry.tokens = storedTokens
++      saveAuthEntry(this.serverName, entry, this.serverUrl, this.storageOptions)
++      this.deferredClientInfo = undefined
++      this.skippingStaleClient = false
++    } else {
++      updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions)
++      if (this.authorizationRedirected) this.skippingStaleClient = false
++    }
+     this.invalidatedAccessToken = undefined
+     this.lastSavedAccessToken = storedTokens.accessToken
+     // Discovery must survive the browser redirect so the callback can verify
+@@ -624,6 +682,7 @@
+         `Re-authentication required for MCP server: ${this.serverName}`,
+       )
+     }
++    this.authorizationRedirected = true
+     // URL is passed to callback, not logged (may contain sensitive params)
+     await this.callbacks.onRedirect(addAuthorizationParams(authorizationUrl, this.config.authorizationParams))
+   }
+@@ -711,6 +770,7 @@
+     switch (type) {
+       case "all":
+         this.flowClientInfo = undefined
++        this.deferredClientInfo = undefined
+         this.flowCodeVerifier = undefined
+         this.flowDiscoveryState = undefined
+         this.flowIssuerMismatch = false
+@@ -730,6 +790,7 @@
+         this.invalidatedClientId = this.lastObservedClientId
+         this.lastObservedClientId = undefined
+         this.flowClientInfo = undefined
++        this.deferredClientInfo = undefined
+         invalidateAuthEntryCache(this.serverName)
+         break
+       case "tokens":
 --- a/pi-mcp-adapter/commands.ts
 +++ b/pi-mcp-adapter/commands.ts
 @@ -404,6 +404,7 @@

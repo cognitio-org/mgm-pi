@@ -38,9 +38,12 @@ export function checkpointEvent(checkpoint: Checkpoint): CheckpointEvent {
 }
 
 /** A session for a browser response: its checkpoint without snapshotUrl/workspaceUrl. Those are
- * the api's to hand the next run (run.spec), never a viewer's. */
-export function sessionForWire<T extends { checkpoint?: Checkpoint }>(session: T): Omit<T, "checkpoint"> & { checkpoint?: PublicCheckpoint } {
-  const { checkpoint, ...rest } = session;
+ * the api's to hand the next run (run.spec), never a viewer's. #503: nor Auto-fix's bookkeeping
+ * (`autofix`); GET /api/sessions/:id shows its own view of it. */
+export function sessionForWire<T extends { checkpoint?: Checkpoint; autofix?: unknown }>(
+  session: T,
+): Omit<T, "checkpoint" | "autofix"> & { checkpoint?: PublicCheckpoint } {
+  const { checkpoint, autofix: _autofix, ...rest } = session;
   return checkpoint ? { ...rest, checkpoint: publicCheckpoint(checkpoint) } : rest;
 }
 

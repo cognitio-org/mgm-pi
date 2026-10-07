@@ -1777,6 +1777,14 @@
   resize: vertical;
 }
 
+.diff-note-error,
+.git-notes-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: normal;
+}
+
 .diff-note-actions {
   display: flex;
   justify-content: flex-end;

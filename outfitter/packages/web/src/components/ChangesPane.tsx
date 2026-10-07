@@ -1,4 +1,6 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap.ts";
+import { BackIcon } from "./SessionIcons.tsx";
 import type { ChangedFile, GithubCheck, LastPush } from "../api/client.ts";
 import type { DiffNotes } from "../hooks/useDiffNotes.ts";
 import type { SessionGit } from "../hooks/useSessionGit.ts";
@@ -12,6 +14,7 @@ import {
   notesMessage,
   parsePatch,
   pushedLine,
+  httpUrl,
   rowLine,
   type DiffRow,
 } from "../lib/git-view.ts";
@@ -35,8 +38,10 @@ const STATUS_WORD: Record<ChangedFile["status"], string> = {
   U: "conflicted",
 };
 
-function NoteForm({ line, onSave, onCancel }: { line: number; onSave: (text: string) => void; onCancel: () => void }) {
+function NoteForm({ line, onSave, onCancel }: { line: number; onSave: (text: string) => string | null; onCancel: () => void }) {
   const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const save = () => setError(onSave(text.trim()));
   const id = useId();
   return (
     <div className="diff-note-form">
@@ -57,15 +62,20 @@ function NoteForm({ line, onSave, onCancel }: { line: number; onSave: (text: str
             onCancel();
           } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) {
             e.preventDefault();
-            onSave(text.trim());
+            save();
           }
         }}
       />
+      {error && (
+        <p className="diff-note-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="diff-note-actions">
         <button type="button" className="btn btn-small" onClick={onCancel}>
           Cancel
         </button>
-        <button type="button" className="btn btn-small btn-primary" disabled={!text.trim()} onClick={() => onSave(text.trim())}>
+        <button type="button" className="btn btn-small btn-primary" disabled={!text.trim()} onClick={save}>
           Add note
         </button>
       </div>
@@ -74,14 +84,31 @@ function NoteForm({ line, onSave, onCancel }: { line: number; onSave: (text: str
 }
 
 /** One file's patch with line numbers. Any added, removed or context line takes a note. */
+/** A diff row's identity across refreshes: which file, which side's numbers. Indexes move when the
+ * patch changes; this only matches the same line. */
+function rowKey(path: string, row: DiffRow): string {
+  return `${path}:${row.kind}:${row.oldLine ?? ""}:${row.newLine ?? ""}`;
+}
+
 export function FileDiff({ file, notes }: { file: ChangedFile; notes: DiffNotes }) {
-  const [noteAt, setNoteAt] = useState<number | null>(null);
+  const [noteAt, setNoteAt] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const rows: DiffRow[] = file.patch && !file.binary && !file.patchOmitted ? parsePatch(file.patch) : [];
+  // A refresh that took the line away closes its form.
+  const present = noteAt !== null && rows.some((row) => rowKey(file.path, row) === noteAt);
+  useEffect(() => {
+    if (noteAt !== null && !present) setNoteAt(null);
+  }, [noteAt, present]);
   if (file.binary) return <p className="diff-empty">Binary file: no text diff.</p>;
   if (file.patchOmitted) return <p className="diff-empty">This file's diff is too big to show here.</p>;
   if (!file.patch) return <p className="diff-empty">{file.status === "R" ? "Renamed, with no content changes." : "No text changes to show."}</p>;
-  const rows: DiffRow[] = parsePatch(file.patch);
   return (
     <div className="pane-diff" role="group" aria-label={`Diff of ${file.path}`}>
+      {saveWarning && (
+        <p className="diff-note-error" role="status">
+          {saveWarning}
+        </p>
+      )}
       {rows.map((row, i) => {
         if (row.kind === "hunk" || row.kind === "meta")
           return (
@@ -92,6 +119,7 @@ export function FileDiff({ file, notes }: { file: ChangedFile; notes: DiffNotes 
             </div>
           );
         const line = rowLine(row)!;
+        const key = rowKey(file.path, row);
         const side = row.kind === "del" ? "old" : "new";
         const here = notes.notes
           .map((n, index) => ({ n, index }))
@@ -102,9 +130,9 @@ export function FileDiff({ file, notes }: { file: ChangedFile; notes: DiffNotes 
             <button
               type="button"
               className={`diff-row is-${row.kind}`}
-              aria-expanded={noteAt === i}
+              aria-expanded={noteAt === key}
               aria-label={`${row.kind === "add" ? "Added" : row.kind === "del" ? "Removed" : "Line"} ${line}: ${row.text}. Leave a note`}
-              onClick={() => setNoteAt(noteAt === i ? null : i)}
+              onClick={() => setNoteAt(noteAt === key ? null : key)}
             >
               <span className="diff-ln">{row.oldLine ?? ""}</span>
               <span className="diff-ln">{row.newLine ?? ""}</span>
@@ -124,13 +152,17 @@ export function FileDiff({ file, notes }: { file: ChangedFile; notes: DiffNotes 
                 </button>
               </div>
             ))}
-            {noteAt === i && (
+            {noteAt === key && (
               <NoteForm
                 line={line}
                 onCancel={() => setNoteAt(null)}
                 onSave={(text) => {
-                  notes.add({ path: file.path, line, side, text });
+                  const result = notes.add({ path: file.path, line, side, text });
+                  // A refusal keeps the form open with the reason; an added note closes it.
+                  if (!result.added) return result.message;
                   setNoteAt(null);
+                  if (result.message) setSaveWarning(result.message);
+                  return null;
                 }}
               />
             )}
@@ -168,8 +200,8 @@ function FailingCheck({ check, git }: { check: GithubCheck; git: SessionGit }) {
         <button type="button" className="btn" onClick={() => void git.rerun()} disabled={git.busy !== null}>
           {git.busy === "rerun" ? <Working label="Re-running" /> : "Re-run"}
         </button>
-        {check.detailsUrl && (
-          <a href={check.detailsUrl} target="_blank" rel="noopener noreferrer" className="git-link">
+        {httpUrl(check.detailsUrl) && (
+          <a href={httpUrl(check.detailsUrl)!} target="_blank" rel="noopener noreferrer" className="git-link">
             Details ↗
           </a>
         )}
@@ -230,8 +262,8 @@ function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => v
               <span className={`git-st-${check.state === "pass" ? "pass" : check.state === "fail" ? "fail" : "run"}`} aria-hidden="true">
                 {CHECK_GLYPH[check.state]}
               </span>
-              {check.detailsUrl ? (
-                <a href={check.detailsUrl} target="_blank" rel="noopener noreferrer">
+              {httpUrl(check.detailsUrl) ? (
+                <a href={httpUrl(check.detailsUrl)!} target="_blank" rel="noopener noreferrer">
                   {check.name}
                 </a>
               ) : (
@@ -269,13 +301,13 @@ function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => v
               Merge…
             </button>
           )}
-          <a href={pr.url} target="_blank" rel="noopener noreferrer" className="git-link">
+          <a href={httpUrl(pr.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="git-link">
             View on GitHub ↗
           </a>
         </div>
       ) : (
         <div className="git-actions">
-          <a href={pr.url} target="_blank" rel="noopener noreferrer" className="git-link">
+          <a href={httpUrl(pr.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="git-link">
             View on GitHub ↗
           </a>
         </div>
@@ -285,7 +317,7 @@ function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => v
         <div className="git-others">
           <span className="git-others-label">Other open pull requests</span>
           {others.map((p) => (
-            <a key={p.number} href={p.url} target="_blank" rel="noopener noreferrer" title={p.title}>
+            <a key={p.number} href={httpUrl(p.url) ?? undefined} target="_blank" rel="noopener noreferrer" title={p.title}>
               #{p.number}
               {p.draft ? " draft" : ""} {p.title}
             </a>
@@ -313,9 +345,12 @@ export function ChangesPane({
   notes: DiffNotes;
   lastPush: LastPush | null | undefined;
   onCreatePr: () => void;
-  onSendNotes: (text: string) => void;
+  /** Resolves true once the message was accepted; the notes stay until then. */
+  onSendNotes: (text: string) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [sendingNotes, setSendingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
   const { status, changes } = git;
   const branch = changes?.branch ?? status?.branch ?? null;
   const base = changes?.base ?? status?.baseBranch ?? null;
@@ -367,8 +402,8 @@ export function ChangesPane({
             <strong>Merge conflict with {base ?? "the base branch"}</strong>
             {conflicts.length > 0 && <span className="mono">{conflicts.map((f) => f.path).join(", ")}</span>}
             <div className="git-actions">
-              <button type="button" className="btn btn-primary" onClick={git.resolveConflict}>
-                Resolve with agent
+              <button type="button" className="btn btn-primary" onClick={() => void git.resolveConflict()} disabled={git.busy !== null}>
+                {git.busy === "resolve" ? <Working label="Sending" /> : "Resolve with agent"}
               </button>
             </div>
           </div>
@@ -457,6 +492,12 @@ export function ChangesPane({
         <div className="git-notes-bar" role="region" aria-label="Notes on the diff">
           <span>
             {notes.notes.length} note{notes.notes.length === 1 ? "" : "s"} on the diff
+            {notesError ? (
+              <span className="git-notes-error" role="alert">
+                {" "}
+                · {notesError}
+              </span>
+            ) : null}
           </span>
           <button type="button" className="btn btn-small" onClick={notes.clear}>
             Discard
@@ -464,15 +505,41 @@ export function ChangesPane({
           <button
             type="button"
             className="btn btn-small btn-primary"
-            onClick={() => {
-              onSendNotes(notesMessage(notes.notes));
-              notes.clear();
+            disabled={sendingNotes}
+            onClick={async () => {
+              const clear = notes.clear;
+              setSendingNotes(true);
+              setNotesError(null);
+              const ok = await onSendNotes(notesMessage(notes.notes)).catch(() => false);
+              setSendingNotes(false);
+              if (ok) clear();
+              else setNotesError("Not sent: your notes are kept. Try again.");
             }}
           >
-            Send to agent
+            {sendingNotes ? <Working label="Sending" /> : "Send to agent"}
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The phone's full-screen Changes view: a modal over the floppy, back arrow or Esc to return. */
+export function ChangesFullView({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(ref, { onEscape: onClose });
+  return (
+    <div ref={ref} className="changes-full" role="dialog" aria-modal="true" aria-label="Changes">
+      <header className="session-head">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to the floppy">
+          <BackIcon />
+        </button>
+        <div className="session-head-title">
+          <h1>Changes</h1>
+          <span className="session-state">{title}</span>
+        </div>
+      </header>
+      <div className="changes-full-body">{children}</div>
     </div>
   );
 }

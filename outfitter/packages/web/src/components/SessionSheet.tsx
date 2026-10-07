@@ -1,6 +1,5 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
-
-const FOCUSABLE = "button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])";
+import { useFocusTrap } from "../hooks/useFocusTrap.ts";
 
 /**
  * #498: the phone's ⋯ bottom sheet: the floppy's menu, its details and the page's own controls.
@@ -22,52 +21,23 @@ export function SessionSheet({
   const ref = useRef<HTMLDivElement | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  useFocusTrap(ref, { onEscape: () => closeRef.current(), returnFocus, initial: "[role='menuitem']:not(:disabled)" });
 
+  // Arrow keys walk the menu's actions.
   useEffect(() => {
     const sheet = ref.current;
-    const back = returnFocus.current;
-    sheet?.querySelector<HTMLElement>("[role='menuitem']:not(:disabled)")?.focus();
     function onKey(event: KeyboardEvent) {
-      if (!sheet) return;
-      // Another modal (opened from inside the sheet) owns the keyboard until it closes.
-      const otherModal = [...document.querySelectorAll("[aria-modal='true']")].some((el) => el !== sheet);
-      if (otherModal) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        closeRef.current();
-        return;
-      }
-      if (event.key === "Tab") {
-        const items = [...sheet.querySelectorAll<HTMLElement>(FOCUSABLE)];
-        if (items.length === 0) return;
-        const first = items[0]!;
-        const last = items[items.length - 1]!;
-        const active = document.activeElement;
-        if (event.shiftKey && (active === first || !sheet.contains(active))) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && (active === last || !sheet.contains(active))) {
-          event.preventDefault();
-          first.focus();
-        }
-        return;
-      }
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        const items = [...sheet.querySelectorAll<HTMLElement>(".sheet-menu [role='menuitem']:not(:disabled)")];
-        const at = items.indexOf(document.activeElement as HTMLElement);
-        if (at === -1) return;
-        event.preventDefault();
-        const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
-        items[next]?.focus();
-      }
+      if (!sheet || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+      const items = [...sheet.querySelectorAll<HTMLElement>(".sheet-menu [role='menuitem']:not(:disabled)")];
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      if (at === -1) return;
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+      items[next]?.focus();
     }
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-      back?.focus();
-    };
-  }, [returnFocus]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <>

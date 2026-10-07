@@ -34,7 +34,7 @@ import {
 import { ThinkingRow, TranscriptFlow, UserBlock } from "../components/TranscriptFlow.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
-import { ChangesPane } from "../components/ChangesPane.tsx";
+import { ChangesFullView, ChangesPane } from "../components/ChangesPane.tsx";
 import { CreatePrDialog } from "../components/CreatePrDialog.tsx";
 import { GitChips, GitStrip, type GitChipAction } from "../components/GitChips.tsx";
 import { useSessionGit } from "../hooks/useSessionGit.ts";
@@ -321,19 +321,6 @@ export function SessionPage() {
   const changesFull = phone && changesFullFor === sessionId;
   const prDialog = prDialogFor === sessionId;
 
-  // The phone's Changes view closes on Esc, unless a dialog opened over it wants it.
-  useEffect(() => {
-    if (!changesFull) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelectorAll("[aria-modal='true']").length > 1) return;
-      event.preventDefault();
-      setChangesFullFor(null);
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [changesFull]);
-
   const header = useMemo(() => {
     const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
     return deriveSessionHeader(entries, (id) => windowById.get(id));
@@ -396,7 +383,8 @@ export function SessionPage() {
   /** Sends, or queues behind the running turn. A stopped or sleeping floppy needs nothing else: the
    * api stores the message as mail and wakes a Drive for it (session-create.ts's postUserMail), and
    * the status line says "Waking a drive" meanwhile. */
-  async function handleSend(text: string, behavior?: "steer" | "followUp") {
+  /** Resolves true once the api accepted (stored) the message. */
+  async function handleSend(text: string, behavior?: "steer" | "followUp"): Promise<boolean> {
     const sentAt = Date.now();
     const localId = `local-${sentAt}`;
     setNow(sentAt);
@@ -418,9 +406,10 @@ export function SessionPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setPendingSend((p) => (p?.localId === localId ? { ...p, error: message } : p));
-      return;
+      return false;
     }
     await reload().catch(() => {});
+    return true;
   }
 
   /** Retry on the status line: a failed send or a stuck turn re-sends; a drive that didn't come up
@@ -636,9 +625,10 @@ export function SessionPage() {
       notes={diffNotes}
       lastPush={lastPush}
       onCreatePr={() => setPrDialogFor(sessionId)}
-      onSendNotes={(text) => {
-        setChangesFullFor(null);
-        void handleSend(text);
+      onSendNotes={async (text) => {
+        const ok = await handleSend(text);
+        if (ok) setChangesFullFor(null);
+        return ok;
       }}
     />
   );
@@ -938,7 +928,9 @@ export function SessionPage() {
                   entries={entries}
                   entriesLoaded={entriesLoaded}
                   agentBusy={ticking}
-                  onSend={handleSend}
+                  onSend={async (text, behavior) => {
+                    await handleSend(text, behavior);
+                  }}
                   disabled={activity.composerDisabled || archived}
                   sending={activity.phase === "sending"}
                   placeholderOverride={placeholder}
@@ -1005,18 +997,9 @@ export function SessionPage() {
         </div>
 
         {changesFull && (
-          <div className="changes-full" role="dialog" aria-modal="true" aria-label="Changes">
-            <header className="session-head">
-              <button type="button" className="icon-btn" onClick={() => setChangesFullFor(null)} aria-label="Back to the floppy" autoFocus>
-                <BackIcon />
-              </button>
-              <div className="session-head-title">
-                <h1>Changes</h1>
-                <span className="session-state">{floppyTitle}</span>
-              </div>
-            </header>
-            <div className="changes-full-body">{changesPane}</div>
-          </div>
+          <ChangesFullView title={floppyTitle} onClose={() => setChangesFullFor(null)}>
+            {changesPane}
+          </ChangesFullView>
         )}
 
         {prDialog && (

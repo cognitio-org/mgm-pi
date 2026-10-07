@@ -102,7 +102,8 @@ export function GitChips({ git, onAction }: { git: SessionGit; onAction: (action
           className={chipClass(chip)}
           title={chipLabel(chip)}
           aria-label={chipLabel(chip)}
-          disabled={(chip.kind === "fix-ci" && git.busy === "fix-ci") || (chip.kind === "create-pr" && git.busy === "create-pr")}
+          // An action chip waits while any GitHub write is going; the others only open the tab.
+          disabled={(chip.kind === "fix-ci" || chip.kind === "create-pr") && git.busy !== null}
           onClick={() => onAction(actionOf(chip))}
         >
           <ChipBody chip={chip} />

@@ -59,7 +59,7 @@ function fakeGit(over: Partial<SessionGit> = {}): SessionGit {
   };
 }
 
-function Pane({ git, onSend = () => {}, onCreatePr = () => {} }: { git: SessionGit; onSend?: (t: string) => void; onCreatePr?: () => void }) {
+function Pane({ git, onSend = async () => true, onCreatePr = () => {} }: { git: SessionGit; onSend?: (t: string) => Promise<boolean>; onCreatePr?: () => void }) {
   const notes = useDiffNotes("s1");
   return <ChangesPane git={git} notes={notes} lastPush={{ sha: "7c1e9a4ffff", pushed: true }} onCreatePr={onCreatePr} onSendNotes={onSend} />;
 }
@@ -106,8 +106,8 @@ describe("ChangesPane", () => {
     expect([...host.querySelectorAll(".diff-row .diff-ln:nth-child(2)")].map((n) => n.textContent)).toEqual(["", "1", "", "2", "3"]);
   });
 
-  it("a note on a diff line goes to the agent as path:line in one message", () => {
-    const onSend = vi.fn();
+  it("a note on a diff line goes to the agent as path:line in one message", async () => {
+    const onSend = vi.fn(async () => true);
     const host = mount(<Pane git={fakeGit()} onSend={onSend} />);
     act(() => host.querySelector<HTMLButtonElement>(".git-file-row")!.click());
     const added = host.querySelector<HTMLButtonElement>("button.diff-row.is-add")!;
@@ -120,7 +120,7 @@ describe("ChangesPane", () => {
     act(() => button(host, /Add note/).click());
     expect(host.querySelector(".diff-note")?.textContent).toContain("rename this");
     expect(host.querySelector(".git-notes-bar")?.textContent).toContain("1 note on the diff");
-    act(() => button(host, /Send to agent/).click());
+    await act(async () => button(host, /Send to agent/).click());
     expect(onSend).toHaveBeenCalledWith("Notes on the diff:\n- src/a.ts:2: rename this");
     expect(host.querySelector(".git-notes-bar")).toBeNull();
   });
@@ -203,7 +203,7 @@ describe("useSessionGit actions", () => {
     return calls;
   }
 
-  function Probe({ onGit, send, runState = "idle" }: { onGit: (g: SessionGit) => void; send: (t: string) => Promise<void>; runState?: string }) {
+  function Probe({ onGit, send, runState = "idle" }: { onGit: (g: SessionGit) => void; send: (t: string) => Promise<boolean>; runState?: string }) {
     const git = useSessionGit({ sessionId: "s1", repo: "o/r", lastPush: null, runState, send });
     onGit(git);
     return null;
@@ -220,7 +220,7 @@ describe("useSessionGit actions", () => {
       "GET /api/sessions/s1/changes": () => changes(),
       "GET /api/sessions/s1/checks/77/log": () => ({ id: "77", name: "api / test", conclusion: "failure", detailsUrl: null, log: "boom", truncated: false }),
     });
-    const send = vi.fn(async () => {});
+    const send = vi.fn(async () => true);
     let git: SessionGit | null = null;
     mount(<Probe onGit={(g) => (git = g)} send={send} />);
     await flush();
@@ -238,7 +238,7 @@ describe("useSessionGit actions", () => {
       "POST /api/sessions/s1/pr/merge": () => new Response(JSON.stringify({ error: "head moved", code: "head-moved" }), { status: 409 }),
       "POST /api/sessions/s1/sync": () => ({ status: "updated", via: "merge", base: "main", branchMoved: true, agentNote: "Pull origin before going on." }),
     });
-    const send = vi.fn(async () => {});
+    const send = vi.fn(async () => true);
     let git: SessionGit | null = null;
     mount(<Probe onGit={(g) => (git = g)} send={send} runState="idle" />);
     await flush();

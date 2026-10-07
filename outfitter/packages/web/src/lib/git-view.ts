@@ -209,18 +209,44 @@ export interface DiffNote {
 
 /** One message for the agent with every note, `path:line: note` each. */
 export function notesMessage(notes: DiffNote[]): string {
-  const lines = notes.map((n) => `- ${n.path}:${n.line}${n.side === "old" ? " (removed line)" : ""}: ${n.text.replace(/\s+/g, " ").trim()}`);
+  const lines = notes.map((n) => `- ${n.path.replace(/\s+/g, " ")}:${n.line}${n.side === "old" ? " (removed line)" : ""}: ${n.text.replace(/\s+/g, " ").trim()}`);
   return `Notes on the diff:\n${lines.join("\n")}`;
 }
 
+/** A Markdown code fence that `text` can't close early: longer than any run of backticks in it. */
+export function codeFence(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${text}\n${fence}`;
+}
+
+/** An http(s) link, or null: a check's details page can be any CI host, but never javascript: and the like. */
+export function httpUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function fixCiMessage(pr: Pick<GithubSessionPr, "number">, check: Pick<GithubCheck, "name"> | null, logTail?: string): string {
-  const head = `CI failed on #${pr.number}${check ? ` (${check.name})` : ""}. Fix it and push.`;
+  const head = `CI failed on #${pr.number}${check ? ` (${check.name.replace(/\s+/g, " ")})` : ""}. Fix it and push.`;
   const tail = logTail?.trim();
-  return tail ? `${head}\n\n\`\`\`\n${tail}\n\`\`\`` : head;
+  return tail ? `${head}\n\n${codeFence(tail)}` : head;
+}
+
+/** A file path as inline code, on one line, that its own backticks can't break out of. */
+function inlinePath(path: string): string {
+  const one = path.replace(/\s+/g, " ");
+  const longest = Math.max(0, ...(one.match(/`+/g) ?? []).map((run) => run.length));
+  const tick = "`".repeat(longest + 1);
+  return longest > 0 ? `${tick} ${one} ${tick}` : `${tick}${one}${tick}`;
 }
 
 export function conflictMessage(files: string[], base: string, branch: string | null): string {
   const where = branch ? `Merging ${base} into ${branch}` : `Merging ${base} into this branch`;
-  const list = files.length > 0 ? ` conflicts in ${files.join(", ")}` : " conflicts";
+  const list = files.length > 0 ? ` conflicts in ${files.map(inlinePath).join(", ")}` : " conflicts";
   return `${where}${list}. Merge ${base} in, resolve the conflicts, run the tests, and push.`;
 }

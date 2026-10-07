@@ -16,7 +16,7 @@ export const CHANGES_MIN_MS = 15_000;
 /** And re-read on its own at this pace while the tab is visible. */
 export const CHANGES_POLL_MS = 60_000;
 
-export type GitBusy = "create-pr" | "merge" | "sync" | "rerun" | "fix-ci" | null;
+export type GitBusy = "create-pr" | "merge" | "sync" | "rerun" | "fix-ci" | "resolve" | null;
 
 export interface GitNotice {
   tone: "ok" | "warn" | "error";
@@ -50,7 +50,7 @@ export interface SessionGit {
   sync: () => Promise<void>;
   rerun: () => Promise<void>;
   fixCi: () => Promise<void>;
-  resolveConflict: () => void;
+  resolveConflict: () => Promise<void>;
 }
 
 function errorText(err: unknown): string {
@@ -74,7 +74,8 @@ export function useSessionGit({
   repo: string | null | undefined;
   lastPush: LastPush | null | undefined;
   runState: string | undefined;
-  send: (text: string) => Promise<void>;
+  /** The page's send. Resolves true once the api accepted the message. */
+  send: (text: string) => Promise<boolean>;
 }): SessionGit {
   const [status, setStatus] = useState<GithubSessionStatus | null>(null);
   const [changes, setChanges] = useState<SessionChanges | null>(null);
@@ -92,6 +93,8 @@ export function useSessionGit({
   statusRef.current = status;
   const changesRef = useRef(changes);
   changesRef.current = changes;
+  // One write at a time: a ref, so a double click in the same tick can't start a second.
+  const busyRef = useRef<GitBusy>(null);
   const sendRef = useRef(send);
   sendRef.current = send;
   const runStateRef = useRef(runState);
@@ -137,6 +140,8 @@ export function useSessionGit({
     setSyncConflict(false);
     setMergedPr(null);
     setLogs({});
+    setBusy(null);
+    busyRef.current = null;
     lastChangesAt.current = 0;
   }, [sessionId]);
 
@@ -160,18 +165,17 @@ export function useSessionGit({
     };
   }, [repo, loadStatus, loadChanges]);
 
-  // A checkpoint that reached GitHub changes both the diff and (soon) the checks.
+  // A checkpoint that reached GitHub changes both the diff and (soon) the checks. Only a new push
+  // on the same floppy: a switch to another floppy, or its first known push arriving, is not one.
   const pushedSha = lastPush?.sha;
-  const firstPush = useRef(true);
+  const lastSeenPush = useRef<{ sessionId: string; sha?: string }>({ sessionId, sha: pushedSha });
   useEffect(() => {
-    if (firstPush.current) {
-      firstPush.current = false;
-      return;
-    }
-    if (!pushedSha) return;
+    const seen = lastSeenPush.current;
+    lastSeenPush.current = { sessionId, sha: pushedSha };
+    if (seen.sessionId !== sessionId || !seen.sha || !pushedSha || seen.sha === pushedSha) return;
     loadChanges(true);
     loadStatus(true);
-  }, [pushedSha, loadChanges, loadStatus]);
+  }, [sessionId, pushedSha, loadChanges, loadStatus]);
 
   // A turn that ends usually leaves new work in the tree.
   const wasRunning = useRef(false);
@@ -189,20 +193,39 @@ export function useSessionGit({
     [loadStatus, loadChanges],
   );
 
-  async function act<T>(kind: Exclude<GitBusy, null>, run: () => Promise<T>): Promise<T | undefined> {
-    const id = sessionId;
+  /** Claims the one write slot for `kind`, or says no (another write is going). */
+  function claim(kind: Exclude<GitBusy, null>): boolean {
+    if (busyRef.current !== null) return false;
+    busyRef.current = kind;
     setBusy(kind);
     setNotice(null);
+    return true;
+  }
+
+  /** Frees the slot `kind` held (only that one), and re-reads everything for the floppy it ran on. */
+  function release(kind: Exclude<GitBusy, null>, id: string) {
+    if (current.current !== id) return;
+    if (busyRef.current === kind) {
+      busyRef.current = null;
+      setBusy(null);
+    }
+    refresh(true);
+  }
+
+  /** Runs one write. The page's send and the floppy are captured before the first await, so a
+   * result that comes back after the person moved to another floppy never acts on that one. */
+  async function act<T>(kind: Exclude<GitBusy, null>, run: (ctx: { id: string; send: (text: string) => Promise<boolean>; still: () => boolean }) => Promise<T>): Promise<T | undefined> {
+    if (!claim(kind)) return undefined;
+    const id = sessionId;
+    const send = sendRef.current;
+    const still = () => current.current === id;
     try {
-      return await run();
+      return await run({ id, send, still });
     } catch (err) {
-      if (current.current === id) setNotice({ tone: "error", text: errorText(err) });
+      if (still()) setNotice({ tone: "error", text: errorText(err) });
       return undefined;
     } finally {
-      if (current.current === id) {
-        setBusy(null);
-        refresh(true);
-      }
+      release(kind, id);
     }
   }
 
@@ -219,8 +242,8 @@ export function useSessionGit({
   );
 
   async function createPr(input: { title: string; body?: string; draft?: boolean }): Promise<CreatePrOutcome> {
+    if (!claim("create-pr")) return { ok: false, error: "Another GitHub action is still running." };
     const id = sessionId;
-    setBusy("create-pr");
     try {
       const made = await api.createSessionPr(id, input);
       if (current.current === id) setNotice({ tone: "ok", text: `Opened pull request${made.number ? ` #${made.number}` : ""}${made.draft ? " as a draft" : ""}.` });
@@ -229,15 +252,12 @@ export function useSessionGit({
       if (err instanceof ApiError) {
         const url = typeof err.body?.url === "string" ? err.body.url : undefined;
         if (err.code === "pr-exists") return { ok: false, error: "This branch already has a pull request.", url };
-        if (err.code === "no-commits") return { ok: false, error: `Nothing to open a pull request with: the branch has no commits beyond its base.` };
+        if (err.code === "no-commits") return { ok: false, error: "Nothing to open a pull request with: the branch has no commits beyond its base." };
         if (err.code === "no-branch") return { ok: false, error: "The branch isn't on GitHub yet: the agent hasn't pushed it." };
       }
       return { ok: false, error: errorText(err) };
     } finally {
-      if (current.current === id) {
-        setBusy(null);
-        refresh(true);
-      }
+      release("create-pr", id);
     }
   }
 
@@ -245,91 +265,90 @@ export function useSessionGit({
     const pr = statusRef.current?.pr;
     if (!pr?.headSha) return;
     const sha = pr.headSha;
-    const id = sessionId;
-    setBusy("merge");
-    setNotice(null);
-    try {
-      const merged = await api.mergeSessionPr(id, { sha, method: "squash" });
-      if (current.current !== id) return;
-      setMergedPr({ number: merged.number, title: pr.title });
-      setNotice({ tone: "ok", text: `Merged #${merged.number} into ${pr.base ?? "the base branch"}.` });
-    } catch (err) {
-      if (current.current !== id) return;
-      if (err instanceof ApiError && err.code === "head-moved")
-        setNotice({ tone: "warn", text: "The branch moved since you looked, so nothing was merged. Check the new head and merge again." });
-      else setNotice({ tone: "error", text: errorText(err) });
-    } finally {
-      if (current.current === id) {
-        setBusy(null);
-        refresh(true);
+    await act("merge", async ({ id, still }) => {
+      try {
+        const merged = await api.mergeSessionPr(id, { sha, method: "squash" });
+        if (!still()) return;
+        setMergedPr({ number: merged.number, title: pr.title });
+        setNotice({ tone: "ok", text: `Merged #${merged.number} into ${pr.base ?? "the base branch"}.` });
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "head-moved") {
+          if (still()) setNotice({ tone: "warn", text: "The branch moved since you looked, so nothing was merged. Check the new head and merge again." });
+          return;
+        }
+        throw err;
       }
-    }
+    });
   }
 
   async function sync() {
-    const id = sessionId;
-    const result = await act("sync", () => api.syncSession(id));
-    if (!result || current.current !== id) return;
-    if (result.status === "conflict") {
-      setSyncConflict(true);
-      setNotice({ tone: "warn", text: `Merging ${result.base} into the branch conflicts. Resolve it with the agent.` });
-      return;
-    }
-    setSyncConflict(false);
-    if (result.status === "up-to-date") {
-      setNotice({ tone: "ok", text: `Already up to date with ${result.base}.` });
-      return;
-    }
-    if (result.branchMoved && result.agentNote) {
-      // A live Drive's checkout is now behind GitHub's branch: tell the agent, or say so.
-      const live = runStateRef.current !== undefined && ["running", "idle", "queued", "provisioning"].includes(runStateRef.current);
-      if (live) {
-        await sendRef.current(result.agentNote);
-        setNotice({ tone: "ok", text: `Synced with ${result.base}, and told the agent to pull.` });
-      } else {
-        setNotice({ tone: "warn", text: `Synced with ${result.base}. ${result.agentNote}` });
+    await act("sync", async ({ id, send, still }) => {
+      const result = await api.syncSession(id);
+      if (!still()) return;
+      if (result.status === "conflict") {
+        setSyncConflict(true);
+        setNotice({ tone: "warn", text: `Merging ${result.base} into the branch conflicts. Resolve it with the agent.` });
+        return;
       }
-      return;
-    }
-    setNotice({ tone: "ok", text: `Synced with ${result.base}.` });
+      setSyncConflict(false);
+      if (result.status === "up-to-date") {
+        setNotice({ tone: "ok", text: `Already up to date with ${result.base}.` });
+        return;
+      }
+      if (result.branchMoved && result.agentNote) {
+        // A live Drive's checkout is now behind GitHub's branch: tell the agent, or say so.
+        const live = runStateRef.current !== undefined && ["running", "idle", "queued", "provisioning"].includes(runStateRef.current);
+        if (live && (await send(result.agentNote))) {
+          if (still()) setNotice({ tone: "ok", text: `Synced with ${result.base}, and told the agent to pull.` });
+        } else if (still()) {
+          setNotice({ tone: "warn", text: `Synced with ${result.base}. ${result.agentNote}` });
+        }
+        return;
+      }
+      setNotice({ tone: "ok", text: `Synced with ${result.base}.` });
+    });
   }
 
   async function rerun() {
-    const id = sessionId;
-    const result = await act("rerun", () => api.rerunSessionChecks(id));
-    if (!result || current.current !== id) return;
-    setNotice(
-      result.status === "rerun"
-        ? { tone: "ok", text: `Re-running ${result.rerun.map((r) => r.name).join(", ") || "the failed checks"}.` }
-        : { tone: "warn", text: "Nothing to re-run: no failed workflow runs on the head." },
-    );
+    await act("rerun", async ({ id, still }) => {
+      const result = await api.rerunSessionChecks(id);
+      if (!still()) return;
+      setNotice(
+        result.status === "rerun"
+          ? { tone: "ok", text: `Re-running ${result.rerun.map((r) => r.name).join(", ") || "the failed checks"}.` }
+          : { tone: "warn", text: "Nothing to re-run: no failed workflow runs on the head." },
+      );
+    });
   }
 
   async function fixCi() {
     const pr = statusRef.current?.pr;
     if (!pr) return;
     const failing = pr.checks.find((c) => c.state === "fail") ?? null;
-    await act("fix-ci", async () => {
+    const known = failing ? logs[failing.id] : undefined;
+    await act("fix-ci", async ({ id, send, still }) => {
       let tail = "";
       if (failing?.hasLog) {
-        const known = logs[failing.id];
         if (known?.state === "ready") tail = known.log.log;
         else
           tail = await api
-            .sessionCheckLog(sessionId, failing.id)
+            .sessionCheckLog(id, failing.id)
             .then((l) => l.log)
             .catch(() => "");
       }
-      await sendRef.current(fixCiMessage(pr, failing, tail));
+      if (!still()) return;
+      await send(fixCiMessage(pr, failing, tail));
     });
   }
 
-  function resolveConflict() {
+  async function resolveConflict() {
     const c = changesRef.current;
     const s = statusRef.current;
     const base = c?.base ?? s?.baseBranch ?? "the base branch";
-    void sendRef.current(conflictMessage(conflictedFiles(c).map((f) => f.path), base, c?.branch ?? s?.branch ?? null));
-    setSyncConflict(false);
+    const text = conflictMessage(conflictedFiles(c).map((f) => f.path), base, c?.branch ?? s?.branch ?? null);
+    await act("resolve", async ({ send, still }) => {
+      if ((await send(text)) && still()) setSyncConflict(false);
+    });
   }
 
   return {

@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap.ts";
+import { httpUrl } from "../lib/git-view.ts";
 import type { CreatePrOutcome } from "../hooks/useSessionGit.ts";
 import { Working } from "./Working.tsx";
 
@@ -28,10 +30,14 @@ export function CreatePrDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; url?: string } | null>(null);
   const titleRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const id = useId();
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  // Focus stays in the dialog, Esc cancels (not mid-request), and focus goes back to the opener.
+  useFocusTrap(dialogRef, { onEscape: () => !busyRef.current && onClose(), initial: "input" });
 
   useEffect(() => {
-    titleRef.current?.focus();
     titleRef.current?.select();
   }, []);
 
@@ -46,23 +52,15 @@ export function CreatePrDialog({
     else setError({ text: outcome.error ?? "The pull request wasn't opened.", url: outcome.url });
   }
 
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === "Escape" && !busy) {
-      e.preventDefault();
-      e.stopPropagation();
-      onClose();
-    }
-  }
-
   return (
     <div className="dialog-backdrop" onClick={() => !busy && onClose()}>
       <div
+        ref={dialogRef}
         className="dialog panel create-pr-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDown}
       >
         <h2 id={`${id}-title`} className="panel-title">
           <span className="panel-label">Create pull request</span>
@@ -95,7 +93,7 @@ export function CreatePrDialog({
                 {error.url ? (
                   <>
                     {" "}
-                    <a href={error.url} target="_blank" rel="noopener noreferrer">
+                    <a href={httpUrl(error.url) ?? undefined} target="_blank" rel="noopener noreferrer">
                       Open it on GitHub
                     </a>
                   </>

@@ -25,6 +25,7 @@ import {
 } from "../central/settings-schema.ts";
 import { settingsDocId, type SettingsDoc } from "../store/settings.ts";
 import { userIdFor } from "../central/user-id.ts";
+import { modelOptions } from "../central/model-options.ts";
 
 /** A Dongle: a token that is not a device login. */
 function isDongle(identity: Identity): boolean {
@@ -54,8 +55,9 @@ export function docView(doc: SettingsDoc): SettingsDocView {
   };
 }
 
-/** The fleet document as a level view: `values` plus the three Sentry keys as stored (the DSN is
- * shown while Sentry is off too, like the operator's own GET). */
+/** The fleet document as a level view: `values` plus the Sentry keys as stored (the DSN is shown
+ * while Sentry is off too, like the operator's own GET). #424's signals are stored only while on,
+ * so a signal that is off is absent here, which reads as its default (off). */
 export function fleetView(fleet: FleetSettings): SettingsDocView {
   const s = fleet.telemetry.sentry;
   return {
@@ -66,6 +68,11 @@ export function fleetView(fleet: FleetSettings): SettingsDocView {
       "telemetry.sentry.enabled": s.enabled,
       ...(s.dsn ? { "telemetry.sentry.dsn": s.dsn } : {}),
       "telemetry.sentry.tracesSampleRate": s.tracesSampleRate,
+      ...(s.logs ? { "telemetry.sentry.logs": true } : {}),
+      ...(s.metrics ? { "telemetry.sentry.metrics": true } : {}),
+      ...(s.agentTraces ? { "telemetry.sentry.agentTraces": true } : {}),
+      ...(s.agentContent ? { "telemetry.sentry.agentContent": true } : {}),
+      ...(s.profilesSampleRate ? { "telemetry.sentry.profilesSampleRate": s.profilesSampleRate } : {}),
     },
     version: fleet.version ?? 0,
     ...(fleet.updatedAt ? { updatedAt: fleet.updatedAt } : {}),
@@ -151,6 +158,30 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
         ...(deviceId ? { deviceId } : {}),
         allowHttp: ctx.config.devMode,
       });
+    } catch (err) {
+      if (err instanceof UnknownProfileError) return reply.code(404).send({ error: "unknown_profile", profiles: err.profiles });
+      throw err;
+    }
+  });
+
+  // #458: the models the Account page's dropdowns offer for model.default and
+  // compaction.summaryModel, per provider: the router's (cached by ModelsService) and the curated
+  // OpenRouter list for this person (and `profile`, when named). Options only: writes are still
+  // validated by type, so an unlisted model can still be saved. `scope=account` (the account-wide
+  // editor) leaves the default profile's OpenRouter adds and removes out.
+  app.get("/api/config/models", async (req, reply) => {
+    if (refuseDongle(req, reply)) return reply;
+    const q = req.query as { profile?: unknown; scope?: unknown };
+    const profile = typeof q.profile === "string" && q.profile !== "" ? q.profile : undefined;
+    const accountOnly = !profile && q.scope === "account";
+    const fleet = withDefaults(await store.fleetSettings.get());
+    try {
+      const [router, resolved] = await Promise.all([
+        ctx.modelsService.list(),
+        resolveConfig(store, fleet, { email: req.identity!.email, ...(profile ? { profile } : {}), allowHttp: ctx.config.devMode }),
+      ]);
+      reply.header("cache-control", "no-store");
+      return modelOptions(router, resolved.values, { routerAnswered: ctx.modelsService.routerAnswered(), accountOnly });
     } catch (err) {
       if (err instanceof UnknownProfileError) return reply.code(404).send({ error: "unknown_profile", profiles: err.profiles });
       throw err;
@@ -369,6 +400,8 @@ export async function registerConfigRoutes(app: FastifyInstance, ctx: RouteConte
 
 /** Which Sentry key a parseSentryUpdate message is about. */
 function sentryErrorKey(message: string): string {
+  const named = /telemetry\.sentry\.(logs|metrics|agentTraces|agentContent|profilesSampleRate)\b/.exec(message);
+  if (named) return named[0];
   if (message.includes("tracesSampleRate")) return "telemetry.sentry.tracesSampleRate";
   if (/dsn/i.test(message)) return "telemetry.sentry.dsn";
   return "telemetry.sentry.enabled";

@@ -384,6 +384,18 @@ describe("/admin end to end (real server, real extensions, fake pi)", async () =
     } finally { globalThis.fetch = real; }
   });
 
+  test("the Model page curates the OpenRouter list through connect (#440)", async () => {
+    const before = JSON.parse((await get("/models")).text);
+    assert.deepEqual(before.curation.lists.localAdd, []);
+    const r = await post("/model/curate", { action: "add", id: "x/curated", target: "machine" });
+    assert.equal(r.status, 200, r.text);
+    assert.ok(JSON.parse(r.text).models.includes("x/curated"));
+    const listed = JSON.parse((await get("/models")).text).providers.find((p: any) => p.id === "openrouter");
+    assert.ok(listed.models.includes("x/curated"));
+    assert.equal((await post("/model/curate", { action: "add", id: "x/y", target: "nowhere" })).status, 422);
+    assert.equal((await post("/model/curate", { action: "remove", id: "x/curated", target: "machine" })).status, 200);
+  });
+
   test("switching the model goes through connect: pi.setModel and the saved default", async () => {
     const r = await post("/model", { provider: "litellm", id: "claude-sonnet-5" });
     assert.equal(r.status, 200, r.text);

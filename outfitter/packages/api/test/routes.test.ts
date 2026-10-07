@@ -207,6 +207,8 @@ describe("GET /api/sessions/:id", () => {
       info: (name) => inner.info(name),
       addVersion: (name, value) => inner.addVersion(name, value),
       disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      disableVersion: (name, version) => inner.disableVersion(name, version),
+      accessVersion: (name, version) => inner.accessVersion(name, version),
       async accessLatest(name) {
         if (name === GITHUB_APP_SLUG_SECRET) {
           slugReads += 1;

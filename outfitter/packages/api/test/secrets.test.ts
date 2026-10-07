@@ -452,6 +452,8 @@ describe("AppSecretCache", () => {
       },
       addVersion: (name, value) => inner.addVersion(name, value),
       disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      disableVersion: (name, version) => inner.disableVersion(name, version),
+      accessVersion: (name, version) => inner.accessVersion(name, version),
       accessLatest: async (name) => {
         reads += 1;
         return inner.accessLatest(name);
@@ -494,8 +496,10 @@ describe("AppSecretCache", () => {
     let throws = 0;
     const failing: SecretAdmin = {
       info: async () => ({ set: false }),
-      addVersion: async () => {},
+      addVersion: async () => 1,
       disableAllEnabled: async () => {},
+      disableVersion: async () => {},
+      accessVersion: async () => undefined,
       accessLatest: async () => {
         throws += 1;
         throw new Error("boom");
@@ -505,5 +509,49 @@ describe("AppSecretCache", () => {
     await assert.rejects(() => failingCache.accessLatest(GITHUB_APP_ID_SECRET), /boom/);
     await assert.rejects(() => failingCache.accessLatest(GITHUB_APP_ID_SECRET), /boom/);
     assert.equal(throws, 2);
+  });
+
+  test("disableVersion drops one version and accessVersion is not cached", async () => {
+    let now = 1_000;
+    const inner = new MemorySecretAdmin();
+    let versionReads = 0;
+    let latestReads = 0;
+    const counting: SecretAdmin = {
+      info: (name) => inner.info(name),
+      addVersion: (name, value) => inner.addVersion(name, value),
+      disableAllEnabled: (name) => inner.disableAllEnabled(name),
+      disableVersion: (name, version) => inner.disableVersion(name, version),
+      accessVersion: async (name, version) => {
+        versionReads += 1;
+        return inner.accessVersion(name, version);
+      },
+      accessLatest: async (name) => {
+        latestReads += 1;
+        return inner.accessLatest(name);
+      },
+    };
+    const cache = new AppSecretCache(counting, () => now);
+    const sub = "outfitter-user-u-subscription-claude";
+    assert.equal(await cache.addVersion(sub, "secret-a"), 1);
+    assert.equal(await cache.addVersion(sub, "secret-b"), 2);
+    assert.equal(await cache.accessVersion(sub, 1), "secret-a");
+    assert.equal(await cache.accessVersion(sub, 1), "secret-a");
+    assert.equal(versionReads, 2);
+    assert.equal(await cache.accessVersion(sub, 2), "secret-b");
+
+    await cache.addVersion(GITHUB_APP_ID_SECRET, "42");
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "42");
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "42");
+    assert.equal(latestReads, 1);
+    await cache.disableVersion(GITHUB_APP_ID_SECRET, 99);
+    assert.equal(await cache.accessLatest(GITHUB_APP_ID_SECRET), "42");
+    assert.equal(latestReads, 2);
+
+    await cache.disableVersion(sub, 2);
+    assert.equal(await cache.accessVersion(sub, 2), undefined);
+    assert.equal(await cache.accessLatest(sub), "secret-a");
+    await cache.disableVersion(sub, 9);
+    assert.equal(await cache.accessVersion("missing", 1), undefined);
+    assert.equal(await inner.accessVersion(sub, 1), "secret-a");
   });
 });

@@ -61,6 +61,14 @@ export interface ProviderKeyRow {
   setAt: string;
 }
 
+/** docs/specs/subscriptions.md §3. The list and the page never include the secret value. */
+export interface SubscriptionSecretView {
+  vendor: string;
+  last4: string;
+  setAt: string;
+  version: number;
+}
+
 export interface UserSpend {
   month: string;
   currency: "USD";
@@ -68,6 +76,12 @@ export interface UserSpend {
   byDevice: Array<{ alias: string; deviceId?: string; deviceName?: string; kind: "device" | "run"; spend: number }>;
   byModel: Array<{ model: string; spend: number }>;
   fetchedAt: string;
+}
+
+/** GET /api/config/models (#458): the options behind the model dropdowns, per provider. Model ids
+ * are as model.default holds them for that provider (no provider prefix). */
+export interface ModelOptions {
+  providers: Array<{ id: string; label: string; models: string[]; note?: string }>;
 }
 
 /** A write's 409: the document changed since it was read. */
@@ -84,6 +98,10 @@ export const accountApi = {
   },
   config(profile?: string): Promise<ConfigResponse> {
     return request(`/api/config${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`);
+  },
+  /** No profile: the account-wide list (no profile's OpenRouter adds or removes). */
+  modelOptions(profile?: string): Promise<ModelOptions> {
+    return request(`/api/config/models${profile ? `?profile=${encodeURIComponent(profile)}` : "?scope=account"}`);
   },
   userDoc(): Promise<SettingsDocView> {
     return request("/api/config/user");
@@ -123,6 +141,17 @@ export const accountApi = {
   },
   deleteProviderKey(provider: string): Promise<void> {
     return request(`/api/me/provider-keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
+  },
+  /** docs/specs/subscriptions.md §3. Write-only. `ifVersion` is omitted on a first save. */
+  subscriptionSecrets(): Promise<SubscriptionSecretView[]> {
+    return request("/api/me/subscription-secrets");
+  },
+  setSubscriptionSecret(vendor: string, value: string, ifVersion?: number): Promise<SubscriptionSecretView> {
+    const body = ifVersion === undefined ? { value } : { value, ifVersion };
+    return request(`/api/me/subscription-secrets/${encodeURIComponent(vendor)}`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  deleteSubscriptionSecret(vendor: string): Promise<void> {
+    return request(`/api/me/subscription-secrets/${encodeURIComponent(vendor)}`, { method: "DELETE" });
   },
   spend(month?: string): Promise<UserSpend> {
     return request(`/api/me/spend${month ? `?month=${encodeURIComponent(month)}` : ""}`);

@@ -6,8 +6,8 @@
  *   `{"t":"admin.result","reqId","ok":true,"text"}` or `{"ok":false,"error","needsApproval"?}`.
  *   agentd forwards it over its API link; the API runs the op as the session's owner, and holds a
  *   delete until the owner approves it in the web UI, so a write may wait minutes.
- * - On a laptop: POST /api/admin/ops on OUTFITTER_API with OUTFITTER_TOKEN (a Dongle), the same
- *   pair teleport uses (_shared/outfitter-env.ts). `confirmed` is sent only after the person said
+ * - On a laptop: POST /api/admin/ops on the link service with this machine's login (`kernal login`),
+ *   the same credentials teleport uses (_shared/outfitter-env.ts). `confirmed` is sent only after the person said
  *   yes in the TUI. E9.9: a `memory.*` call also sends `laptop: {sessionId, repo?}`, and an op that
  *   needs the owner's yes in the web app comes back `{needsApproval, approvalId}`; its rerun sends
  *   `approvalId` (outfitter-agentengine/laptop-approval.ts).
@@ -223,7 +223,7 @@ export function httpTransport(apiBase: string, token: string | ((rejected?: stri
         return { ok: false, error: "OUTFITTER_API redirected; it should be the link service's origin, not the web UI" };
       }
       if (res.status === 401) {
-        return { ok: false, error: "OUTFITTER_TOKEN was rejected (or OUTFITTER_API is not the link origin); create a new token on the Outfitter Tokens page" };
+        return { ok: false, error: "Outfitter refused this machine's login (or OUTFITTER_API is not the link origin); run kernal login" };
       }
       if (res.status === 404) return { ok: false, error: "this Outfitter has no admin ops yet (needs a newer release)" };
       if (!res.ok) return { ok: false, error: (await errorBody(res)) ?? `Outfitter answered ${res.status}` };
@@ -259,7 +259,7 @@ export function adminTransport(env?: NodeJS.ProcessEnv, fetchFn?: FetchFn): Admi
   const e = env ?? process.env;
   const socket = e.OUTFITTER_ADMIN_SOCKET?.trim();
   if (socket) return socketTransport(socket);
-  // In a Drive the socket is the only way in; never fall back to a Dongle there.
+  // In a Drive the socket is the only way in; never fall back to a laptop login there.
   if (e.OUTFITTER_SESSION_ID) return undefined;
   const creds = outfitterCredentials(env);
   if (creds.api && creds.token) return httpTransport(creds.api, (rejected) => outfitterBearer(creds, rejected), fetchFn);

@@ -77,10 +77,11 @@ import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
 import { MongoDeviceCodes, MongoDevices, ensureDeviceIndexes, type DeviceCodeDoc, type DeviceDoc } from "./devices.ts";
 import { MongoSettings, ensureSettingsIndexes, type SettingsDocMongo } from "./settings.ts";
-import { MongoProviderKeys, MongoRouterKeys, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc } from "./keys.ts";
+import { MongoProviderKeys, MongoRouterKeys, MongoSubscriptionSecrets, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc, type SubscriptionSecretDoc } from "./keys.ts";
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
-import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import type { ProviderKeysCollection, RouterKeysCollection, SubscriptionSecretsCollection } from "./keys.ts";
+import { MongoLocalHosts, ensureLocalHostIndexes, type LocalHostDoc, type LocalHostsCollection } from "./local-hosts.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -134,6 +135,15 @@ class MongoSessions implements SessionsCollection {
     const result = await this.col.findOneAndUpdate(
       { _id: id },
       { $set: patch },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      model ? { $set: { modelOverride: model, updatedAt: nowIso } } : { $set: { updatedAt: nowIso }, $unset: { modelOverride: "" } },
       { returnDocument: "after" },
     );
     return stripId<Session>(result);
@@ -1789,6 +1799,8 @@ export class MongoStore implements Store {
   readonly settings: SettingsCollection;
   readonly routerKeys: RouterKeysCollection;
   readonly providerKeys: ProviderKeysCollection;
+  readonly subscriptionSecrets: SubscriptionSecretsCollection;
+  readonly localHosts: LocalHostsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1827,6 +1839,8 @@ export class MongoStore implements Store {
     this.settings = new MongoSettings(db.collection<SettingsDocMongo>("settings"));
     this.routerKeys = new MongoRouterKeys(db.collection<RouterKeyDoc>("routerKeys"));
     this.providerKeys = new MongoProviderKeys(db.collection<ProviderKeyDoc>("providerKeys"));
+    this.subscriptionSecrets = new MongoSubscriptionSecrets(db.collection<SubscriptionSecretDoc>("subscriptionSecrets"));
+    this.localHosts = new MongoLocalHosts(db.collection<LocalHostDoc>("localHosts"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1889,6 +1903,7 @@ export class MongoStore implements Store {
       ensureDeviceIndexes(db),
       ensureSettingsIndexes(db),
       ensureKeyIndexes(db),
+      ensureLocalHostIndexes(db),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

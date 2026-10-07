@@ -44,6 +44,9 @@ const GithubPage = lazyRoute(() => import("./pages/GithubPage.tsx").then((m) => 
 const DevicesPage = lazyRoute(() => import("./pages/DevicesPage.tsx").then((m) => ({ default: m.DevicesPage })));
 const DeviceApprovePage = lazyRoute(() => import("./pages/DeviceApprovePage.tsx").then((m) => ({ default: m.DeviceApprovePage })));
 const AccountPage = lazyRoute(() => import("./pages/AccountPage.tsx").then((m) => ({ default: m.AccountPage })));
+// docs/specs/subscriptions.md §4. Beside Account, not operator-only.
+const SubscriptionsPage = lazyRoute(() => import("./pages/SubscriptionsPage.tsx").then((m) => ({ default: m.SubscriptionsPage })));
+const LocalModelsPage = lazyRoute(() => import("./pages/LocalModelsPage.tsx").then((m) => ({ default: m.LocalModelsPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
@@ -53,8 +56,10 @@ const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string;
   { to: "/gurus", label: vocabulary.guru.many, hint: vocabulary.guru.hint },
   { to: "/github", label: vocabulary.github.one, hint: vocabulary.github.hint },
   { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
+  { to: "/local-models", label: vocabulary.modem.many, hint: vocabulary.modem.hint },
   { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint },
   { to: "/account", label: vocabulary.account.one, hint: vocabulary.account.hint },
+  { to: "/subscriptions", label: vocabulary.subscription.many, hint: vocabulary.subscription.hint },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];
 
@@ -235,10 +240,12 @@ export function App() {
             <Route path="/gurus" element={<GurusPage />} />
             <Route path="/github" element={<GithubPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
+            <Route path="/local-models" element={<LocalModelsPage />} />
             <Route path="/tokens" element={<TokensPage />} />
             <Route path="/devices" element={<DevicesPage />} />
             <Route path="/device" element={<DeviceApprovePage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
             <Route path="/manual" element={<ManualPage />} />

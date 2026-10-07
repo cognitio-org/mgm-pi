@@ -59,6 +59,12 @@ cp -R "$ROOT/skills" "$STAGE/skills"
 cp "$ROOT/../.env.example" "$STAGE/.env.example" 2>/dev/null || cp "$ROOT/.env.example" "$STAGE/.env.example"
 mkdir -p "$STAGE/.codebase-index"; cp "$ROOT/.codebase-index/config.json" "$STAGE/.codebase-index/config.json"
 echo "$VERSION" > "$STAGE/VERSION"; echo "pi $PI_VERSION" >> "$STAGE/VERSION"
+# bin/kernal runs some .ts entry points with node before pi starts (kernal login/logout/whoami).
+# Node takes a .ts file's module type from the nearest package.json; without one here it
+# climbs out of the install and can find e.g. ~/package.json with "type": "commonjs", which turns
+# `import` into a SyntaxError (v0.3.0, `kernal login`). This file stops that walk, like kernal/'s own
+# package.json does in a source checkout.
+printf '{\n  "name": "kernal-bundle",\n  "private": true,\n  "type": "module"\n}\n' > "$STAGE/package.json"
 
 # Chrome companion. install.sh copies these out of the bundle onto stable paths
 # (~/.kernal/chrome). The versioned directory moves on every upgrade, so Chrome
@@ -75,6 +81,12 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 #    packages, which the pi binary provides at runtime (no copy needed). Then drop native binaries
 #    built for other platforms (open-codebase-index ships all six in one package, ~250 MB).
 (cd "$STAGE/.pi/npm" && npm ci --legacy-peer-deps --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
+# pi-mcp-adapter 2.37.0 treats a stored refresh token as already signed in, so explicit
+# /mcp-auth never opens the browser. npm ci replaces this file; reapply until the pin moves.
+MCP_REAUTH_FLOW="$STAGE/.pi/npm/node_modules/pi-mcp-adapter/mcp-auth-flow.ts"
+if ! grep -q 'forceReauthorization: options.forceReauthorization === true' "$MCP_REAUTH_FLOW"; then
+  patch -d "$STAGE/.pi/npm/node_modules" -p1 --batch < "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+fi
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;
   darwin-x64)   keep='darwin[-_]x64|x64[-_]darwin|x86_64[-_]apple' ;;
@@ -115,23 +127,41 @@ echo "pinned: $(node -p "require('$STAGE/.pi/settings.json').packages.filter(p =
 bash "$ROOT/scripts/prebundle.sh" "$STAGE/.pi/npm/node_modules"
 echo "packages: $(du -sh "$STAGE/.pi/npm/node_modules" | cut -f1) (excluded: ${BUNDLE_EXCLUDE:-none})"
 
-# 4. smoke test the bundle offline: the pi binary must load our extensions and list our providers
+# with_timeout <seconds> <cmd...>: GNU timeout where there is one. The macOS build runner has none
+# (v0.3.2's darwin build failed on "timeout: command not found"), so use perl's alarm there, which
+# both runners ship.
+with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
+  else perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' "$secs" "$@"; fi
+}
+# 4. smoke test the bundle offline: the pi binary must load our extensions and list our providers.
+# `kernal --teleport` (#426) must give its usage error without an id, and with an unknown id reach the
+# teleport extension inside pi (a clean "no session" error), not fail to load a module.
 if [[ "$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')" == "$PLATFORM" ]]; then
   SMOKE_HOME=$(mktemp -d)   # never the stage: macOS writes Library/ etc. into $HOME
   ( cd "$STAGE" && printf 'LITELLM_AGENT_KEY=test\nOPENROUTER_API_KEY=test\n' > .env \
     && KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" ./bin/kernal --list-models > "$ROOT/dist/$NAME.smoke.txt" 2>&1 \
     && grep -qE "^lmstudio" "$ROOT/dist/$NAME.smoke.txt" && grep -qE "^litellm" "$ROOT/dist/$NAME.smoke.txt" \
-    && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1 timeout 25 ./bin/kernal -p --no-session --model lmstudio/qwen/qwen3.6-35b-a3b "x" >> "$ROOT/dist/$NAME.smoke.txt" 2>&1 || true; } \
+    && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1 with_timeout 25 ./bin/kernal -p --no-session --model lmstudio/qwen/qwen3.6-35b-a3b "x" >> "$ROOT/dist/$NAME.smoke.txt" 2>&1 || true; } \
     && ! grep -q "Failed to load extension" "$ROOT/dist/$NAME.smoke.txt" \
+    && { HOME="$SMOKE_HOME" ./bin/kernal whoami >> "$ROOT/dist/$NAME.smoke.txt" 2>&1 || true; } \
+    && grep -q "not signed in" "$ROOT/dist/$NAME.smoke.txt" \
+    && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" ./bin/kernal --teleport > "$ROOT/dist/$NAME.teleport.txt" 2>&1 || true; } \
+    && grep -q "Usage: kernal --teleport" "$ROOT/dist/$NAME.teleport.txt" \
+    && { KERNAL_NO_DISCOVERY=1 KERNAL_SKIP_LMS=1 HOME="$SMOKE_HOME" KERNAL_TELEPORT_STORE="$SMOKE_HOME/teleport-store" LMSTUDIO_BASE_URL=http://127.0.0.1:9/v1 with_timeout 60 ./bin/kernal --teleport kernal-smoke-no-such-id -p --no-session --model lmstudio/qwen/qwen3.6-35b-a3b </dev/null >> "$ROOT/dist/$NAME.teleport.txt" 2>&1 || true; } \
+    && grep -q 'no session "kernal-smoke-no-such-id" in the store' "$ROOT/dist/$NAME.teleport.txt" \
+    && ! grep -qE "ERR_MODULE_NOT_FOUND|Cannot find (package|module)" "$ROOT/dist/$NAME.teleport.txt" \
+    && cat "$ROOT/dist/$NAME.teleport.txt" >> "$ROOT/dist/$NAME.smoke.txt" && rm -f "$ROOT/dist/$NAME.teleport.txt" \
     && rm -f .env && echo "smoke ok: $(grep -cE '^(lmstudio|litellm|openrouter)' "$ROOT/dist/$NAME.smoke.txt") models listed" ) \
-    || { echo "smoke test failed:"; tail -20 "$ROOT/dist/$NAME.smoke.txt"; exit 1; }
+    || { echo "smoke test failed:"; tail -20 "$ROOT/dist/$NAME.smoke.txt"; tail -20 "$ROOT/dist/$NAME.teleport.txt" 2>/dev/null; exit 1; }
 else
   echo "(cross-platform build: smoke test skipped)"
 fi
 # the smoke run may have written settings (pi records e.g. the changelog version); ship the pristine copy
 cp "$STAGE/.pi/settings.shipped.json" "$STAGE/.pi/settings.json"
 rm -rf "$STAGE/.pi/agents"
-rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust"
+rm -rf "${SMOKE_HOME:-/nonexistent}" "$STAGE/Library" "$STAGE/.pi/sessions" "$STAGE/.pi/trust.json" "$STAGE/.pi/auth.json" "$STAGE/.pi/models-store.json" "$STAGE/.pi/mcp-cache.json" "$STAGE/.pi/agent/trust" "$STAGE/.pi/kernal-defaults-synced.json"
 
 # 4b. shared keys shipped in the bundle's .env (private-repo distribution to family users).
 #     DEEPGRAM_API_KEY: from the CI secret, or from ~/localllm/.env when building locally. /setup

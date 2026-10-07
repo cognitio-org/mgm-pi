@@ -413,6 +413,24 @@ code {
 .foot .ok { color: var(--ok); }
 .foot a { color: var(--text-dim); }
 
+/* ---------- legal pages (/privacy/, /terms/) ---------- */
+
+.legal { max-width: 46rem; margin: 2rem 0 2.5rem; }
+.legal h1 { font-size: clamp(1.4rem, 4vw, 2.1rem); margin-bottom: 0.4rem; }
+.legal h2 { font-size: 1.05rem; margin: 2.2rem 0 0.6rem; letter-spacing: 0.04em; }
+.legal h3 { font-size: 1rem; margin: 1.4rem 0 0.4rem; }
+.legal p, .legal li { max-width: 44rem; }
+.legal ul { padding-left: 1.3rem; }
+.legal li { margin: 0.25rem 0; }
+.legal .meta { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-dim); margin: 0 0 1.5rem; }
+.legal .summary { background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--border); padding: 0.9rem 1.1rem; margin: 0 0 1.5rem; }
+.legal .summary p { margin: 0.3rem 0; }
+.legal table { width: 100%; border-collapse: collapse; margin: 0.6rem 0 1rem; font-size: 0.95rem; }
+.legal th, .legal td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; border: 1px solid var(--border); }
+.legal th { background: var(--bg-inset); font-weight: 600; }
+.legal .table-wrap { overflow-x: auto; }
+.legal mark.todo { background: var(--ok); color: var(--ok-contrast); padding: 0 0.25em; font-family: var(--font-mono); font-size: 0.9em; }
+
 /* ---------- motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {

@@ -82,6 +82,14 @@ if [[ "${ROLE}" == "web" ]]; then
   VOICE_SECRET="$(existing_secrets DEEPGRAM_API_KEY=outfitter-deepgram-key:latest)"
   [[ -n "${VOICE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${VOICE_SECRET}"
 fi
+# #384 Local Host router entries (docs/specs/local-host.md §3.5): a separate /model/*-only key
+# (KEY=local-hosts ./litellm-admin.sh), link role only, where heartbeats and the tick run router
+# sync. Never on web: unlike LITELLM_ADMIN_KEY it can rewrite router deployments. Mounted once the
+# secret exists; without it the api registers no router listener.
+if [[ "${ROLE}" == "link" ]]; then
+  ROUTER_SECRET="$(existing_secrets LOCAL_HOST_ROUTER_KEY=outfitter-litellm-admin-key:latest)"
+  [[ -n "${ROUTER_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${ROUTER_SECRET}"
+fi
 # E9 Agent Engine (config.env): link role only, where the admin socket's memory and ae ops run. Each
 # service account secret is mounted only when its project id is set and the secret exists.
 if [[ "${ROLE}" == "link" ]]; then
@@ -99,8 +107,7 @@ if image_exists "${IMAGE}"; then
   echo "== Reusing ${IMAGE} (already built for this commit) =="
 else
   echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/) =="
-  build_submit "${SOURCE_DIR}" "${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
-    --substitutions="_IMAGE=${IMAGE}" --timeout=20m
+  build_api_image "${SOURCE_DIR}" "${IMAGE}"
 fi
 
 # OUTFITTER_ORIGIN is this service's own URL: agentd's token audience (auth.ts verifyAgentToken,
@@ -215,6 +222,9 @@ fi
 LOGIN_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
 ENV_VARS="${ENV_VARS},OUTFITTER_LOGIN_ALLOW=${LOGIN_ALLOW#;}"
 echo "   device login open to: ${LOGIN_ALLOW#;}"
+# #399 CA-10: Drives get per-run LiteLLM keys only (config.env; 0 = no shared-key fallback when a
+# mint fails). Both roles, so whichever builds a run.spec reads the same value.
+ENV_VARS="${ENV_VARS},OUTFITTER_RUN_KEY_FALLBACK=${OUTFITTER_RUN_KEY_FALLBACK:-0}"
 if [[ "${ROLE}" == "link" ]]; then
   # Where POST /api/device/code sends the person to approve: the web role's public origin
   # (app.kernal.one), read from its Ready domain mapping (env.sh public_origin) unless given.

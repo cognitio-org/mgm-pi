@@ -111,17 +111,17 @@ describe("api client", () => {
     await expect(api.me()).resolves.toEqual({ email: "dev@localhost", linkOrigin: "https://outfitter-link.run.app" });
   });
 
-  it("createToken POSTs the name and returns the plaintext token plus record", async () => {
-    const record = { id: "t1", ownerEmail: "dev@localhost", name: "laptop", prefix: "outf_ab1", createdAt: "now" };
+  it("createToken POSTs an A2A key (never a Dongle, #399) and returns the plaintext token plus record", async () => {
+    const record = { id: "t1", ownerEmail: "dev@localhost", name: "ae", prefix: "outf_ab1", createdAt: "now", kind: "a2a" };
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ token: "outf_abc123", record }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await api.createToken("laptop");
+    const result = await api.createToken("ae", { tapes: ["coder"] });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/me/tokens");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ name: "laptop" });
+    expect(JSON.parse(init.body)).toEqual({ name: "ae", kind: "a2a", a2a: { tapes: ["coder"] } });
     expect(result).toEqual({ token: "outf_abc123", record });
   });
 

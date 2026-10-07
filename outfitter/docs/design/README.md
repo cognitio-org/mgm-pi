@@ -93,6 +93,70 @@ and restyled in place, not renamed.
 | `.dither` | Sparing 1-bit dither texture | Header strip and empty states only, per the brief — don't reach for it elsewhere |
 | `.sr-only` | Visually-hidden, screen-reader-only text | Utility, not theme-specific |
 
+## Density and the conversation view
+
+The retro chrome stays (striped title bars, hard shadows, square corners), but space goes to the
+conversation first:
+
+- **Width.** `.app-main` is capped at 1320px, not 1100px. Prose inside a transcript card wraps at
+  about 100 characters (`max-width: 100ch` on its paragraphs, lists and headings), so a wide window
+  gives code blocks and tables room without making paragraphs hard to read.
+- **Control height by pointer.** Touch screens keep the 44px tap target. With a mouse or trackpad
+  (`hover: hover` and `pointer: fine`), buttons, inputs and selects are 34px, the session title
+  bar's transport buttons are 28px, and the status-bar chips are 24px. All of these are above
+  WCAG 2.5.8's 24px minimum.
+- **Transcript spacing.** Cards have smaller gaps and padding, and the who-marks and rail glyphs
+  are slightly smaller. Prose in a message is 0.94rem with a 1.55 line height, a little larger
+  than the UI around it.
+- **Composer.** The editor spans the full width, and **Send** closes the controls row under it in
+  the bottom-right corner, on desktop and phone alike, so no space is trapped beside a tall
+  draft. Send is the largest control: 42px tall on desktop, 48px on touch, at least 7rem wide on
+  desktop, with a ▶ glyph. Send mode is a `<select>` with full labels on desktop. On a phone it's
+  a small native picker with the short labels (Prompt / Steer / Follow-up), which replaces the
+  old three-button segmented control. The phone also drops **Aa** and the formatting toolbar; the
+  editor still highlights Markdown as you type. With an empty
+  draft it dims its colours rather than its opacity, so the label stays readable. The editor
+  starts at three lines and grows to `min(26rem, 50vh)`. The ⇡ toggle next to **Aa** switches to
+  a tall editor (`min(22rem, 40vh)` up to 70vh; on phones 34svh up to 55svh). The choice is
+  remembered per browser under `outfitter.composer.tall`. The status row above the editor only
+  shows while there's a send status.
+- **Tool steps say what ran, in one place.** The model's work shows as one row of chips under
+  the message it belongs to, on desktop and phone alike. There's no separate right-hand rail. Each
+  chip names what ran: the tool name plus a short hint (the command, path or query, never raw
+  JSON), e.g. `bash  npm test -- login`, or `thinking`. Hover or click opens the full input and
+  output in a card just below the chip. More than four finished calls fold into one `N tools`
+  chip.
+
+  Which message a chip belongs to (`lib/beats.ts`):
+  - A tool called after a message belongs to that message, because the message announced it ("I'll
+    run the tests").
+  - Thinking starts a new group and goes with the message that follows it.
+  - Tools with no message to attach to (the start of a turn, or right after a thought) form their
+    own row until a message claims them.
+- **Turns.** Each of your messages gets a little extra space above it, so the transcript reads
+  as exchanges rather than one long column.
+- **Syntax colours.** Fenced code with a language tag is coloured by `lib/rehype-code-colour.ts`
+  (lowlight/highlight.js grammars, the curated set in `lib/code-languages.ts`). The highlighter
+  is its own ~42 kB gz chunk, fetched the first time a message contains a tagged fence. Until it
+  arrives, and for untagged or unknown fences, code renders plain. Mermaid and html fences are
+  never coloured. Tokens are `--syn-*` in `theme.css`, all AA on `--bg-inset`:
+
+  | Token | Dark | Ratio | Light | Ratio |
+  |---|---|---|---|---|
+  | `--syn-keyword` (also 500 weight) | `#f4cf3c` C64 yellow | 9.7 | `#2a4b8d` GEOS blue | 6.3 |
+  | `--syn-string` | `#a6f29a` | 11.1 | `#2e6b3e` | 4.7 |
+  | `--syn-number` | `#ffb38a` | 8.4 | `#8a3b12` | 5.7 |
+  | `--syn-comment` (also italic) | `#a39bd9` | 5.8 | `#5b5548` | 5.5 |
+  | `--syn-title` (functions) | `#8fd3ff` | 9.1 | `#7a1f6b` | 7.0 |
+  | `--syn-type` | `#eaa6ff` | 8.0 | `#7a4f0a` | 5.3 |
+  | `--syn-attr` | `#c7bdff` | 8.5 | `#1d5c66` | 5.6 |
+  | `--syn-meta` | `#ff9a9a` | 7.2 | `#b0242b` | 5.0 |
+- **Long messages** (`lib/reading.ts`'s `isLongDocument`: 1200+ characters, or two or more
+  headings) show in full and formatted, in a box capped at `min(55vh, 34rem)` that scrolls on its
+  own, with a dashed rule underneath. A small pixel pop-out badge sits on the card's top border,
+  opposite the who-mark, and opens the same text in `ReadingDialog`. This replaces the earlier
+  "opening paragraph + Read button" layout, which hid the formatting and broke up the reading.
+
 ## Nerd out panel
 
 The session page's home for operational details (#198), in `src/styles/nerd-out.css`. The

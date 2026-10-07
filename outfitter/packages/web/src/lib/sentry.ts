@@ -32,17 +32,28 @@ export async function initSentry(load: () => Promise<ClientFleetSettings> = () =
   }
   const sentry = settings.telemetry?.sentry;
   if (!sentry?.enabled || !sentry.dsn) return false;
+  const rate = sentry.profilesSampleRate;
+  const profiles = typeof rate === "number" && Number.isFinite(rate) && rate > 0 && rate <= 1 ? rate : 0;
   Sentry.init({
     dsn: sentry.dsn,
     // "development" from `vite` (dev server), "production" from a build, like the API's own.
     environment: import.meta.env.DEV ? "development" : "production",
+    // The deploy's outfitter-v* tag, from the api (#421): the same release the api's own events and
+    // the deploy workflow's Sentry release use. Absent in dev and on an untagged deploy.
+    ...(sentry.release ? { release: sentry.release } : {}),
     // SDK 11's default span streaming, on purpose: page loads and navigations are named
     // "Pageload"/"Navigation" rather than after the pathname, which can carry session ids. (Unlike
     // the API and Kernal, nothing here needs beforeSendTransaction: the SDK starts only when on.)
-    integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
+    integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration(), ...(profiles > 0 ? [Sentry.browserProfilingIntegration()] : [])],
     tracesSampleRate: sentry.tracesSampleRate,
     replaysSessionSampleRate: 0.0,
     replaysOnErrorSampleRate: 1.0,
+    // #424: browser profiles while the fleet asks for them. Whether this page load is profiled is
+    // drawn once, at that rate; it then profiles while a sampled trace (a page load, a navigation)
+    // is open. Needs the shell's `Document-Policy: js-profiling` header, which the api sends exactly
+    // while this rate is above 0 (api routes/static.ts); a browser without the JS Self-Profiling API
+    // (Safari, Firefox) simply sends none. No logs from the browser.
+    ...(profiles > 0 ? { profileSessionSampleRate: profiles, profileLifecycle: "trace" as const } : {}),
   });
   initialized = true;
   return true;

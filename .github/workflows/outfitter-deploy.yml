@@ -117,3 +117,54 @@ jobs:
       contents: read
       id-token: write
     uses: ./.github/workflows/outfitter-live.yml
+
+  # #421: the Sentry release named after the tag (what OUTFITTER_RELEASE makes the api, link,
+  # Drives and web app report), its commits linked from a full checkout of the commit the deploy
+  # shipped, finalized, and a production deploy recorded. A redeploy or rollback of an existing tag
+  # just records another deploy on that release. Its own job, never the deploy's: there
+  # google-github-actions/auth leaves the deployer's credentials file in the workspace and
+  # GOOGLE_APPLICATION_CREDENTIALS in the environment, and getsentry/action-release runs a docker
+  # image pulled by tag (ghcr.io/getsentry/action-release-image), which the action's SHA pin
+  # doesn't cover. No id-token, no GCP auth here. Runs beside `live`, gating nothing. Skipped until the
+  # SENTRY_ORG / SENTRY_PROJECT variables and the SENTRY_AUTH_TOKEN secret are set (deploy/README.md
+  # "Sentry releases"); a Sentry failure never fails a deploy that already happened.
+  sentry-release:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check whether Sentry releases are configured
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [[ -n "$SENTRY_AUTH_TOKEN" && -n "$SENTRY_ORG" && -n "$SENTRY_PROJECT" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SENTRY_ORG, SENTRY_PROJECT or SENTRY_AUTH_TOKEN not set; Sentry release skipped"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.sentry.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Sentry release
+        if: steps.sentry.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        with:
+          release: ${{ github.ref_name }}
+          environment: production
+          set_commits: auto
+          # A rollback's or first release's previous-release commit may not be found; still create it.
+          ignore_missing: true
+          ignore_empty: true
+          finalize: true
+          disable_telemetry: true

@@ -344,7 +344,24 @@ export function adminCapabilities(guru: Pick<RunSpecGuru, "adminTools" | "memory
 /** Fleet settings (api/src/fleet-settings.ts): sent only while an operator has Sentry on for the
  * fleet. agentd starts Sentry with it (sentry.ts); absent, nothing is sent. */
 export interface RunSpecTelemetry {
-  sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string };
+  sentry: {
+    dsn: string;
+    tracesSampleRate: number;
+    environment: string;
+    release?: string;
+    // #424: each present only while on (an older api sends none: all off).
+    /** agentd's log lines (INFO and up) as Sentry logs. */
+    logs?: boolean;
+    /** Tool-call, token and cost counters (Sentry.metrics). */
+    metrics?: boolean;
+    /** AI agent spans: gen_ai.invoke_agent per pi agent run, gen_ai.chat per model call,
+     * gen_ai.execute_tool per tool call (agent-trace.ts). */
+    agentTraces?: boolean;
+    /** Prompts, responses and tool input and output in those spans, redacted and truncated. */
+    agentContent?: boolean;
+    /** Chance this run is profiled (@sentry/profiling-node), 0..1. */
+    profilesSampleRate?: number;
+  };
 }
 
 /** Central settings (docs/specs/central-auth.md §9): the session owner's resolved values, from

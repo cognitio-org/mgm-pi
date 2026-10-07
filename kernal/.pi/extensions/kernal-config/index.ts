@@ -12,17 +12,33 @@
  * memory, the router key re-minted when due); start-up never waits on it. connect has registered
  * its providers by then (it loads first), so when the refresh brings keys it didn't have, or a new
  * router key, this asks connect to register again (`kernal:connect` op "reload"). A device router
- * key the router refuses (401, at connect's key check or on a request) is re-minted once per
- * process (spec §5.5). Values are edited in the web app's Account page or with /admin (CA-9), not
+ * key the router refuses (401, at connect's key check or on a request) is first looked up in the
+ * keychain again: a different key there (another terminal signed in again, #443) is adopted without
+ * minting; otherwise it is re-minted once per process (spec §5.5). Values are edited in the web app's Account page or with /admin (CA-9), not
  * here.
+ *
+ * Applying the personal keys (#437, _shared/central-apply.ts): at session_start a new, empty session
+ * switches once to the default model and thinking level the account (or this machine) sets; the
+ * background refresh and /config reload take over fresh values and apply what is safe live
+ * (compaction at once, voice and the model at the next session, memory at the next start). A
+ * running conversation never switches model.
+ *
+ * A default set inside Kernal (pi's Ctrl+S in the model picker, a default thinking level) goes to the
+ * account (_shared/default-sync.ts): pi writes it to settings.json, and this saves it with the
+ * versioned PUT, so new sessions on every machine start with it. Per-session changes never do.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inSandbox } from "../_shared/env.ts";
 import { busRequest } from "../connect/lib.ts";
 import {
-  KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, describeSource, displayValue, providerKey, reloadConfig, remintRouterKeyIfDue,
-  resolve, startBackgroundRefresh, webOrigin, type ResolvedConfig,
+  KNOWN_SETTINGS, PROVIDER_ENV, activeProfile, adoptKeychainLogin, describeSource, displayValue, providerKey, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue,
+  providerKeySource, resolve, startBackgroundRefresh, takeShellWarnings, webOrigin, type ResolvedConfig,
 } from "../_shared/central-config.ts";
+import { applyModelAtSessionStart, applyVoiceSettings, cliChoices, describeChanges, settingsThinkingFor, snapshot } from "../_shared/central-apply.ts";
+import { pendingDefaults, registerDefaultSync, type SyncResult } from "../_shared/default-sync.ts";
+
+/** /config's note on when a change reaches this Kernal. */
+export const WHEN_NOTE = "Compaction changes apply at once; model, thinking and voice at the next session (/new or a restart: a running conversation never switches model); memory at the next start.";
 
 export type Deps = {
   /** Tests: the start-up refresh (and the reload it may ask for), to await it. */
@@ -30,6 +46,15 @@ export type Deps = {
   /** Tests: the re-mint a refused router key starts, to await it. */
   onRekey?: (done: Promise<void>) => void;
   fetch?: typeof fetch;
+  /** Tests: the command line the start-up model check reads (default process.argv). */
+  argv?: readonly string[];
+  /** Tests: what session_start applied. */
+  onApplied?: (r: import("../_shared/central-apply.ts").StartApplyResult) => void;
+  /** Tests: each run of the default sync (a Ctrl+S default to the account), and its settle time. */
+  onDefaultsSynced?: (r: SyncResult) => void;
+  defaultsSettleMs?: number;
+  /** Tests: where a warning goes without a UI (default stderr). */
+  stderr?: (line: string) => void;
 };
 
 /** The device's router key in use, or undefined when a local key (or none) is. */
@@ -62,7 +87,16 @@ export function renderConfig(r: ResolvedConfig): string {
     const lock = !v.locked ? "" : v.source === "default" ? ", locked" : ", locked: set by your Sysop";
     lines.push(`  ${decl.key} = ${displayValue(decl.key, v.value)}  (${describeSource(v)}${lock})`);
   }
+  if (r.account) {
+    // #432: the provider keys in force and where each comes from (a shell one wins over the account's).
+    const keys = Object.entries(PROVIDER_ENV).flatMap(([p, name]) => {
+      const k = providerKeySource(p);
+      return k ? [`  ${name} = ${k.value.length > 8 ? `…${k.value.slice(-4)}` : "…"}  (${k.source})`] : [];
+    });
+    if (keys.length) lines.push("Provider keys:", ...keys);
+  }
   if (r.api) lines.push(`Change them at ${webOrigin(r.api)}/account, or with /admin.`);
+  lines.push(WHEN_NOTE);
   return lines.join("\n");
 }
 
@@ -75,6 +109,19 @@ export function renderProfile(r: ResolvedConfig, requested = activeProfile()): s
 }
 
 export default function (pi: ExtensionAPI, deps: Deps = {}) {
+  // #432: a key variable from the shell that overrides this device's router key or the account's
+  // provider key, once per process: at session_start (the router key is known then), and after the
+  // background refresh brings the account's provider keys. A UI shows it; otherwise one stderr line.
+  let sessionCtx: any;
+  let started = false;
+  const giveShellWarnings = (ctx: any) => {
+    for (const line of takeShellWarnings()) {
+      try {
+        if (ctx?.hasUI) ctx.ui.notify(line, "warning");
+        else (deps.stderr ?? ((l: string) => console.error(l)))(line);
+      } catch {}
+    }
+  };
   if (!inSandbox()) {
     const bus = (pi as any).events;
     const reloadConnect = () => busRequest(bus, "kernal:connect", { op: "reload" }).catch(() => undefined);
@@ -84,22 +131,70 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       rekeyed = true;   // once per process: a key refused again needs kernal login, not a loop
       if (await remintRouterKeyIfDue({ fetch: deps.fetch, force: true })) await reloadConnect();
     };
+    // #443: the keychain first. Another terminal that signed in again revoked this device (its key
+    // is gone on the router) and stored a new key: adopt that one, no mint. Re-mint only when the
+    // keychain still holds the refused key.
+    const recover = async (refused: string) => {
+      const a = adoptKeychainLogin(refused);
+      if (!a.adopted) return rekey();
+      if (a.accountChanged) await refreshProviderKeys({ fetch: deps.fetch });
+      await reloadConnect();
+    };
     const before = delivered();
+    const settingsBefore = snapshot(resolve());
     const done = startBackgroundRefresh({ fetch: deps.fetch }).then(async () => {
+      // #437: the refresh took over the personal keys' fresh values; voice goes to pi-listen now.
+      const changes = describeChanges(settingsBefore, resolve());
+      if (changes.length) applyVoiceSettings(resolve());
       if (delivered().some((v, i) => v !== before[i])) await reloadConnect();
+      if (started) giveShellWarnings(sessionCtx);
       // connect's start-up key check found the device's key refused.
       const backends = await busRequest<{ id: string; rejected?: string }[]>(bus, "kernal:connect", { op: "state" }).catch(() => undefined);
-      if (backends?.find((b) => b.id === "litellm")?.rejected) await rekey();
+      const refused = deviceRouterKey();
+      if (refused && backends?.find((b) => b.id === "litellm")?.rejected) await recover(refused);
     });
     deps.onRefresh?.(done);
     pi.on("after_provider_response", (ev, ctx) => {
       if (ev.status !== 401 || ctx?.model?.provider !== "litellm") return;
       const refused = deviceRouterKey();
       // Not awaited: the reply is not held up. After the start-up work, which may have re-minted already.
-      const p = done.then(() => (refused && deviceRouterKey() === refused ? rekey() : undefined));
+      // A key adopted or re-minted since (by an earlier 401) is not refused again here.
+      const p = done.then(() => (refused && deviceRouterKey() === refused ? recover(refused) : undefined));
       deps.onRekey?.(p);
     });
   }
+
+  // #437: a default set with Ctrl+S (or the default thinking level) goes to the account.
+  const defaults = inSandbox() ? undefined : registerDefaultSync(pi as any, { onSynced: deps.onDefaultsSynced, settleMs: deps.defaultsSettleMs });
+
+  // #437: a new, empty session starts on the default model and thinking level the account (or
+  // this machine) sets; pi chose its own from settings.json just before.
+  pi.on("session_start", async (event: any, ctx: any) => {
+    started = true;
+    sessionCtx = ctx;
+    giveShellWarnings(ctx);
+    // A default set just before the last quit (Ctrl+S, then exit) goes to the account first, so the
+    // new session does not start on the account's older one. Only when one is pending.
+    if (defaults && pendingDefaults()) await defaults.run(ctx);
+    const r = await applyModelAtSessionStart(pi, event, ctx, { argv: deps.argv });
+    deps.onApplied?.(r);
+    if (!ctx?.hasUI) return;
+    const m = resolve().values["model.default"] ?? resolve().values["model.provider"];
+    if (r.model) ctx.ui.notify(`Started on ${r.model}${m ? ` (${describeSource(m)})` : ""}${r.thinking ? `, thinking ${r.thinking}` : ""}. /connect changes it.`, "info");
+    else if (r.thinking) ctx.ui.notify(`Thinking level ${r.thinking} (${describeSource(resolve().values["model.thinking"]!)}).`, "info");
+    if (r.problem) ctx.ui.notify(`Default model: ${r.problem}.`, "warning");
+  });
+
+  // pi applies modelThinkingLevels only for an exact provider/id. `local/<user>-<host>/<model>`
+  // and the `local-qwen-mlx` alias have no such key until one is written, so match that "off" here.
+  // Not persisted: a session's thinking change must not become the account's default.
+  pi.on("model_select", (ev: any) => {
+    if (cliChoices(deps.argv).thinking || typeof pi.setThinkingLevel !== "function") return;
+    const m = ev?.model;
+    if (!m?.provider || !m?.id) return;
+    if (settingsThinkingFor({ provider: m.provider, id: m.id }) !== "off") return;
+    if (pi.getThinkingLevel?.() !== "off") pi.setThinkingLevel("off");
+  });
 
   pi.registerCommand("config", {
     description: "config [reload | profile] -- the settings in force here and where each comes from (your account, this machine, .env, shell)",
@@ -110,9 +205,13 @@ export default function (pi: ExtensionAPI, deps: Deps = {}) {
       const sub = (args ?? "").trim();
       if (sub === "") return notify(renderConfig(resolve()));
       if (sub === "reload") {
+        const before = snapshot(resolve());
         const r = await reloadConfig({ fetch: deps.fetch });
+        applyVoiceSettings(r);
         const note = r.api && r.fromCache ? "Could not reach Outfitter; showing the cached settings.\n" : "";
-        return notify(`${note}${renderConfig(r)}\nThe model connections and Sentry pick up a change at the next start.`);
+        const changes = describeChanges(before, r);
+        const changed = changes.length ? `\nChanged:\n${changes.join("\n")}` : "";
+        return notify(`${note}${renderConfig(r)}${changed}\nThe model connections and Sentry pick up a change at the next start.`);
       }
       if (sub === "profile") return notify(renderProfile(resolve()));
       return notify(USAGE, "warning");

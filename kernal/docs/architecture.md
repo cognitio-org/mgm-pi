@@ -43,7 +43,8 @@ window is prefill (~500 tok/s: a cold 100k prompt is ~3 min; LM Studio's prompt 
 follow-up turns incremental) and long-context quality, not memory. Set 65536 if you want faster
 cold starts; the extension re-derives all budgets from whatever is declared.
 
-**Thinking is off by default for the local routes** (`modelThinkingLevels` in `.pi/settings.json`).
+**Thinking is off by default for the local routes** (`local/<user>-<host>/<model>`, and the retired
+`litellm/local-qwen-mlx` name if a session still has it).
 With thinking on, Qwen reasons for thousands of tokens per turn at ~30 tok/s; turn it on per session
 with `/thinking` when a task needs it.
 
@@ -196,7 +197,7 @@ It would replace the `litellm` provider in `connect`. Extras it brings: model me
 from `/model/info`, native Anthropic `/v1/messages` transport for Claude deployments (better
 thinking-block and cache handling), `/login litellm` SSO, session-id headers for log grouping, and
 its own MCP + Skills discovery. The hand-written provider already does live discovery, thinking
-mapping and works with every route including `local-qwen-mlx`. Switch if you want the native
+mapping and works with every route including `local/<user>-<host>/<model>`. Switch if you want the native
 Anthropic path or cost metadata; if so disable its MCP (`litellm.mcp.enabled: false`) to avoid
 double registration with pi-mcp-adapter.
 
@@ -210,6 +211,7 @@ MCP servers (`object_permission.mcp_servers`); apply with `./apply-teams.sh`.
 | Server | Route | Auth |
 |---|---|---|
 | `ce_knowledge_base`, `headroom` | LiteLLM gateway `…/mcp/` with `x-mcp-servers` | the agent key; LiteLLM holds the upstream bearer token |
+| `sentry` | LiteLLM gateway `…/sentry/mcp` | OAuth through the gateway to the signed-in Sentry account; `/mcp-auth sentry` once on a laptop. The `x-litellm-api-key` header is `Bearer ${KERNAL_ROUTER_KEY}`, filled in by the process. The gateway keeps that token for the person's user id, so a Drive run key uses it with no browser. Every router key may call it |
 | `google_admin` | direct to the Cloud Run MCP | OAuth 2.1 (Google sign-in, PKCE, dynamic registration); run `/mcp-auth google_admin` once, tokens live in the macOS keychain |
 | `augment_admin` | direct to `l.augment-code.support/mcp` | same, `/mcp-auth augment_admin` |
 
@@ -219,6 +221,12 @@ LiteLLM only forwards a token the client already obtained from the upstream's ow
 directly is simpler and avoids the per-server route restriction on the key. The router's `tools/list`
 silently omits `oauth_delegate` servers when no delegated token is present, which is why only
 `search_ce_knowledge_base` showed up.
+
+A Drive image cannot open a browser or a keychain. `outfitter/image/render-mcp.sh` keeps a gateway
+OAuth server (one that already sends `x-litellm-api-key`, such as `sentry`) and turns client OAuth
+off, so the run presents only its router key and the gateway attaches the token it stored for that
+person. A direct OAuth server (`google_admin`, `augment_admin`) is still left out: its token never
+leaves the laptop, and probing it held the first prompt on every start.
 
 ## Loading the index package, and why it is pre-bundled
 

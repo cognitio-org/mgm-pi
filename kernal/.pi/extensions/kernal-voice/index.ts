@@ -4,6 +4,10 @@
  * out once a Deepgram key is available (#249), and warns when no audio capture tool is installed.
  * Set KERNAL_VOICE_MODEL to pick another local model, or KERNAL_VOICE=off to leave pi-listen's
  * configuration alone.
+ *
+ * Centrally managed voice.enabled and voice.language (#437) are written over the seed at load, and
+ * again by /config reload and the start-up refresh (_shared/central-apply.ts applyVoiceSettings);
+ * pi-listen picks them up at its next session_start.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -12,11 +16,15 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { reconcileVoice, languageFromLocale, audioToolHint, AUDIO_TOOLS, DEFAULT_VOICE_MODEL, type Reconcile } from "./lib.ts";
 import { env } from "../_shared/env.ts";
+import { applyVoiceSettings } from "../_shared/central-apply.ts";
+import { kernalVoiceWrite, readVoiceRecord, writeVoiceRecord } from "../_shared/central-config.ts";
 
 /** pi-listen's global settings file (it ignores PI_CODING_AGENT_DIR); overridable for tests. */
 export const voiceSettingsPath = () => env("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
 /** kernal's note that it wrote the seed, beside pi-listen's settings. */
 export const voiceSeedMarkerPath = () => join(dirname(voiceSettingsPath()), "kernal-voice-seed.json");
+/** kernal's record of the voice.enabled/voice.language values it wrote (central-config VoiceRecord). */
+export const voiceRecordPath = () => join(dirname(voiceSettingsPath()), "kernal-voice-applied.json");
 /** Where pi-listen keeps downloaded models: ~/.pi/models/<id>. */
 const modelDir = (model: string) => join(dirname(dirname(voiceSettingsPath())), "models", model);
 
@@ -42,16 +50,26 @@ export function seedFile(): SeedOutcome {
   const path = voiceSettingsPath();
   const markerPath = voiceSeedMarkerPath();
   const settings: Record<string, any> = readJson(path) ?? {};
+  const recordPath = voiceRecordPath();
+  const record = readVoiceRecord(recordPath);
   const r = reconcileVoice(settings, {
     marker: readJson(markerPath),
     deepgramKey: !!process.env.DEEPGRAM_API_KEY || !!settings.voice?.deepgramApiKey,
     modelDownloaded: existsSync(modelDir(settings.voice?.localModel ?? DEFAULT_VOICE_MODEL)),
     model: env("VOICE_MODEL"),
     language: languageFromLocale(process.env.LANG),
+    kernalEnabled: kernalVoiceWrite(record, "enabled"),
   });
   if (r.changed) writeJsonAtomic(path, r.settings);
   if (r.marker) writeJsonAtomic(markerPath, r.marker);
   else rmSync(markerPath, { force: true });
+  // #437: what the seed itself set is Kernal's, never the person's legacy voice choice.
+  if (r.changed && (r.notice === "seeded" || r.notice === "reseeded")) {
+    const before = settings.voice && typeof settings.voice === "object" ? settings.voice : {};
+    const seed = { ...(record.seed ?? {}), enabled: r.settings.voice.enabled };
+    if (before.language === undefined && typeof r.settings.voice.language === "string") seed.language = r.settings.voice.language;
+    writeVoiceRecord({ ...record, seed }, recordPath);
+  }
   return { notice: r.notice, reason: r.reason, path };
 }
 
@@ -72,6 +90,11 @@ export default function (pi: ExtensionAPI) {
     console.error(`[kernal-voice] couldn't update voice settings: ${seeded.reason}`);
   }
   if (env("VOICE_DEBUG")) console.error(`[kernal-voice] ${seeded.reason} → ${seeded.path}`);
+  // #437: voice.enabled and voice.language from the account (or this machine's config.local.json)
+  // go over the seed, so pi-listen's session_start reads them. A legacy pi-listen value is left as
+  // it is. Never throws.
+  const central = applyVoiceSettings(undefined, voiceSettingsPath(), voiceRecordPath());
+  if (env("VOICE_DEBUG") && central.length) console.error(`[kernal-voice] central settings applied: ${central.join(", ")}`);
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
     const model = env("VOICE_MODEL") || DEFAULT_VOICE_MODEL;

@@ -67,7 +67,7 @@ test("settings: memory.mode never turns Agent Engine memory on in a Drive", () =
   assert.equal(tape.guru.memory, "tool");
 });
 
-test("settings: the whole set goes to Kernal as KERNAL_RUN_SETTINGS, values only", () => {
+test("settings: the whole set goes to Kernal as KERNAL_RUN_SETTINGS, values and their levels", () => {
   const out = applyRunSettings(spec({ env: { FOO: "bar" } }, SETTINGS));
   assert.equal(out.guru.env?.FOO, "bar");
   const parsed = JSON.parse(out.guru.env![RUN_SETTINGS_ENV]!);
@@ -81,6 +81,14 @@ test("settings: the whole set goes to Kernal as KERNAL_RUN_SETTINGS, values only
       "compaction.masking": false,
       "memory.mode": "auto",
       "voice.language": "en",
+    },
+    sources: {
+      "model.default": "profile",
+      "model.thinking": "user",
+      "compaction.summaryModel": "user",
+      "compaction.masking": "user",
+      "memory.mode": "user",
+      "voice.language": "default",
     },
   });
   // It survives renderGuru (not a denylisted key) into pi's environment.
@@ -109,7 +117,7 @@ test("settings: values of the wrong type and unknown thinking levels are ignored
   assert.equal(out.guru.model, "");
   assert.equal(out.guru.thinking, undefined);
   assert.equal(out.guru.env?.KERNAL_SUMMARY_MODEL, undefined);
-  assert.deepEqual(JSON.parse(out.guru.env![RUN_SETTINGS_ENV]!), { schemaVersion: 2, profile: null, values: { "model.default": 42, "model.thinking": "ludicrous", "compaction.summaryModel": "" } });
+  assert.deepEqual(JSON.parse(out.guru.env![RUN_SETTINGS_ENV]!), { schemaVersion: 2, profile: null, values: { "model.default": 42, "model.thinking": "ludicrous", "compaction.summaryModel": "" }, sources: { "model.default": "user", "model.thinking": "user", "compaction.summaryModel": "user", "future.key": "user", "some.number": "user" } });
 });
 
 test("settingValues: only well-formed entries", () => {

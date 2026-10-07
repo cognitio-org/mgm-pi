@@ -76,7 +76,7 @@ export async function runSessionSearch(p: Record<string, any>, deps: SearchToolD
   const scope = p.scope === "cloud" || p.scope === "local" ? p.scope : "all";
   const wantCloud = scope !== "local" && !!deps.transport;
   const wantLocal = scope !== "cloud" && !!deps.localDir;
-  if (!wantCloud && !wantLocal) return text(scope === "local" ? "no local sessions here" : "no Outfitter connection: set OUTFITTER_API and OUTFITTER_TOKEN", true);
+  if (!wantCloud && !wantLocal) return text(scope === "local" ? "no local sessions here" : "no Outfitter connection: run kernal login", true);
   const limit = typeof p.limit === "number" ? Math.min(Math.max(Math.floor(p.limit), 1), 25) : 10;
   const since = sinceIso(p.since);
   if (p.since !== undefined && !since) return text("since: use 7d, 12h or an ISO date", true);

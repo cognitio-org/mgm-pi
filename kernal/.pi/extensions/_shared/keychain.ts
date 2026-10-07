@@ -21,6 +21,9 @@ const LABEL = "Kernal (Outfitter)";
 export type Runner = (cmd: string, args: string[], input?: string) => { status: number | null; stdout: string };
 
 export const realRunner: Runner = (cmd, args, input) => {
+  // Set by the test harness (tests/isolate.mjs, #433) so no test can reach the developer's real
+  // Keychain or Secret Service: the tool behaves as if it could not run.
+  if (process.env.KERNAL_TEST_NO_KEYCHAIN === "1") return { status: null, stdout: "" };
   const r = spawnSync(cmd, args, { input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 10_000 });
   return { status: r.error ? null : r.status, stdout: r.stdout ?? "" };
 };

@@ -26,6 +26,9 @@ import { AgentLink, type GithubRefreshTiming } from "./agentlink.ts";
 import { RunKeys } from "./central/run-keys.ts";
 import { SseHub, SsePoller } from "./sse.ts";
 import { LaptopProbe } from "./laptop.ts";
+import { LocalHostEvents } from "./local-hosts/events.ts";
+import { localHostTunnelListener } from "./local-hosts/tunnel-credentials.ts";
+import { localHostDeviceHook } from "./local-hosts/registry.ts";
 import { ProviderStatusService } from "./providers-status.ts";
 import { ModelsService } from "./models.ts";
 import { registerRoutes } from "./routes/index.ts";
@@ -39,11 +42,12 @@ import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
-import { applySentrySettings, installSentryErrorHandler, sentryEnabled, Sentry, type SentryRuntime } from "./sentry.ts";
+import { applySentrySettings, installSentryErrorHandler, sentryEnabled, sentryLogMethod, Sentry, type SentryRuntime } from "./sentry.ts";
 import { FleetSettingsCache } from "./fleet-settings.ts";
 import { DeviceLifecycle } from "./central/device-lifecycle.ts";
 import { isPublicDevicePath } from "./central/device-tokens.ts";
 import { createLitellmKeys, registerLitellmDeviceHooks, routerKeyLimits, type LitellmKeys } from "./central/litellm-keys.ts";
+import { localHostRouterListener } from "./local-hosts/router-sync.ts";
 
 export interface BuildAppOptions {
   store: Store;
@@ -102,6 +106,8 @@ export interface App {
   aeSessions: AeSessions;
   /** E9 §5.3 A2A tasks (tests reach endForKey and get through it). */
   a2a: A2ATasks;
+  /** #378 Local Host: tests register listeners and call changed()/sweep() through it. */
+  localHostEvents: LocalHostEvents;
   /** Stops the run reconciler interval, (role link/all) the down-queue poller, and (role web/all)
    * the provider status poller; call from tests and from main.ts on shutdown. */
   stopBackgroundTasks: () => void;
@@ -113,7 +119,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     opts.provider instanceof SandboxProviders ? opts.provider : SandboxProviders.single(config.sandboxProvider, opts.provider);
   // forceCloseConnections: idle keep-alive/websocket sockets otherwise stall fastify.close() for
   // as long as they're open (observed in tests: ~30s before a lingering ws finally times out).
-  const fastify = Fastify({ logger: true, forceCloseConnections: true });
+  // The logger is pino's default (what `logger: true` gives) plus #424's hook, which also sends a
+  // line to Sentry as a log while the fleet settings have Sentry's logs on (sentry.ts).
+  const fastify = Fastify({ logger: { hooks: { logMethod: sentryLogMethod } }, forceCloseConnections: true });
   await fastify.register(fastifyWebsocket);
 
   // Fleet settings (fleet-settings.ts): what an operator set in the web app for every machine.
@@ -160,6 +168,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const laptopProbe = new LaptopProbe({
     tunnelDomain: config.tunnelDomainLmstudio,
     token: config.localTunnelToken,
+    localHosts: store.localHosts,
   });
   const mail = new MailService(store, runs, wakeSchedulerFor(config), (msg, err) => fastify.log.warn({ err }, msg));
   // One broker for agentd's github.request frames and the A2A result's pull request lookup.
@@ -258,6 +267,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const runKeys = new RunKeys({ keys: litellmKeys, store, config, limits: keyLimits, log: (msg, err) => fastify.log.warn({ err }, msg) });
   agentLink.setRunKeys(runKeys);
   void runKeys.ensureSystemTeam();
+  // #378 Local Host (docs/specs/local-host.md §5): the registry announces host changes; listeners
+  // register below, one line per task. The ngrok client exists whenever NGROK_API_KEY is set (tests
+  // inject opts.ngrok); credentials are provisioned only with config.localHostDomain too.
+  const localHostEvents = new LocalHostEvents((msg, err) => fastify.log.warn({ err }, msg));
+  const localHostNgrok = opts.ngrok ?? (config.ngrokApiKey ? createNgrokApi(config.ngrokApiKey) : undefined);
+  // Task A (#382/#383): its LocalHostListener (ngrok clean-up) and device-revoke hook go here.
+  localHostEvents.register(localHostTunnelListener({ store, ngrok: localHostNgrok, config, secretAdmin, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) }));
+  deviceLifecycle.register(localHostDeviceHook({ store, ngrok: localHostNgrok, config, secretAdmin, events: localHostEvents, log: (msg, detail) => fastify.log.warn(detail ?? {}, msg) }));
+  // Task B (#384): its LocalHostListener (router reconciliation) goes here.
+  // Its own key (LOCAL_HOST_ROUTER_KEY), mounted on link only; never on web (local-host.md §3.5).
+  if (config.localHostRouterKey && config.role !== "web") localHostEvents.register(localHostRouterListener({ store, config, secretAdmin, log: (msg, err) => fastify.log.warn({ err }, msg) }));
 
   fastify.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/hooks/")) return;
@@ -335,6 +355,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
       opts.githubCatalog ?? new GithubCatalog(async (name) => (await secretAdmin.accessLatest(name)) ?? ""),
     deviceLifecycle,
     ...(litellmKeys ? { litellmKeys } : {}),
+    localHostEvents,
+    ...(localHostNgrok ? { localHostNgrok } : {}),
   });
   // The down-queue poller only makes sense where AgentLink sockets actually live (role "link" or
   // "all", same condition as registering /agent/ws itself) — see agentLink.startDownQueuePoller's
@@ -356,7 +378,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     ssePoller.stop();
   };
 
-  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, stopBackgroundTasks };
+  return { fastify, runs, agentLink, sse, laptopProbe, providerStatus, mail, previews, turns, aeSessions, a2a, localHostEvents, stopBackgroundTasks };
 }
 
 /** GET /api/sessions/:id/browser/captures/:captureId, or undefined. Query strings are ignored. */

@@ -10,8 +10,10 @@
  * directory (KERNAL_TELEPORT_STORE, default ~/.kernal-sessions) that is a plain git repo. A future
  * "Outfitter" cloud API can implement the same Store interface without touching these commands.
  *
- * `kernal --teleport <id>` (see ../../../bin/kernal and ./cli.ts) does the pull step headlessly, before pi
- * even starts, then launches pi with --session pointed at the imported file.
+ * `kernal --teleport <id>` (see ../../../bin/kernal) starts pi with "/teleport pull <id>" as its first
+ * message, which pi runs as this command once the session is up (#426: a bundle's pi is a compiled
+ * binary, so the pull can't run in node before pi starts). Without a UI (-p, --mode json), pull's
+ * messages go to stderr and a failure exits 1.
  *
  * All git calls go through pi.exec; the only direct child_process use is GitStore's injected default
  * exec in lib.ts, which tests replace with a stub. Pure logic lives in ./lib.ts and is unit-tested.
@@ -47,6 +49,25 @@ function commitPreview(porcelain: string): string {
   if (raw.length <= 500) return raw;
   const hidden = raw.slice(500).split("\n").filter((line) => line.length > 0).length;
   return `${raw.slice(0, 500)}\n… ${hidden} more ${hidden === 1 ? "line" : "lines"} not shown. Committing includes them.`;
+}
+
+type Level = "info" | "warning" | "error";
+
+/** A pull's messages: the UI when there is one; else stderr (print and json mode, e.g.
+ * `kernal --teleport <id> -p ...`), where ctx.ui.notify would show nothing. */
+function say(ctx: { hasUI: boolean; ui: { notify(message: string, level?: Level): void } }, message: string, level: Level) {
+  if (ctx.hasUI) ctx.ui.notify(message, level);
+  else console.error(message);
+}
+
+/** Exit hook for a failed pull without a UI; tests replace it. */
+export const headless = { exit: (code: number): void => { process.exit(code); } };
+
+/** A failed pull. Without a UI it exits 1 (what `kernal --teleport` did before #426), so pi doesn't go
+ * on to run the remaining prompts in the fresh session it started with. */
+function fail(ctx: Parameters<typeof say>[0], message: string): void {
+  say(ctx, message, "error");
+  if (!ctx.hasUI) headless.exit(1);
 }
 
 // Persist into the agent config dir (PI_CODING_AGENT_DIR when launched via bin/kernal, else
@@ -197,10 +218,7 @@ export default function (pi: ExtensionAPI) {
   // ---------- pull ----------
   async function pull(ctx: ExtensionCommandContext, id: string | undefined, opts: { force?: boolean } = {}) {
     if (!id) {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("Usage: /teleport pull <id> [--force]", "error");
-        return;
-      }
+      if (!ctx.hasUI) return fail(ctx, "Usage: /teleport pull <id> [--force]");
       await interactivePick(ctx);
       return;
     }
@@ -209,8 +227,7 @@ export default function (pi: ExtensionAPI) {
     try {
       got = await store.get(id, opts);
     } catch (err: any) {
-      ctx.ui.notify(`teleport: no session "${id}" in the store: ${err?.message ?? err}`, "error");
-      return;
+      return fail(ctx, `teleport: no session "${id}" in the store: ${err?.message ?? err}`);
     }
     const { file, manifest } = got;
 
@@ -218,22 +235,13 @@ export default function (pi: ExtensionAPI) {
       const remote = await pi.exec("git", ["remote", "get-url", "origin"], { cwd: ctx.cwd });
       const localOwnerRepo = remote.code === 0 ? parseOwnerRepo(remote.stdout.trim()) : undefined;
       const mismatch = verifyOwnerRepo(localOwnerRepo, manifest.repo.ownerRepo);
-      if (mismatch) {
-        ctx.ui.notify(`teleport pull: ${mismatch}`, "error");
-        return;
-      }
+      if (mismatch) return fail(ctx, `teleport pull: ${mismatch}`);
       const status = await pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd });
-      if (isWorkingTreeDirty(status.stdout)) {
-        ctx.ui.notify("Commit or stash your changes before pulling this session.", "error");
-        return;
-      }
+      if (isWorkingTreeDirty(status.stdout)) return fail(ctx, "Commit or stash your changes before pulling this session.");
       const fetch = await pi.exec("git", ["fetch", "origin", manifest.repo.branch], { cwd: ctx.cwd });
-      if (fetch.code !== 0) ctx.ui.notify(`teleport pull: could not fetch origin/${manifest.repo.branch} (offline?); trying the local branch.`, "warning");
+      if (fetch.code !== 0) say(ctx, `teleport pull: could not fetch origin/${manifest.repo.branch} (offline?); trying the local branch.`, "warning");
       const checkout = await pi.exec("git", ["checkout", manifest.repo.branch], { cwd: ctx.cwd });
-      if (checkout.code !== 0) {
-        ctx.ui.notify(`teleport pull: git checkout ${manifest.repo.branch} failed: ${checkout.stderr.trim()}`, "error");
-        return;
-      }
+      if (checkout.code !== 0) return fail(ctx, `teleport pull: git checkout ${manifest.repo.branch} failed: ${checkout.stderr.trim()}`);
     }
 
     const tmp = join(tmpdir(), `teleport-${manifest.id}-${Date.now()}.jsonl`);
@@ -241,7 +249,11 @@ export default function (pi: ExtensionAPI) {
 
     const existing = (await SessionManager.list(ctx.cwd)).find((s) => s.id === manifest.id);
     let forkId: string | undefined = manifest.id;
-    if (existing) {
+    if (existing && !ctx.hasUI) {
+      // Nobody to ask (`kernal --teleport <id> -p ...`): keep the local copy, import under a new id.
+      say(ctx, `teleport pull: a session with id ${manifest.id.slice(0, 8)} already exists here; importing it as a new session.`, "info");
+      forkId = undefined;
+    } else if (existing) {
       const choice = await ctx.ui.select(
         `A session with id ${manifest.id.slice(0, 8)} already exists here (${existing.name || existing.firstMessage.slice(0, 60)}). What now?`,
         ["Overwrite the local copy", "Import as a new session"],
@@ -265,7 +277,7 @@ export default function (pi: ExtensionAPI) {
       ? `Teleported in from ${manifest.host}. Model set to ${pick.provider}/${pick.modelId}.`
       : `Teleported in from ${manifest.host}. Wanted ${pick.provider}/${pick.modelId} but it isn't configured here; keeping the session's saved model.`;
     const result = await ctx.switchSession(newPath, {
-      withSession: async (newCtx) => newCtx.ui.notify(message, "info"),
+      withSession: async (newCtx) => say(newCtx, message, "info"),
     });
     if (result.cancelled) ctx.ui.notify("teleport pull cancelled", "info");
   }

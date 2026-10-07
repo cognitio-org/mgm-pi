@@ -48,7 +48,7 @@ describe("RunKeys.keyForRun", () => {
     await runKeys.keyForRun({ run: run(), session: { id: "s1", ownerEmail: OWNER }, specSent: "no", sharedKey: SHARED, a2a: false });
     const [gen] = fake.callsTo("/key/generate");
     assert.equal(gen!.body.max_budget, 4);
-    assert.deepEqual(gen!.body.models, ["claude-auto-llm"]);
+    assert.deepEqual(gen!.body.models, ["claude-auto-llm", "local-hosts"]);
     assert.ok(!("rpm_limit" in gen!.body), "device-only limits stay off run keys");
     const record = await store.routerKeys.findByAlias("outfitter-run-r1");
     assert.equal(record?.maxBudget, 4);
@@ -68,7 +68,8 @@ describe("RunKeys.keyForRun", () => {
     assert.equal(gen!.body.max_budget, RUN_KEY_MAX_BUDGET_USD);
     assert.deepEqual(gen!.body.metadata, { outfitter: "run", runId: "r1", sessionId: "s1" });
     // The LiteLLM user exists first, keyed by the user id, never the email alone.
-    assert.equal(fake.users.get(userIdFor(OWNER))?.user_email, OWNER);
+    assert.equal(fake.users.get(userIdFor(OWNER))?.metadata?.email, OWNER);
+    assert.equal(fake.users.get(userIdFor(OWNER))?.user_role, "internal_user");
     const record = await store.routerKeys.findByAlias("outfitter-run-r1");
     assert.equal(record?.kind, "run");
     assert.equal(record?.userId, userIdFor(OWNER));

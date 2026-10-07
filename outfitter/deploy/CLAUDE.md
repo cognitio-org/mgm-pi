@@ -17,6 +17,13 @@
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
 - `litellm-admin.sh` (without `DRY_RUN=1`) is owner-run: it reads the router master key and mints
   Outfitter's scoped admin key into `outfitter-litellm-admin`. `DRY_RUN=1` reads nothing secret.
+- `litellm-retire-keys.sh` (`system-key`, `block`, `unblock`; without `DRY_RUN=1`) is owner-run
+  (#399): it reads the router master key, mints the `outfitter-system` key into
+  `outfitter-litellm-key-default`, and blocks the retired shared router keys. `DRY_RUN=1` reads
+  nothing secret and writes nothing.
+- `sentry-token.sh` (without `DRY_RUN=1`) is owner-run: it stores the Sentry upload token in
+  `sentry-release-token` and grants `outfitter-builder@` access to that secret (README.md "Web source
+  maps"). The token comes from the owner's clipboard; agents never handle it.
 - `secret-scope.sh` (without `DRY_RUN=1`) is owner-run: it changes outfitter-api's project IAM
   (secret roles limited to `outfitter-*` secrets). `DRY_RUN=1` is safe.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector

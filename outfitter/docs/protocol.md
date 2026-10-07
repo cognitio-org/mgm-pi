@@ -196,7 +196,7 @@ Down (api → agentd):
 
 | t | fields | effect |
 |---|---|---|
-| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?, adminTools?, memory?, agentEngine?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, telemetry? {sentry {dsn, tracesSampleRate, environment, release?}}, idleStopSeconds, checkpointEvery` | start the run. `telemetry` (fleet settings, docs/reports/sentry-integration-plan.md): present only while an operator has Sentry on for the fleet; agentd starts Sentry with it as the spec arrives. Absent: agentd sends nothing to Sentry. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
+| `run.spec` | `session {id, name, cwd:"/workspace"}, repo? {cloneUrl, branch, baseBranch, createBranch, branchPrefix?} (absent for non-coding sessions: agentd starts with an empty /workspace, or restores `workspace.snapshotUrl`), workspace? {snapshotUrl?}, guru {systemPrompt?, appendSystemPrompt?, model, thinking, tools?, excludeTools?, packages?, env?, playwrightBeforeCheckpoint?, allowExternalHtmlResources?, adminTools?, memory?, agentEngine?}, snapshot {url?, jsonl?}, secrets {githubToken, litellmKey, litellmBaseUrl?, ngrokAuthtoken?}, author? {name, email, login?}, preview? {internalDomain}, ide? {version, artifacts {amd64?, arm64?}}, telemetry? {sentry {dsn, tracesSampleRate, environment, release?, logs?, metrics?, agentTraces?, agentContent?, profilesSampleRate?}}, idleStopSeconds, checkpointEvery` | start the run. `telemetry` (fleet settings, docs/reports/sentry-integration-plan.md): present only while an operator has Sentry on for the fleet; agentd starts Sentry with it as the spec arrives. Absent: agentd sends nothing to Sentry. The #424 signals are there only while on (absent: off): logs (agentd's INFO-and-up lines), metrics, agentTraces (gen_ai spans per pi agent run, model call and tool call, src/agent-trace.ts), agentContent (their prompts, outputs and tool input/output, redacted, 8 KB a field), profilesSampleRate. `preview` with `secrets.ngrokAuthtoken` (drive-previews.md, #217): agentd starts the preview listener and pins `OUTFITTER_PREVIEW_PORT`/`OUTFITTER_PREVIEW_TOKEN` for the tool; the credential (ACL `bind:*.<internalDomain>`) stays in a root-only ngrok config, never in pi's env. Absent: no previews. `ide` (browser-ide.md, #241; only with `preview`, for a Tape with `browserIde`): agentd downloads that code-server release from GitHub at once, niced, checks the SHA-256 for its architecture, and moves it root-owned to `/opt/code-server` without the bundled Copilot (`src/ide-install.ts`). A failed install is logged and never fails the run |
 | `ack` | `seq` | agentd may drop buffered frames ≤ seq |
 | `prompt` | `text, images?, behavior?: "steer"\|"followUp"` | pi RPC `prompt` (with `streamingBehavior` if pi is busy) |
 | `steer` / `follow_up` | `text` | pi RPC same name |
@@ -412,8 +412,9 @@ A spec re-sent while the run still provisions never deletes a key that may have 
 shared key while the fallback is on, otherwise an additional key `outfitter-run-<runId>-<n>`.
 The api deletes all of the run's keys when its `bye` is stored; a run that ends any other way leaves its key
 to LiteLLM's expiry and the tick's sweep. Without minting, without an owner, and for an A2A session
-the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the default until
-CA-10) a failed mint also falls back to it, and with it off the spec build fails retryably (1011).
+the key is the shared one as before; while `OUTFITTER_RUN_KEY_FALLBACK` is on (the api's default when
+unset) a failed mint also falls back to it, and with it off (`deploy/config.env` since CA-10, #399)
+the spec build fails retryably (1011).
 
 `run.spec.settings?` `{ schemaVersion, profile, values: { "<key>": { value, source, sourceName? } } }`
 is the owner's resolved central settings (their default profile, no device level; `router.*` and
@@ -540,7 +541,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
 
 ## browser ⇄ api (REST)
 
-- `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` overrides the guru's own model for this session — see the laptop-preflight note above)
+- `POST /api/sessions` `{guruId, repo?, baseBranch?, branch?, prompt, name?, model?}` → `{session, run}` (`repo` omitted = non-coding session with a scratch workspace; `model` is the floppy's model, defaulting to the tape's model as it is now. Either way it is pinned on the floppy as `modelOverride`: the tape only seeds a new floppy, and a later tape edit doesn't move existing ones — see `PUT /api/sessions/:id/model` and the laptop-preflight note above)
 - `GET /api/sessions?status=&guru=&runState=&archived=` → list with `{id, name, status, runState, guru, repo, branch, parentId?, cost, archivedAt?, canManage, updatedAt}` (`canManage`: whether the caller may archive, restore or format it; `GET /api/sessions/:id` carries it too). Archived floppies are left out unless `archived=only` (just them) or `archived=all`; anything else is a 400
 - `GET /api/sessions/:id` → metadata + `leafId` + `runState` + `startup` (the reportable run's start-up summary, see "Start-up timing"; `null` before it is ready or for a run that predates it) + `pendingUiRequest` (the active run's `Run.pendingUiRequest`, or `null` when there is none — a stopped or failed run does not keep a stale approval) + `allowExternalHtmlResources` (#132: the HTML preview's starting access, from the same run as `runState`, which keeps it after stopping; the guru's current value when that run has not recorded one yet) + `htmlPreviewAccessByRun` (#147: `{<runId>: boolean}` for every run of the session that recorded a value)
 - `GET /api/sessions/:id/entries?after=<entryId>` → pi entries in tree order. An entry an agentd run sent also carries `outfitterRunId` (#147), which is not a pi field; the web picks each HTML preview's starting access from `htmlPreviewAccessByRun` with it, and falls back to `allowExternalHtmlResources`. SSE `entry` events carry the same field. The stored entry and `export.jsonl` stay pi's own.
@@ -553,6 +554,7 @@ wake -> ready summary. Runs created before `Run.startup` existed get no stamps a
 - The three answer `501 {unavailable: "not-configured"}` where telemetry isn't set up (dev), `503 {unavailable: "forbidden"}` until `gke-iam.sh` has granted access, and `502 {unavailable: "failed"}` if Google fails, and `400 {unavailable: "bad-request"}` for a malformed page token. Audience: anyone who can open the session (owner decision on #196).
 - `GET /api/sessions/:id/stream` → SSE: `event: entry|event|status|spend|checkpoint|liveness|live_thought`, `data: <json>`. A `status` event may carry `startup` (the run's start-up summary, see "Start-up timing"): absent means unchanged, `null` means the current run has none (yet), an object replaces it. `liveness` (#182) is `{seenAgoMs?, activityAgoMs?}` for the active run, sent whenever either changes: how long ago agentd last sent any frame (`Run.lastSeenAt`, heartbeats every 15 s) and how long ago pi last wrote an entry or streamed an event (`Run.lastActivityAt`, stamped by the same write that acks a seq frame). Ages, not timestamps, so the browser's clock doesn't matter. Each frame replaces both: an absent age clears the page's copy, so a new run's first frame drops the previous run's activity. Raw `event` frames never cross from the link role to the web role, except `live_thought` (#285): `{text: string | null}`, the open message's thinking text, throttled onto `Run.liveThought` (null once that message is stored or the run leaves `running`). Liveness is how the page tells a long LLM call or tool run (quiet, agentd alive: "Working, no output for N min") from a dead sandbox (agentd silent for 60 s: LOAD ERROR). A pi that hangs while agentd keeps heartbeating also reads as quiet; the minutes keep counting and Break stays available.
 - `POST /api/sessions/:id/messages` `{text, behavior?}` → stores the text as mail (see "Mailbox"), wakes a run if none is running, returns `{run}`; `behavior` defaults to `followUp`. If the wake fails it returns **202 `{run: null}`**: the mail is queued for Cloud Tasks and `/tick`, so the client must not resend. Text over 32,000 characters is a 413. `POST /api/sessions` behaves the same way for its `prompt` (201 with `run: null` if the first wake failed)
+- `PUT /api/sessions/:id/model` `{model: "provider/id" | null}` → `{modelOverride, model, applied: "live"|"next-run", modelFallback?}`: switches the floppy's model at any time. It is stored as `Session.modelOverride`, which every later `run.spec` uses. `null` copies the tape's model as it is now: a copy, so later tape edits still don't follow. A floppy from before models were pinned (no `modelOverride`) is pinned once, at its first run start: on the last `model_change` in its transcript (or the model that run wanted, if the laptop preflight had swapped in a fallback), else the tape's. A tape's `:<level>` suffix is never pinned: the floppy keeps the bare model, and the spec's `guru.thinking` is the tape's level (its `thinking` field, else that suffix). `POST /api/sessions {model}` gets the same validation as this route. When a Drive is queued, provisioning, running or idle, the api also resolves it through the laptop preflight (recording `Run.modelFallback`) and sends that Drive an `rpc` down-frame with pi's own `{type: "set_model", provider, modelId}` (the provider is everything before the first `/`); agentd holds it until pi is up. pi then writes a `model_change` entry, so the session header shows the switch and the next run's restore doesn't pass `--model` again. A model pi doesn't know comes back as `pi rejected set_model: …` in the run's `statusDetail`. A stopping Drive is left alone (`applied: "next-run"`). `model` is what pi was told: a laptop model with the laptop offline becomes the tape's fallback. `GET /api/sessions/:id` carries `guruModel` (the tape's model now) next to `modelOverride`. When two switches overlap, each reads the floppy again just before sending, so pi ends on what is stored. 400 for anything but `provider/id` (no whitespace, at most 200 characters, no `:<thinking level>` suffix: the tape sets thinking, and pi's `set_model` takes no suffix) or `null`; 409 on an archived floppy. Anyone who can open the session, like sending it a message.
 - `POST /api/sessions/:id/abort` · `/stop` (graceful for a `running`/`idle` run: enqueues a `stop`
   down-message through the store and sets `stopping` — see "Run state machine" above; cancels via
   the provider directly for a `queued`/`provisioning` run, which has no live agent to ask) · `/wake`
@@ -739,11 +741,66 @@ operators (PREVIEW_ALLOW's format). Operators always count. Empty outside dev mo
 kind: `403 tokens are created in the web app`); no token is ever an operator, on any role; and once
 `OUTFITTER_LOGIN_ALLOW` is set, a Dongle whose owner is not on it gets the generic 401.
 
+**Dongles retired** (#399, CA-10): `POST /api/me/tokens` with `kind: "dongle"` or no `kind` answers
+`410` (error "Dongles are retired: sign Kernal in with ...", `routes/tokens.ts` `DONGLES_RETIRED`) and stores nothing;
+`kind: "a2a"` is unchanged. Existing Dongles keep authenticating (and listing and revoking) until
+they expire or are revoked. Kernal no longer sends one.
+
 **Rate limits**, per instance: `/code` 10 per IP per 10 minutes; `/token` 120 per IP per minute;
 `/pending` and `/approve` together 20 per person per 10 minutes. Over the limit: `429 { error:
 "rate_limited", retryAfter }`. `GET /api/me` includes `ip` (the last X-Forwarded-For hop, which
 Cloud Run appends) so the approve page can warn when the code was requested from elsewhere. Every
 per-IP check uses that same hop.
+
+## Local hosts (#382, #383)
+
+A signed-in Kernal can share its machine's local models (LM Studio, Ollama, llama.cpp, mlx-lm,
+vLLM) with everyone signed in. The contract is `docs/specs/local-host.md`; the code is
+`packages/api/src/local-hosts/registry.ts` (heartbeat, listing, delete, device hook),
+`local-hosts/tunnel-credentials.ts` (credentials, traffic policies, sweep), `routes/local-hosts.ts`
+(HTTP) and `store/local-hosts.ts` (collection `localHosts`, one record per person per machine,
+`_id` `lh_` + 24 hex).
+
+- `POST /api/local-hosts/heartbeat` (link, all; device token only) with the discovery snapshot,
+  `shareModels` and the tunnel's state → `{ accepted, id, status, nextHeartbeatSeconds: 300,
+  credentials, routerPrefix, routerModels, problems }`. Sent on a change (at most every 10 s), every
+  300 s while sharing, and on start and stop. `status`: `online`, `offline` (tunnel not up, or its
+  server not answering), `not-sharing`, `stale` (no heartbeat for 960 s) or `revoked`.
+  `credentials`: `current`, `fetch` (call the next route), `none` (stop the tunnel) or `unavailable`
+  (this deployment provisions none; use interim `.env` credentials). A body that fails validation is
+  `400 { error: "invalid_heartbeat", field }`; over 256 KiB, 413. Server URLs are stored, never
+  fetched.
+- `POST /api/local-hosts/tunnel-credentials { hostId }` (link, all; device token only) → an ngrok
+  authtoken whose ACL binds only `https://lh<hex>.internal`, the internal endpoint's traffic policy,
+  the per-host bearer (`lhb_…`), the public URL `https://lh-<random>.<LOCAL_HOST_DOMAIN>`, allowed
+  paths, rate limit, `issuedAt`/`expiresAt` (advisory, 7 days). `Cache-Control: no-store`; Kernal
+  keeps it in memory only. Every call mints a new credential (and deletes the previous one); the
+  bearer and the cloud endpoint stay. Errors: `404 host_unknown` (heartbeat first, or the host was
+  deleted), `409 sharing_off`, `403 host_revoked`, `409 credentials_busy` (another call for the same
+  host is running; retry), `404 device not found` (the device was revoked while the call ran), `503 local_host_tunnels_off` (no `NGROK_API_KEY` or
+  `LOCAL_HOST_DOMAIN`, which defaults to `PREVIEW_DOMAIN`), `502 ngrok_failed`.
+- The cloud endpoint's policy, written only by the api: rate limit 120 per 60 s per client IP, `401`
+  without `Authorization: Bearer <bearer>`, `404` JSON outside `/v1/chat/completions`,
+  `/v1/completions`, `/v1/embeddings`, `/v1/models`, then `forward-internal` to the host's internal
+  endpoint. The internal policy (applied by the laptop) and Kernal's guard proxy check the bearer and
+  paths again. The bearer lives in Secret Manager `outfitter-localhost-<hex>`; Mongo has its sha256.
+- `GET /api/local-hosts` (every role; a person, or a device token) → `{ hosts }`: the caller's own
+  hosts (any status), then everyone else's sharing hosts that are online, offline, or stale for
+  under 7 days. No credential, endpoint, bearer, internal URL, device or user id. Strings with
+  control or bidi-override characters are refused at the heartbeat.
+- `DELETE /api/local-hosts/:id` (the owner, or an operator on web; anyone else 404) → 204: deletes
+  the ngrok endpoint and credential, disables the bearer, and leaves a tombstone (not listed; DELETE
+  on it 404) that keeps the router prefix for the same person. The laptop's next heartbeat revives
+  it. `bearerVersion` only ever goes up for a record, across revokes and deletes.
+- A Dongle or personal API token gets `403 device_token_required` on all four; a machine token `403
+  machine_token`.
+- Revoking a device deletes its hosts' ngrok resources and bearer and marks them `revoked` until a
+  heartbeat from a newer login on that machine. Sharing turned off deletes the cloud endpoint (the
+  credential stays). The tick's sweep deletes the endpoint of a host stale for over 24 h, and any
+  ngrok endpoint or credential stamped `purpose: "outfitter-local-host"` with this `PREVIEW_ENV` that
+  no record references (after a 5-minute grace).
+- The E2.8 preflight treats a `local/<prefix>/<model>` name (with or without `litellm/`) as a laptop
+  model: it is online while its host is `online` and the model is on the tunnel's server.
 
 ## A2A server (E9 §5, PR5)
 

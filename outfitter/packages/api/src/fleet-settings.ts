@@ -3,7 +3,8 @@
 // One document in the `fleetSettings` collection (store/types.ts FleetSettingsCollection).
 //
 // Sentry is the first setting here (#368): where events go (the DSN), whether anything is sent at
-// all, and the trace sample rate. Readers:
+// all, and the trace sample rate; since #424 also which other signals go (logs, metrics, AI agent
+// spans and their content, profiles), each off by default and each off while Sentry is. Readers:
 //   - GET /api/fleet-settings (routes/me.ts): any signed-in caller, a laptop's Dongle included.
 //     Kernal's sentry extension caches the answer (kernal/.pi/extensions/_shared/fleet-settings.ts).
 //   - the API itself (sentry.ts, through FleetSettingsCache below).
@@ -27,6 +28,70 @@ export interface SentryFleetSettings {
   dsn?: string;
   /** Fraction of traces kept, 0..1. Errors are always sent in full while enabled. */
   tracesSampleRate: number;
+  // #424: the other signals, each off unless an operator turns it on, and each meaningless while
+  // Sentry itself is off. Stored only while on (true, or a rate above 0), so a document written
+  // before #424, or with every signal off, has none of them. See sentrySignals.
+  /** Server logs (api/link, agentd) through Sentry.logger. */
+  logs?: boolean;
+  /** Counters and distributions through Sentry.metrics. */
+  metrics?: boolean;
+  /** AI agent monitoring spans (gen_ai.invoke_agent / chat / execute_tool) from agentd and Kernal. */
+  agentTraces?: boolean;
+  /** Prompts, responses, tool arguments and results in those spans (redacted, truncated). Only
+   * meaningful with agentTraces on. */
+  agentContent?: boolean;
+  /** Fraction of profiling sessions, 0..1 (Sentry's profileSessionSampleRate): api/link, agentd and
+   * the web app. */
+  profilesSampleRate?: number;
+}
+
+/** #424's signal switches, as booleans and a rate. */
+export interface SentrySignals {
+  logs: boolean;
+  metrics: boolean;
+  agentTraces: boolean;
+  agentContent: boolean;
+  profilesSampleRate: number;
+}
+
+/** The boolean signal fields of SentryFleetSettings. */
+export const SENTRY_SIGNAL_FLAGS = ["logs", "metrics", "agentTraces", "agentContent"] as const;
+
+/** The signals a Sentry section asks for, all off while Sentry is off (sentryOn). agentContent is
+ * off without agentTraces: content rides on agent spans. */
+export function sentrySignals(s: SentryFleetSettings): SentrySignals {
+  if (!sentryOn(s)) return { logs: false, metrics: false, agentTraces: false, agentContent: false, profilesSampleRate: 0 };
+  return {
+    logs: s.logs === true,
+    metrics: s.metrics === true,
+    agentTraces: s.agentTraces === true,
+    agentContent: s.agentTraces === true && s.agentContent === true,
+    profilesSampleRate: isRate(s.profilesSampleRate) ? s.profilesSampleRate : 0,
+  };
+}
+
+/** Only the signals that are on, for a wire answer (GET /api/fleet-settings, run.spec): an older
+ * reader sees nothing new, and with every signal off the answer is exactly what it was before. */
+export function signalsOnWire(signals: SentrySignals): Partial<SentrySignals> {
+  return {
+    ...(signals.logs ? { logs: true } : {}),
+    ...(signals.metrics ? { metrics: true } : {}),
+    ...(signals.agentTraces ? { agentTraces: true } : {}),
+    ...(signals.agentContent ? { agentContent: true } : {}),
+    ...(signals.profilesSampleRate > 0 ? { profilesSampleRate: signals.profilesSampleRate } : {}),
+  };
+}
+
+/** A stored or submitted section's signal fields, whatever Sentry's own state: only those on, and
+ * anything malformed dropped (read as off). */
+function storedSignals(s: Record<string, unknown>): Partial<SentryFleetSettings> {
+  return {
+    ...(s.logs === true ? { logs: true } : {}),
+    ...(s.metrics === true ? { metrics: true } : {}),
+    ...(s.agentTraces === true ? { agentTraces: true } : {}),
+    ...(s.agentContent === true ? { agentContent: true } : {}),
+    ...(isRate(s.profilesSampleRate) && s.profilesSampleRate > 0 ? { profilesSampleRate: s.profilesSampleRate } : {}),
+  };
 }
 
 export interface FleetSettings {
@@ -41,9 +106,13 @@ export interface FleetSettings {
   updatedBy?: string;
 }
 
-/** What a client (Kernal, the web app) is told: the DSN only while Sentry is on. */
+/** What a client (Kernal, the web app) is told: the DSN only while Sentry is on. `release` (#421)
+ * is this deploy's outfitter-v* tag (OUTFITTER_RELEASE), there only while on and only on a tagged
+ * deploy: the web app reports under it, so its events land on the Sentry release the deploy workflow
+ * created. Kernal ignores it (a laptop reports its own kernal@X.Y.Z). The #424 signals are there
+ * only while Sentry is on, and only those that are on (signalsOnWire): absent means off. */
 export interface ClientFleetSettings {
-  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number } };
+  telemetry: { sentry: { enabled: false } | ({ enabled: true; dsn: string; tracesSampleRate: number; release?: string } & Partial<SentrySignals>) };
   updatedAt?: string;
 }
 
@@ -74,6 +143,7 @@ export function withDefaults(doc: Partial<FleetSettings> | null | undefined): Fl
       enabled: s.enabled === true,
       ...(typeof s.dsn === "string" && s.dsn ? { dsn: s.dsn } : {}),
       tracesSampleRate: isRate(s.tracesSampleRate) ? s.tracesSampleRate : DEFAULT_TRACES_SAMPLE_RATE,
+      ...storedSignals(s as unknown as Record<string, unknown>),
     };
   }
   const values = fleetValues(doc?.values);
@@ -124,10 +194,14 @@ export function sentryOn(s: SentryFleetSettings): s is SentryFleetSettings & { d
   return s.enabled && typeof s.dsn === "string" && s.dsn !== "";
 }
 
-export function clientFleetSettings(settings: FleetSettings): ClientFleetSettings {
+export function clientFleetSettings(settings: FleetSettings, opts: { release?: string } = {}): ClientFleetSettings {
   const s = settings.telemetry.sentry;
   return {
-    telemetry: { sentry: sentryOn(s) ? { enabled: true, dsn: s.dsn, tracesSampleRate: s.tracesSampleRate } : { enabled: false } },
+    telemetry: {
+      sentry: sentryOn(s)
+        ? { enabled: true, dsn: s.dsn, tracesSampleRate: s.tracesSampleRate, ...(opts.release ? { release: opts.release } : {}), ...signalsOnWire(sentrySignals(s)) }
+        : { enabled: false },
+    },
     ...(settings.updatedAt ? { updatedAt: settings.updatedAt } : {}),
   };
 }
@@ -151,7 +225,9 @@ export function isSentryDsn(value: string, allowHttp = false): boolean {
 }
 
 /** Validates PUT /api/operator/fleet-settings' body: the whole `telemetry.sentry` section. An empty
- * DSN removes it; turning Sentry on needs one. */
+ * DSN removes it; turning Sentry on needs one. The section is replaced whole, so a #424 signal left
+ * out is off; each is kept while Sentry is off, like the DSN, so turning Sentry back on brings them
+ * back. */
 export function parseSentryUpdate(body: unknown, opts: { allowHttp?: boolean } = {}): { value: SentryFleetSettings } | { error: string } {
   const s = (body as { telemetry?: { sentry?: unknown } } | undefined)?.telemetry?.sentry as Record<string, unknown> | undefined;
   if (!s || typeof s !== "object") return { error: "telemetry.sentry is required" };
@@ -162,7 +238,11 @@ export function parseSentryUpdate(body: unknown, opts: { allowHttp?: boolean } =
   if (s.enabled && !dsn) return { error: "a DSN is required to turn Sentry on" };
   const rate = s.tracesSampleRate === undefined ? DEFAULT_TRACES_SAMPLE_RATE : s.tracesSampleRate;
   if (!isRate(rate)) return { error: "telemetry.sentry.tracesSampleRate must be a number from 0 to 1" };
-  return { value: { enabled: s.enabled, ...(dsn ? { dsn } : {}), tracesSampleRate: rate } };
+  for (const flag of SENTRY_SIGNAL_FLAGS) {
+    if (s[flag] !== undefined && typeof s[flag] !== "boolean") return { error: `telemetry.sentry.${flag} must be true or false` };
+  }
+  if (s.profilesSampleRate !== undefined && !isRate(s.profilesSampleRate)) return { error: "telemetry.sentry.profilesSampleRate must be a number from 0 to 1" };
+  return { value: { enabled: s.enabled, ...(dsn ? { dsn } : {}), tracesSampleRate: rate, ...storedSignals(s) } };
 }
 
 /** The stored settings, re-read at most every `maxAgeMs`. Cloud Run gives an instance CPU only
@@ -210,6 +290,12 @@ export class FleetSettingsCache {
       });
     this.inflight = read;
     return read;
+  }
+
+  /** The last copy read, without a refresh, for a synchronous reader (routes/static.ts's
+   * Document-Policy header). Undefined before the first read. */
+  peek(): FleetSettings | undefined {
+    return this.value;
   }
 
   /** Fire-and-forget refresh for callers that must not wait (a request hook). */

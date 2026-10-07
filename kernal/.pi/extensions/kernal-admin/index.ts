@@ -24,8 +24,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
-import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, parseLmStudioModels, rootUrl, type Bus } from "../connect/lib.ts";
-import { envFilePath, getJson, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
+import { backends, busRequest, cleanKey, normalizeBaseUrl, parseEnvText, lmStudioMeta, type Bus } from "../connect/lib.ts";
+import { envFilePath, loadEnv, settingsPath, testConnection, writeEnvValues } from "../connect/index.ts";
 import {
   applyEdit, applyEmbeddingChoice, embeddingBaseUrl, embeddingProblem, getAt, invalidatesIndex, refreshRouterKey, rerankerProblem, routerFromEnv, setReranking,
   type EmbeddingChoice, type IndexStatus,
@@ -46,8 +46,9 @@ import { APP_CSS, APP_JS, FAVICON, INDEX_HTML } from "./app.ts";
 import { backendPill, connectionsView, fieldById, idleMs, indexFields, leaksSecret, redactSecrets, secretValues, validateConnections, type ConnectionEdit } from "./lib.ts";
 import { startAdminServer, type AdminServer, type Api, type ApiResult } from "./server.ts";
 import { env } from "../_shared/env.ts";
-import { providerKey, refreshProviderKeys, resolve as resolveConfig } from "../_shared/central-config.ts";
-import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, saveSettings, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
+import { probeServer } from "../_shared/local-discovery.ts";
+import { appliesOverLocal, describeSource, providerKey, refreshProviderKeys, resolve as resolveConfig, shellValue } from "../_shared/central-config.ts";
+import { PROVIDER_OF_FIELD, PROVIDERS, listProviderKeys, modelSaveTargets, saveModelDefault, saveSettings, settingModelOptions, settingsView, signedInAccount, sourceLabel, writeProviderKey } from "./central.ts";
 
 export const ASSETS = {
   "/index.html": { type: "text/html; charset=utf-8", body: INDEX_HTML },
@@ -112,7 +113,10 @@ export function createApi(d: ApiDeps): Api {
     const router = safe(() => resolveConfig().values["router.key"]);
     if (router) out.LITELLM_AGENT_KEY = sourceLabel(router);
     const or = env().OPENROUTER_API_KEY;
-    if (or) out.OPENROUTER_API_KEY = providerKey("openrouter") === or && !process.env.OPENROUTER_API_KEY ? "your account" : "this machine";
+    // #432: a key exported by the shell says so ("shell (OPENROUTER_API_KEY)"): it wins over the account's.
+    const orShell = shellValue("OPENROUTER_API_KEY");
+    if (or) out.OPENROUTER_API_KEY = orShell === or ? sourceLabel({ source: "env", sourceName: "OPENROUTER_API_KEY" })
+      : providerKey("openrouter") === or && !process.env.OPENROUTER_API_KEY ? "your account" : "this machine";
     return out;
   };
   const shortName = (id: string) => ({ lmstudio: "Local server", litellm: "Router", openrouter: "OpenRouter" } as Record<string, string>)[id] ?? id;
@@ -233,17 +237,22 @@ export function createApi(d: ApiDeps): Api {
 
     "GET /connections/local-models": async (_b, q) => {
       const url = normalizeBaseUrl(q.get("url") ?? "", backends(env(), new Map())[0].baseUrl);
-      const native = await getJson(`${rootUrl(url)}/api/v0/models`, "lm-studio", 3000);
-      const ids = native ? [...parseLmStudioModels(native).keys()] : ((await getJson(`${url}/models`, "lm-studio", 3000))?.data ?? []).map((m: any) => String(m.id));
+      const { server, models: found } = await probeServer({ kind: "lmstudio", url, apiKey: "lm-studio" }, { timeoutMs: 3000 });
+      const ids = server.endpoints.includes("/api/v0/models") ? [...lmStudioMeta(found).keys()] : found.filter((m) => m.listed).map((m) => m.id);
       return { body: { models: ids.filter((id: string) => !/embed/i.test(id)).sort() } };
     },
 
     // ---------- settings: each central value's source, and where a save goes (central.ts) ----------
     "GET /settings": async () => {
-      const view = await settingsView();
+      // #458: the model dropdowns' options are connect's discovered models, as on the Model page.
+      const [view, conns] = await Promise.all([settingsView(), connections()]);
       const account = signedInAccount();
       const keys = account ? await listProviderKeys(account) : undefined;
-      return { body: { ...view, ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}) } };
+      return { body: {
+        ...view,
+        modelOptions: settingModelOptions(conns),
+        ...(account ? { providerKeys: { providers: PROVIDERS, keys: keys ?? [], unavailable: !keys } } : {}),
+      } };
     },
 
     "POST /settings": async (body: { target?: unknown; values?: unknown; version?: unknown }) => {
@@ -277,23 +286,51 @@ export function createApi(d: ApiDeps): Api {
       const ctx = d.ctx();
       const settings = readJson(settingsPath()) ?? {};
       const m = ctx?.model;
+      // #437: the default the next session starts on is the resolved one (this machine, the
+      // account, settings.json, the fleet), with its source; settings.json's when nothing applies.
+      const resolved = safe(() => resolveConfig());
+      const rp = resolved?.values["model.provider"], rm = resolved?.values["model.default"];
+      const central = appliesOverLocal(rm) || appliesOverLocal(rp);
+      const def = central
+        ? { provider: String(rp?.value ?? settings.defaultProvider ?? "litellm"), model: rm ? String(rm.value) : undefined, source: describeSource(appliesOverLocal(rm) ? rm! : rp!) }
+        : settings.defaultProvider ? { provider: settings.defaultProvider, model: settings.defaultModel, source: "settings.json" } : undefined;
+      const targets = modelSaveTargets();
       return { body: {
         current: m ? { provider: m.provider, id: m.id } : undefined,
-        default: settings.defaultProvider ? { provider: settings.defaultProvider, model: settings.defaultModel } : undefined,
+        default: def,
         thinking: safe(() => d.pi.getThinkingLevel()),
+        // Signed in: where a chosen default goes (POST /model's target); absent signed out.
+        ...(targets ? { saveTargets: [{ id: "account", label: targets.account }, { id: "machine", label: targets.machine }] } : {}),
         providers: (await connections()).map((b) => ({ ...withPill(b), models: b.registered ? b.models : [] })),
+        curation: await busRequest(bus, "kernal:connect", { op: "curation" }, 5_000).catch(() => undefined),
       } };
     },
 
-    "POST /model": async (body: { provider?: string; id?: string }) => {
+    // #440: add a model to, or remove one from, the curated OpenRouter list (account or this machine).
+    "POST /model/curate": async (body: { action?: string; id?: string; target?: string }) => {
+      if (typeof body.id !== "string" || !body.id.trim()) return fail(400, { error: "id is required" });
+      try {
+        const r = await busRequest(bus, "kernal:connect", { op: "curate", action: body.action, model: body.id, target: body.target }, 90_000);   // account: GET, PUT, reloads, re-registration
+        if (r === undefined) return fail(503, { error: "the connect extension is not loaded" });
+        return { body: r };
+      } catch (e: any) { return fail(422, { error: e.message }); }
+    },
+
+    "POST /model": async (body: { provider?: string; id?: string; target?: string }) => {
       if (typeof body.provider !== "string" || typeof body.id !== "string") return fail(400, { error: "provider and id are required" });
+      if (body.target !== undefined && body.target !== "account" && body.target !== "machine") return fail(400, { error: "target is account or machine" });
       const ctx = d.ctx();
       if (!ctx) return fail(409, { error: "no session yet" });
       try {
         const r = await busRequest(bus, "kernal:connect", { op: "select", ctx, provider: body.provider, model: body.id }, 20_000);
         if (r === undefined) return fail(503, { error: "the connect extension is not loaded" });
-        return { body: { provider: body.provider, id: body.id, savedAsDefault: true } };
       } catch (e: any) { return fail(422, { error: e.message }); }
+      // settings.json has the choice now (connect's select); signed in it also goes where asked.
+      if (body.target && modelSaveTargets()) {
+        const saved = await saveModelDefault(body.target, body.provider, body.id);
+        return { body: { provider: body.provider, id: body.id, savedAsDefault: saved.ok, target: body.target, message: saved.message } };
+      }
+      return { body: { provider: body.provider, id: body.id, savedAsDefault: true } };
     },
 
     // ---------- codebase index ----------

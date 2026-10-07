@@ -21,9 +21,11 @@
 import { readFileSync } from "node:fs";
 import * as session from "../_shared/outfitter-session.ts";
 import {
-  KNOWN_SETTINGS, PROVIDER_ENV, coerce, describeSource, displayValue, isCentralSource, localOverridesPath, reloadConfig, resolve, setLocalOverride,
+  KNOWN_SETTINGS, PROVIDER_ENV, SENTRY_LOCAL_FLAGS, coerce, describeSource, displayValue, isCentralSource, localOverridesPath, reloadConfig, resolve,
+  setLocalOptOut, setLocalOverride,
   type ConfigValue, type KnownSetting, type ResolvedConfig, type SettingValue,
 } from "../_shared/central-config.ts";
+import { applyVoiceSettings } from "../_shared/central-apply.ts";
 
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -186,7 +188,10 @@ export function settingsRows(r: ResolvedConfig, target: AccountTarget | undefine
     else if (decl.secret) readOnly = decl.key === "router.key" ? "this device's key from kernal login; a key of your own goes on the Connections page" : "a secret";
     else if (!canLevelAccount && !canLevelMachine) readOnly = decl.levels.includes("fleet") && decl.levels.length === 1 ? "only your Sysop sets this" : "can't be set here";
     const account = accountValues ? coerce(decl, accountValues[decl.key]) : undefined;
-    const machine = coerce(decl, machineValues[decl.key]);
+    // A Sentry opt-out still in the legacy settings.json flag shows as this machine's `false`, so
+    // "not set here" can clear it (saveSettings → setLocalOptOut).
+    const legacy = v?.source === "local" && v.sourceName === "settings.json" && v.value === false;
+    const machine = legacy ? false : coerce(decl, machineValues[decl.key]);
     return {
       key: decl.key, type: decl.type, ...(decl.values ? { choices: decl.values } : {}), ...(decl.min !== undefined ? { min: decl.min } : {}), ...(decl.max !== undefined ? { max: decl.max } : {}),
       description: decl.description, secret: decl.secret, ...(decl.default !== undefined ? { default: decl.default } : {}),
@@ -274,12 +279,19 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
     if (!Object.keys(patch).length) return { status: 200, body: { message: "Nothing to save" } };
     // Validated above, so setLocalOverride only throws on a disk error: then nothing more is written.
     try {
-      for (const [k, v] of Object.entries(patch)) setLocalOverride(k, v === null ? undefined : v);
+      // A Sentry key's opt-out goes through setLocalOptOut, as /sentry's does: clearing it removes the
+      // legacy settings.json flag too, so /admin undoes any /sentry off and the other way round.
+      for (const [k, v] of Object.entries(patch)) {
+        if (SENTRY_LOCAL_FLAGS[k] && (v === null || v === false)) setLocalOptOut(k, v === false);
+        else setLocalOverride(k, v === null ? undefined : v);
+      }
     } catch (e: any) {
       return { status: 500, body: { error: String(e?.message ?? e).slice(0, 300) } };
     }
-    // config.local.json is the lowest local layer: a .env entry or a shell variable still wins over it.
+    // config.local.json is the lowest local layer: a .env entry or a shell variable still wins over it
+    // (except for the personal keys, where this machine's choice wins, #437).
     const after = (() => { try { return d.resolve(); } catch { return undefined; } })();
+    if (after) { try { applyVoiceSettings(after); } catch {} }
     const warnings: string[] = [];
     for (const k of Object.keys(patch)) {
       const v = after?.values[k];
@@ -288,7 +300,7 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
       }
     }
     const n = Object.keys(patch).length;
-    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). They take effect at the next start.`, saved: Object.keys(patch), ...(warnings.length ? { warnings } : {}) } };
+    return { status: 200, body: { message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${localOverridesPath()} (this machine only). ${whenSaved(Object.keys(patch))}`, saved: Object.keys(patch), ...(warnings.length ? { warnings } : {}) } };
   }
 
   if (req.target !== "account") return { status: 400, body: { error: "target is account or machine" } };
@@ -315,13 +327,92 @@ export async function saveSettings(req: SaveRequest): Promise<SaveResult> {
 
   // As `/config reload`: the fresh answer becomes this process's own, so the page shows the new sources.
   try { await d.reload(); } catch {}
+  try { applyVoiceSettings(d.resolve()); } catch {}
   const n = Object.keys(patch).length;
   const where = target.level === "profile" ? `your account (profile ${target.name})` : "your account";
   return { status: 200, body: {
-    message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${where}. Every Kernal signed in to it picks them up at its next start.`,
+    message: `Saved ${n} setting${n === 1 ? "" : "s"} to ${where}. Every Kernal signed in to it picks them up at its next start; here, ${whenSaved(Object.keys(patch))}`,
     saved: Object.keys(patch),
     version: parseEtag(res.etag) ?? (typeof res.body?.version === "number" ? res.body.version : undefined),
   } };
+}
+
+/** When saved keys reach this Kernal (#437): "a, b apply now; c at the next session (…); d at the next start." */
+export function whenSaved(keys: string[]): string {
+  const by: Record<string, string[]> = { now: [], session: [], start: [] };
+  for (const k of keys) by[KNOWN_SETTINGS.find((d) => d.key === k)?.takesEffect ?? "start"].push(k);
+  const parts = [
+    by.now.length ? `${by.now.join(", ")} ${by.now.length === 1 ? "applies" : "apply"} now` : "",
+    by.session.length ? `${by.session.join(", ")} at the next session (/new or a restart; a running conversation keeps its model)` : "",
+    by.start.length ? `${by.start.join(", ")} at the next start` : "",
+  ].filter(Boolean);
+  return parts.length ? `${parts.join("; ")}.` : "";
+}
+
+// ---------- the default model's save target (#437: /connect and the Model page) ----------
+
+export type ModelSaveTarget = "account" | "machine";
+
+/** Signed in: the two places a chosen default model can go, in the Settings page's words.
+ * Undefined signed out, where the choice only goes to settings.json, as it always did. */
+export function modelSaveTargets(): { account: string; machine: string } | undefined {
+  if (!signedInAccount()) return undefined;
+  let r: ResolvedConfig | undefined;
+  try { r = deps().resolve(); } catch { r = undefined; }
+  return { account: r ? targetLabel(accountTarget(r)) : "Save to my account", machine: "Only this machine" };
+}
+
+/**
+ * Saves `provider`/`model` as the default to the account (the versioned PUT of the Settings page:
+ * GET for the version, then PUT with If-Match) or to this machine (config.local.json). An account
+ * save also clears this machine's own model.* overrides, which would otherwise keep winning here.
+ * The caller has already switched the session and written settings.json (pi's own default).
+ */
+export async function saveModelDefault(target: ModelSaveTarget, provider: string, model: string): Promise<{ ok: boolean; message: string }> {
+  const values = { "model.provider": provider, "model.default": model };
+  if (target === "machine") {
+    const r = await saveSettings({ target: "machine", values });
+    return r.status === 200
+      ? { ok: true, message: `saved as this machine's default (${localOverridesPath()})` }
+      : { ok: false, message: `not saved to this machine: ${String(r.body.error ?? r.status)}${r.body.errors ? ` (${Object.values(r.body.errors as object).join("; ")})` : ""}` };
+  }
+  const saved = await saveAccountDefaults(values);
+  return saved.ok ? { ok: true, message: `saved as the default on ${saved.where}` } : { ok: false, message: `not saved to your account: ${saved.message}` };
+}
+
+export type AccountDefaultsResult = { ok: boolean; message: string; where?: string; profile?: string; clearedPins: string[] };
+
+/**
+ * The model.* defaults (any of model.provider, model.default, model.thinking) to the account: the
+ * profile in use, else the user level, with the Settings page's versioned PUT. A 409 (changed
+ * elsewhere since the GET) refetches the version and tries once more. On success this machine's own
+ * pins of those keys (config.local.json) are removed, since they would keep winning here over the
+ * account (`clearedPins` names them). Never throws; `message` says why on failure.
+ */
+export async function saveAccountDefaults(values: Record<string, SettingValue>): Promise<AccountDefaultsResult> {
+  try {
+    if (!signedInAccount()) return { ok: false, message: "not signed in", clearedPins: [] };
+    let last: SaveResult | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const view = await settingsView();
+      if (!view.target) return { ok: false, message: view.targetProblem ?? "Outfitter did not answer", clearedPins: [] };
+      const r = await saveSettings({ target: "account", values, version: view.target.version });
+      if (r.status === 200) {
+        const machine = readMachineValues();
+        const clearedPins: string[] = [];
+        try {
+          for (const k of Object.keys(values)) if (machine[k] !== undefined) { setLocalOverride(k, undefined); clearedPins.push(k); }
+        } catch {}
+        return { ok: true, message: String(r.body.message ?? "saved"), where: view.target.name ? `your account (profile ${view.target.name})` : "your account", ...(view.target.name ? { profile: view.target.name } : {}), clearedPins };
+      }
+      last = r;
+      if (!(r.status === 409 && r.body.stale)) break;
+    }
+    const b = last?.body ?? {};
+    return { ok: false, message: `${String(b.error ?? last?.status)}${b.errors ? ` (${Object.values(b.errors as object).join("; ")})` : ""}`, clearedPins: [] };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e), clearedPins: [] };
+  }
 }
 
 // ---------- personal provider keys (spec §4) ----------
@@ -360,4 +451,32 @@ export async function writeProviderKey(account: session.SessionAccount, provider
   if (res.status >= 200 && res.status < 300) return undefined;
   if (res.body?.error === "invalid_value") return "Outfitter refused the key: 8 to 512 characters, no spaces";
   return `Outfitter refused the key (${res.status}${typeof res.body?.error === "string" ? `: ${res.body.error}` : ""})`;
+}
+
+// ---------- #458: the Settings page's model dropdowns ----------
+
+/** One provider connect knows, as its `kernal:connect` op "state" answers (the Model page's list). */
+export type ConnectionModels = { id: string; registered: boolean; rejected?: string; models: string[] };
+export type ModelOptionProvider = { id: string; label: string; models: string[]; note?: string };
+
+const MODEL_PROVIDER_ORDER = ["litellm", "openrouter", "lmstudio"];
+const MODEL_PROVIDER_LABEL: Record<string, string> = { litellm: "Router", openrouter: "OpenRouter", lmstudio: "Local server" };
+
+/** The options behind model.default and compaction.summaryModel on the Settings page: each
+ * provider's discovered models from connect (the router's, the curated OpenRouter list with every
+ * level's adds and removes, the local server's), the same list the Model page shows. A provider
+ * that isn't connected has none, and says why; with connect not loaded there are no providers,
+ * and the page keeps plain text boxes. Options only: a save still takes any id. */
+export function settingModelOptions(conns: readonly ConnectionModels[]): { providers: ModelOptionProvider[] } {
+  const rank = (id: string) => { const i = MODEL_PROVIDER_ORDER.indexOf(id); return i < 0 ? MODEL_PROVIDER_ORDER.length : i; };
+  return {
+    providers: [...conns].sort((a, b) => rank(a.id) - rank(b.id)).map((c) => {
+      const label = MODEL_PROVIDER_LABEL[c.id] ?? c.id;
+      const models = c.registered ? [...new Set(c.models)] : [];
+      const note = !c.registered
+        ? `${label} is not connected${c.rejected ? ` (${c.rejected})` : ""}: set it up under Connections, or type the id with Other…`
+        : models.length ? undefined : `${label} reported no models.`;
+      return { id: c.id, label, models, ...(note ? { note } : {}) };
+    }),
+  };
 }

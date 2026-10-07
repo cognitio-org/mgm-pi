@@ -1,5 +1,6 @@
 // Personal API token management (E4.1b): the "web"/"all"-role routes an operator uses (via the web
-// UI's Tokens page) to create and revoke tokens for the laptop teleport client. Not registered on
+// UI's Tokens page) to list and revoke tokens and to create A2A keys. Dongles are retired (#399):
+// listed and revocable, never created. Not registered on
 // the "link" role -- managing tokens needs an IAP-identified caller, which that role doesn't have
 // (see server.ts's auth preHandler); the link role only *verifies* tokens (src/auth.ts).
 
@@ -9,6 +10,9 @@ import type { RouteContext } from "./context.ts";
 import type { ApiToken } from "../store/types.ts";
 import { generateToken, hashToken, tokenPrefix, tokenExpiresAt, tokenKind, TOKEN_TTL_MS } from "../tokens.ts";
 import { parseA2AKeyScope } from "../a2a/keys.ts";
+
+/** The refusal for a new Dongle (#399): `kernal login` replaced them. */
+export const DONGLES_RETIRED = "Dongles are retired: sign Kernal in with `kernal login`. A2A keys are still created here.";
 
 /** Cap on non-revoked tokens per owner (design decision, E4.1b). */
 const MAX_ACTIVE_TOKENS = 10;
@@ -47,8 +51,12 @@ export async function registerTokenRoutes(app: FastifyInstance, ctx: RouteContex
     const body = req.body as { name?: string; kind?: unknown; a2a?: unknown };
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     if (!name) return reply.code(400).send({ error: "name is required" });
+    // #399 CA-10: Dongles are retired. Kernal signs in with `kernal login` (device tokens), so no
+    // new Dongle is made; one that exists keeps authenticating until it expires or is revoked
+    // (auth.ts is unchanged). A missing kind meant a Dongle, so it is refused the same way.
     const kind = body.kind ?? "dongle";
-    if (kind !== "dongle" && kind !== "a2a") return reply.code(400).send({ error: 'kind must be "dongle" or "a2a"' });
+    if (kind === "dongle") return reply.code(410).send({ error: DONGLES_RETIRED });
+    if (kind !== "a2a") return reply.code(400).send({ error: 'kind must be "a2a"' });
     let a2a: ApiToken["a2a"];
     if (kind === "a2a") {
       // E9 §5.2: the owner makes A2A keys in the web UI (a token caller was refused above).

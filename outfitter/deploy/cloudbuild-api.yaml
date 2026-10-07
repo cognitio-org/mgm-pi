@@ -1,8 +1,14 @@
 # Builds the control-plane image from packages/api/Dockerfile with outfitter/ as the context
-# (the workspace lockfile lives there). Used by deploy/api.sh and deploy/link.sh:
+# (the workspace lockfile lives there). Used through env.sh build_api_image (service.sh and
+# build-api-image.sh), which picks this file while the secret sentry-release-token doesn't exist:
 #   gcloud builds submit outfitter/ --config=deploy/cloudbuild-api.yaml --substitutions=_IMAGE=<image>
+# cloudbuild-api-sentry.yaml is this same build plus the token for web source maps (#423); keep the
+# two in step (deploy/test/sentry-sourcemaps.test.sh compares them).
+# BuildKit: the Dockerfile's RUN --mount=type=secret needs it, and this docker CLI (20.10) defaults
+# to the legacy builder. With no secret passed, the mount is just empty.
 steps:
   - name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
     args: ["build", "-f", "packages/api/Dockerfile", "-t", "${_IMAGE}", "."]
 images: ["${_IMAGE}"]
 options:

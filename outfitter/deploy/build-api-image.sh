@@ -17,6 +17,5 @@ if image_exists "${IMAGE}"; then
   echo "== Reusing ${IMAGE} (already built for this commit) =="
 else
   echo "== Building ${IMAGE} with Cloud Build (packages/api/Dockerfile, context outfitter/) =="
-  build_submit "${SOURCE_DIR}" "${SOURCE_DIR}/deploy/cloudbuild-api.yaml" \
-    --substitutions="_IMAGE=${IMAGE}" --timeout=20m
+  build_api_image "${SOURCE_DIR}" "${IMAGE}"
 fi

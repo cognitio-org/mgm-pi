@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppVersion } from "../hooks/useAppVersion.ts";
+import { HostRemoveList } from "../components/account/HostRemoveList.tsx";
+import { useLocalHosts } from "../hooks/useLocalHosts.ts";
 import {
   api,
   ApiError,
@@ -274,39 +277,85 @@ function RevokeDonglesPanel() {
   );
 }
 
+/** #424's signal switches (api fleet-settings.ts SentryFleetSettings), each off unless turned on
+ * here, and each nothing while Sentry itself is off. */
+const SENTRY_SIGNALS = [
+  { key: "logs", label: "Send server logs", hint: "Outfitter's own and every Drive's (info and up, secrets redacted, emails as user ids). Kernal laptops send none." },
+  { key: "metrics", label: "Send metrics", hint: "Counts and timings: sign-ins, router keys, runs, tool calls, tokens and spend." },
+  { key: "agentTraces", label: "Send AI agent traces", hint: "Each agent run, model call and tool call, with models, tokens, cost and timing." },
+  {
+    key: "agentContent",
+    label: "Include prompts and outputs in agent traces",
+    hint: "What was asked and answered, and tools' input and output, redacted for keys and tokens and cut to 8 KB a field.",
+  },
+] as const;
+
+type SignalKey = (typeof SENTRY_SIGNALS)[number]["key"];
+
+function storedFlags(s: FleetSettings["telemetry"]["sentry"]): Record<SignalKey, boolean> {
+  return { logs: s.logs === true, metrics: s.metrics === true, agentTraces: s.agentTraces === true, agentContent: s.agentContent === true };
+}
+
+const asPercent = (fraction: number) => String(Math.round(fraction * 1000) / 10);
+
+/** A percentage field's fraction, or an error message. */
+function percentInvalid(text: string): string | null {
+  const fraction = Number(text) / 100;
+  return text.trim() === "" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1 ? "A percentage from 0 to 100" : null;
+}
+
 /** Fleet settings' Sentry section (api fleet-settings.ts): one switch for every Kernal laptop, Drive
- * and Outfitter service. The DSN stays stored while Sentry is off, so turning it back on is one
- * click. The rate is edited as a percentage; the API stores the fraction. */
+ * and Outfitter service, and (#424) one for each further signal. The DSN stays stored while Sentry
+ * is off, so turning it back on is one click. Rates are edited as percentages; the API stores the
+ * fraction. */
 function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fleet: FleetSettings) => void }) {
   const current = fleet.telemetry.sentry;
   const [enabled, setEnabled] = useState(current.enabled);
   const [dsn, setDsn] = useState(current.dsn ?? "");
-  const storedPercent = String(Math.round(current.tracesSampleRate * 1000) / 10);
+  const storedPercent = asPercent(current.tracesSampleRate);
   const [percent, setPercent] = useState(storedPercent);
+  const [flags, setFlags] = useState(() => storedFlags(current));
+  const storedProfiles = asPercent(current.profilesSampleRate ?? 0);
+  const [profilesPercent, setProfilesPercent] = useState(storedProfiles);
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [apiError, setApiError] = useState<ApiErrorState | null>(null);
 
   const rate = Number(percent) / 100;
-  const rateInvalid = percent.trim() === "" || !Number.isFinite(rate) || rate < 0 || rate > 1 ? "A percentage from 0 to 100" : null;
+  const rateInvalid = percentInvalid(percent);
+  const profilesInvalid = percentInvalid(profilesPercent);
   const dsnInvalid = enabled && !dsn.trim() ? "A DSN is needed to turn Sentry on" : null;
-  const dirty = enabled !== current.enabled || dsn.trim() !== (current.dsn ?? "") || percent.trim() !== storedPercent;
+  const stored = storedFlags(current);
+  const dirty =
+    enabled !== current.enabled ||
+    dsn.trim() !== (current.dsn ?? "") ||
+    percent.trim() !== storedPercent ||
+    profilesPercent.trim() !== storedProfiles ||
+    SENTRY_SIGNALS.some(({ key }) => flags[key] !== stored[key]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setAttempted(true);
     setSaved(false);
-    if (rateInvalid || dsnInvalid) return;
+    if (rateInvalid || dsnInvalid || profilesInvalid) return;
     setSaving(true);
     try {
       // An untouched percentage sends the stored rate as it is, not its rounded display.
       const tracesSampleRate = percent.trim() === storedPercent ? current.tracesSampleRate : rate;
-      const updated = await withFloppySound(api.putFleetSentry({ enabled, dsn: dsn.trim() || undefined, tracesSampleRate }));
+      const profilesSampleRate = profilesPercent.trim() === storedProfiles ? (current.profilesSampleRate ?? 0) : Number(profilesPercent) / 100;
+      // Only what is on: the API reads a signal left out as off, and replaces the section whole.
+      const signals = {
+        ...Object.fromEntries(SENTRY_SIGNALS.filter(({ key }) => flags[key]).map(({ key }) => [key, true])),
+        ...(profilesSampleRate > 0 ? { profilesSampleRate } : {}),
+      };
+      const updated = await withFloppySound(api.putFleetSentry({ enabled, dsn: dsn.trim() || undefined, tracesSampleRate, ...signals }));
       setSaved(true);
       setAttempted(false);
       // Show what was stored ("5.0" saves as 5), so the form is clean again.
-      setPercent(String(Math.round(updated.telemetry.sentry.tracesSampleRate * 1000) / 10));
+      setPercent(asPercent(updated.telemetry.sentry.tracesSampleRate));
+      setProfilesPercent(asPercent(updated.telemetry.sentry.profilesSampleRate ?? 0));
+      setFlags(storedFlags(updated.telemetry.sentry));
       setDsn(updated.telemetry.sentry.dsn ?? "");
       onSaved(updated);
     } catch (err) {
@@ -359,6 +408,46 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
             />
             {attempted && rateInvalid && <SyntaxError>{rateInvalid}</SyntaxError>}
           </div>
+          <p className="session-meta">
+            More signals, each off until turned on here and none of them sent while Sentry is off.
+            A person can turn each off on their own laptop.
+          </p>
+          {SENTRY_SIGNALS.map(({ key, label, hint }) => {
+            // Content rides on agent spans: without them it has nothing to go in.
+            const needsTraces = key === "agentContent" && !flags.agentTraces;
+            return (
+              <div className="form-row" key={key}>
+                <label title={hint}>
+                  <input
+                    type="checkbox"
+                    data-signal={key}
+                    checked={flags[key]}
+                    disabled={needsTraces && !flags[key]}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setFlags((f) => ({ ...f, [key]: on, ...(key === "agentTraces" && !on ? { agentContent: false } : {}) }));
+                      setSaved(false);
+                    }}
+                  />{" "}
+                  {label}
+                </label>
+                <span className="session-meta"> {hint}</span>
+              </div>
+            );
+          })}
+          <div className="form-row">
+            <label htmlFor="sentry-profiles">Profiled (%)</label>
+            <input
+              id="sentry-profiles"
+              inputMode="decimal"
+              value={profilesPercent}
+              onChange={(e) => { setProfilesPercent(e.target.value); setSaved(false); }}
+              aria-invalid={attempted && !!profilesInvalid}
+              style={{ maxWidth: "8em" }}
+            />
+            <span className="session-meta"> Share of API instances, Drives and page loads profiled, while a trace is kept. 0 is off. Not Kernal laptops.</span>
+            {attempted && profilesInvalid && <SyntaxError>{profilesInvalid}</SyntaxError>}
+          </div>
           <div className="toolbar">
             <button type="submit" className="btn btn-primary" disabled={saving || !dirty}>
               {saving ? <Working label="Saving" /> : "Save"}
@@ -379,6 +468,28 @@ function TelemetryPanel({ fleet, onSaved }: { fleet: FleetSettings; onSaved: (fl
         {apiError && <SystemErrorDialog error={apiError} onResume={() => setApiError(null)} />}
       </div>
     </div>
+  );
+}
+
+/** Operator remove list (#385). The catalogue and the owner's share switch live on Modems and Account. */
+function LocalHostsSection() {
+  const hosts = useLocalHosts();
+  return (
+    <>
+      <h3>Local hosts</h3>
+      <p className="session-meta">
+        <Link to="/local-models">{vocabulary.modem.many}</Link> lists who is sharing which models.
+        The share switch for this account is on <Link to="/account">Account</Link>.
+        Removing a host takes its models off the router. If that computer is still sharing, its next heartbeat brings it back.
+      </p>
+      {hosts.error && (
+        <p className="syntax-error" role="alert">
+          {hosts.error}
+        </p>
+      )}
+      {hosts.loaded && hosts.hosts.length === 0 && !hosts.error && <p className="session-meta">No hosts listed.</p>}
+      <HostRemoveList hosts={hosts.hosts} operator onRemoved={hosts.reload} />
+    </>
   );
 }
 
@@ -499,6 +610,8 @@ export function SettingsPage() {
 
       <h3 id="agent-engine-agents">Agent Engine agents</h3>
       <AeAgentsPanel />
+
+      <LocalHostsSection />
     </div>
   );
 }

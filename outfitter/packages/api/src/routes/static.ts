@@ -4,7 +4,7 @@
 
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 
 const WEB_DIST = fileURLToPath(new URL("../../../web/dist", import.meta.url));
 
@@ -24,17 +24,38 @@ export function servesSpaShell(method: string, url: string): boolean {
 /** The shell must never be cached: it names the current build's hashed assets. */
 const NO_CACHE = "no-cache";
 
-export async function registerStaticRoutes(app: FastifyInstance): Promise<void> {
-  if (existsSync(WEB_DIST)) {
+/** #424: the browser's JS Self-Profiling API, which Sentry's browserProfilingIntegration needs, is
+ * only there for a document served with this policy. */
+export const JS_PROFILING_POLICY = "js-profiling";
+
+export interface StaticRouteOptions {
+  /** Tests: a directory standing in for packages/web/dist. */
+  webDist?: string;
+  /** Whether the fleet settings have web profiling on right now (Sentry on, profilesSampleRate
+   * above 0): the shell then carries `Document-Policy: js-profiling`. Read per response, so a
+   * change applies on each browser's next load. Absent: never. */
+  profiling?: () => boolean;
+}
+
+export async function registerStaticRoutes(app: FastifyInstance, opts: StaticRouteOptions = {}): Promise<void> {
+  const webDist = opts.webDist ?? WEB_DIST;
+  /** The shell's own headers: never cached, and the profiling policy while profiling is on. The
+   * policy goes only with profiling, not always: it makes the browser keep what a profiler needs. */
+  const shellHeaders = (reply: FastifyReply): FastifyReply => {
+    reply.header("Cache-Control", NO_CACHE);
+    if (opts.profiling?.()) reply.header("Document-Policy", JS_PROFILING_POLICY);
+    return reply;
+  };
+  if (existsSync(webDist)) {
     const fastifyStatic = (await import("@fastify/static")).default;
     // wildcard: false -- we register our own catch-all below for the SPA fallback, so
     // @fastify/static only needs to serve actual files (JS/CSS/etc.) under their real paths.
     await app.register(fastifyStatic, {
-      root: WEB_DIST,
+      root: webDist,
       prefix: "/",
       wildcard: false,
       setHeaders: (reply, filePath) => {
-        if (filePath.endsWith("index.html")) reply.header("Cache-Control", NO_CACHE);
+        if (filePath.endsWith("index.html")) shellHeaders(reply);
       },
     });
 
@@ -47,7 +68,7 @@ export async function registerStaticRoutes(app: FastifyInstance): Promise<void> 
         reply.code(404).send({ error: "not found" });
         return;
       }
-      reply.header("Cache-Control", NO_CACHE).sendFile("index.html");
+      shellHeaders(reply).sendFile("index.html");
     });
     return;
   }

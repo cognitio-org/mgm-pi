@@ -7,7 +7,8 @@
  * (`PUT /api/me/provider-keys/:provider`, spec §4) and, when the server took it, removes that line
  * from `.env`. LITELLM_AGENT_KEY is never uploaded: with this device's own router key stored it
  * offers only to remove the shared key, which would otherwise win over the device key
- * (central-config.ts `layerCentralEnv`). A Dongle (OUTFITTER_TOKEN) gets the same remove-only offer.
+ * (central-config.ts `layerCentralEnv`). A leftover Dongle (OUTFITTER_TOKEN, retired: Kernal no longer
+ * reads it) gets the same remove-only offer.
  *
  * Every question defaults to No, and nothing is asked without a terminal (a script, a pipe). Before
  * the first change to a file it is copied whole to `<file>.bak-<UTC time>`, mode 0600; each file is
@@ -278,7 +279,7 @@ async function offer(io: EnvImportIo, result: EnvImportResult): Promise<void> {
     }
     for (const f of removeOnly) {
       const why = f.name === DONGLE_ENV
-        ? "this login replaces the Dongle"
+        ? "Dongles are retired and Kernal no longer reads it"
         : "this device's own router key replaces it, and a key in .env would win over it";
       const answer = await io.ask(`Remove ${f.name} from ${where(f)}? ${why[0].toUpperCase()}${why.slice(1)}. [y/N] `);
       if (yes(answer) && strip(f)) { await stripRest(f, io.ask); continue; }
@@ -289,7 +290,7 @@ async function offer(io: EnvImportIo, result: EnvImportResult): Promise<void> {
   for (const name of result.kept) {
     const other = shadowed.get(name);
     if (other) io.err(`${name} is still set to a different value in ${other}; it overrides ${replaces(name)} until you remove it`);
-    else if (name === DONGLE_ENV) io.err(`${name} in .env is deprecated: kernal login replaces it`);
+    else if (name === DONGLE_ENV) io.err(`Dongles are retired; ${name} in .env is no longer read`);
     else if ((ROUTER_KEY_ENV as readonly string[]).includes(name)) io.err(`${name} in .env is deprecated: this device's own router key replaces it`);
     else io.err(`${name} in .env is deprecated: run kernal login again to move it to your account, or save it with /admin`);
   }

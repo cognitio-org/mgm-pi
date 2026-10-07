@@ -170,7 +170,7 @@ export function AccountPage() {
 
           <section className="account-section" aria-labelledby="account-local">
             <h3 id="account-local">Local models</h3>
-            <LocalModelsPanel doc={userDoc} effective={effective} onSave={saveUser} onReload={reloadUser} />
+            <LocalModelsPanel doc={userDoc} effective={effective} operator={operator} onSave={saveUser} onReload={reloadUser} />
           </section>
 
           <section className="account-section" aria-labelledby="account-spend">

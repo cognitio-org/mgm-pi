@@ -335,6 +335,8 @@ describe("agentlink up-frame ordering", () => {
       settings: inner.settings,
       routerKeys: inner.routerKeys,
       providerKeys: inner.providerKeys,
+      subscriptionSecrets: inner.subscriptionSecrets,
+      localHosts: inner.localHosts,
       close: () => inner.close(),
     };
 

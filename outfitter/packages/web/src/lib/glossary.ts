@@ -115,6 +115,14 @@ export const GLOSSARY_TERMS: GlossaryTerm[] = [
     linkTo: "/providers",
   },
   {
+    id: "modems",
+    label: "Modems",
+    meaning: "Local models shared by the fleet, and whether each one is loaded.",
+    codeName: "local hosts",
+    glyph: "⌁",
+    linkTo: "/local-models",
+  },
+  {
     id: "dongles",
     label: "Dongles",
     meaning: "Your personal access tokens for Kernal on your laptop.",

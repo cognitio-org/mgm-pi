@@ -34,12 +34,22 @@ ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS kernal-builder
 WORKDIR /opt/kernal
 COPY kernal/package.json kernal/package-lock.json ./
-RUN npm ci --omit=dev
+# pi-ai lands nested under pi-coding-agent, and .pi/npm installs no copy of its own
+# (--legacy-peer-deps, below). pi's extension loader maps only a few pi-ai entry points for
+# extensions, so a subpath outside them (pi-web-access imports @earendil-works/pi-ai/utils/transcript
+# to decide which web tools a resumed session starts with) resolved nowhere: the web tools stayed
+# active on every resumed session. Linking pi's own copy beside pi-coding-agent lets the
+# .pi/npm packages find it the way they find pi-coding-agent; it's the same files, not a second copy.
+RUN npm ci --omit=dev \
+  && cd node_modules/@earendil-works \
+  && { [ -e pi-ai ] || ln -s pi-coding-agent/node_modules/@earendil-works/pi-ai pi-ai; } \
+  && test -f pi-ai/dist/utils/transcript.js
 COPY kernal/bin/ ./bin/
-# MCP servers that sign in by interactive OAuth (google_admin, augment_admin) are dropped from the
-# image's mcp.json: nobody can complete a browser sign-in in a sandbox and there is no keychain, so
-# they failed on every start after two network probes, and pi-mcp-adapter holds the first prompt
-# until its start-up connections settle (render-mcp.sh, docs/reports/startup-trim.md).
+# Direct OAuth (google_admin, augment_admin) is dropped from the image's mcp.json: a sandbox has
+# no browser and no keychain, those probes failed on every start, and pi-mcp-adapter holds the
+# first prompt until start-up connections settle. Gateway OAuth (sentry) stays with client OAuth
+# off: the router already holds that person's token and the run key is the same user
+# (render-mcp.sh, docs/reports/startup-trim.md).
 COPY kernal/.pi/mcp.json /tmp/mcp.full.json
 COPY outfitter/image/render-mcp.sh /tmp/render-mcp.sh
 RUN mkdir -p ./.pi && bash /tmp/render-mcp.sh /tmp/mcp.full.json /opt/kernal/.pi/mcp.json

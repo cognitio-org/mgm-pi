@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// E9 §5.2: A2A keys on the Dongles page: the kind picker, the tape and repository pickers (tapes
-// the api would refuse are disabled), and the kind shown in the list.
+// E9 §5.2: A2A keys on the Dongles page: the tape and repository pickers (tapes the api would
+// refuse are disabled) and the kind shown in the list. #399: Dongles are retired, so the page makes
+// A2A keys only and lists existing Dongles as retired.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -80,15 +81,26 @@ describe("TokensPage: A2A keys", () => {
     await render();
     const text = container!.textContent ?? "";
     expect(text).toContain("A2A key · coder · acme/widgets");
-    expect(text).toContain("Dongle");
+    expect(text).toContain("Dongle (retired)");
+  });
+
+  it("#399: offers no way to make a Dongle; existing ones can still be revoked", async () => {
+    const calls = stubFetch();
+    await render();
+    expect(container!.querySelector('select[aria-label="Token kind"]')).toBeNull();
+    const buttons = [...container!.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).not.toContain("Create token");
+    expect(container!.textContent).toContain("kernal login");
+    expect(container!.textContent).not.toContain("OUTFITTER_TOKEN");
+    const revoke = [...container!.querySelectorAll("button")].filter((b) => b.textContent === "Revoke");
+    expect(revoke).toHaveLength(2);
+    await act(async () => revoke[0].click());
+    expect(calls.some((c) => c.url === "/api/me/tokens/t1" && c.init?.method === "DELETE")).toBe(true);
   });
 
   it("creates an A2A key with the tapes and repositories picked; refused tapes are disabled", async () => {
     const calls = stubFetch();
     await render();
-    const kind = container!.querySelector<HTMLSelectElement>('select[aria-label="Token kind"]')!;
-    await act(async () => setValue(kind, "a2a"));
-    await act(async () => {});
     const boxes = [...container!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
     expect(boxes).toHaveLength(2);
     expect(boxes[1].disabled).toBe(true);
@@ -115,8 +127,6 @@ describe("TokensPage: a typed repository", () => {
   it("is included when the key is created without pressing Add", async () => {
     const calls = stubFetch();
     await render();
-    await act(async () => setValue(container!.querySelector<HTMLSelectElement>('select[aria-label="Token kind"]')!, "a2a"));
-    await act(async () => {});
     await act(async () => container!.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     await act(async () => setValue(container!.querySelector<HTMLInputElement>('input[aria-label="Repository"]')!, "acme/gadgets"));
     await act(async () => setValue(container!.querySelector<HTMLInputElement>('input[aria-label="Token name"]')!, "new"));

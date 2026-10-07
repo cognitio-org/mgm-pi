@@ -5,14 +5,12 @@
  * https://outfitter-link-hqt4zwr5za-uc.a.run.app), not the browser-facing IAP-fronted `outfitter-api`
  * service. The link service has no IAP session at all (see
  * ../../../../outfitter/docs/protocol.md's "Two origins") and instead accepts exactly one
- * credential: a personal API token.
+ * credential: a bearer token.
  *
- * Auth: OUTFITTER_TOKEN, sent as `Authorization: Bearer <token>` (E4.1b, see
- * ../../../../outfitter/packages/api/src/auth.ts's identityFromLinkRequest /
- * identityFromApiToken). Create a token on the Outfitter web UI's Tokens page (`/tokens`); it
- * shows the exact `export OUTFITTER_API=...` / `export OUTFITTER_TOKEN=...` /
- * `export KERNAL_TELEPORT_STORE=outfitter` lines to copy into your shell. The token is never written
- * to disk by this module.
+ * Auth: this machine's login (`kernal login`, _shared/outfitter-env.ts), sent as
+ * `Authorization: Bearer <access token>` (see ../../../../outfitter/packages/api/src/auth.ts's
+ * identityFromLinkRequest). Dongles (OUTFITTER_TOKEN) are retired (central-auth.md §12). The token is
+ * never written to disk by this module.
  *
  * An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
  * identity token via `gcloud auth print-identity-token` and sending it the same way, on the theory
@@ -52,7 +50,7 @@ type SessionSummary = {
 export type OutfitterStoreOptions = {
   /** Base URL of the Outfitter link service. Defaults to OUTFITTER_API. */
   apiBase?: string;
-  /** Personal bearer token. Defaults to OUTFITTER_TOKEN. */
+  /** Bearer token. Defaults to this machine's login (`kernal login`). */
   token?: string;
   fetchFn?: FetchFn;
   warn?: Warn;
@@ -85,7 +83,7 @@ export class OutfitterStore implements Store {
     const token = opts.token ?? outfitterCredentials().token;
     if (!token) {
       throw new Error(
-        "teleport: KERNAL_TELEPORT_STORE=outfitter requires OUTFITTER_TOKEN (a personal API token -- create one on the Outfitter web UI's Tokens page).",
+        "teleport: KERNAL_TELEPORT_STORE=outfitter requires a login: run kernal login.",
       );
     }
     this.token = token;
@@ -122,7 +120,7 @@ export class OutfitterStore implements Store {
     const res = await this.send(`${this.apiBase}${path}`, { method, headers, body });
     if (res.status === 401) {
       throw new Error(
-        "teleport: Outfitter API returned 401 Unauthorized. OUTFITTER_TOKEN was rejected; create a new token on the Outfitter Tokens page.",
+        "teleport: Outfitter API returned 401 Unauthorized. This machine's login was rejected; run kernal login.",
       );
     }
     if (res.status === 403) {

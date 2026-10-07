@@ -75,7 +75,11 @@ export interface SessionDetail {
   baseBranch?: string;
   branch?: string;
   prompt?: string;
+  /** The floppy's model: the tape's when it was made, then whatever PUT /api/sessions/:id/model set.
+   * Absent on older floppies, which keep their transcript's last model. */
   modelOverride?: string;
+  /** The tape's model now. A tape edit doesn't move existing floppies. */
+  guruModel?: string;
   parentId?: string;
   status: "open" | "closed";
   leafId?: string;
@@ -205,6 +209,15 @@ export interface RevokeTokensResult {
   owners: string[];
 }
 
+/** PUT /api/sessions/:id/model's answer (api src/session-model.ts). */
+export interface ModelSwitch {
+  modelOverride: string | null;
+  /** What pi was told to use: the laptop preflight may have swapped a laptop model out. */
+  model: string;
+  applied: "live" | "next-run";
+  modelFallback?: { wanted: string; used: string };
+}
+
 export interface ModelRow {
   id: string;
   contextWindow?: number;
@@ -264,6 +277,12 @@ export interface SentryFleetSettings {
   /** Kept while off, so turning Sentry back on needs no re-entry. */
   dsn?: string;
   tracesSampleRate: number;
+  /** #424's signals, each absent (off) unless an operator turned it on. */
+  logs?: boolean;
+  metrics?: boolean;
+  agentTraces?: boolean;
+  agentContent?: boolean;
+  profilesSampleRate?: number;
 }
 
 export interface FleetSettings {
@@ -272,9 +291,25 @@ export interface FleetSettings {
   updatedBy?: string;
 }
 
-/** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on. */
+/** GET /api/fleet-settings: a client's view, with the DSN only while Sentry is on, and then the
+ * deploy's outfitter-v* release too on a tagged deploy (#421). #424's signals are there only while
+ * on; the browser reads profilesSampleRate (lib/sentry.ts) and sends no logs. */
 export interface ClientFleetSettings {
-  telemetry: { sentry: { enabled: false } | { enabled: true; dsn: string; tracesSampleRate: number } };
+  telemetry: {
+    sentry:
+      | { enabled: false }
+      | {
+          enabled: true;
+          dsn: string;
+          tracesSampleRate: number;
+          release?: string;
+          logs?: boolean;
+          metrics?: boolean;
+          agentTraces?: boolean;
+          agentContent?: boolean;
+          profilesSampleRate?: number;
+        };
+  };
   updatedAt?: string;
 }
 
@@ -626,10 +661,10 @@ export const api = {
     return request("/api/me/tokens");
   },
 
-  /** A Dongle by default; `a2a` makes an A2A key scoped to those tapes and repositories. */
-  createToken(name: string, a2a?: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
-    const body = a2a ? { name, kind: "a2a", a2a } : { name };
-    return request("/api/me/tokens", { method: "POST", body: JSON.stringify(body) });
+  /** An A2A key scoped to those tapes and repositories. Dongles are retired (#399): the api refuses
+   * to make one, so there is no way to ask for it here. */
+  createToken(name: string, a2a: Partial<A2AKeyScope> & { tapes: string[] }): Promise<{ token: string; record: TokenRecord }> {
+    return request("/api/me/tokens", { method: "POST", body: JSON.stringify({ name, kind: "a2a", a2a }) });
   },
 
   revokeToken(id: string): Promise<{ record: TokenRecord }> {
@@ -732,6 +767,11 @@ export const api = {
   /** #255: whether replies on this floppy are read aloud. */
   setSessionVoiceSpeak(id: string, speak: boolean): Promise<{ voiceSpeak: boolean }> {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
+  },
+
+  /** Switches the floppy's model, live when a Drive is going; null copies the tape's current model. */
+  setSessionModel(id: string, model: string | null): Promise<ModelSwitch> {
+    return request(`/api/sessions/${id}/model`, { method: "PUT", body: JSON.stringify({ model }) });
   },
 
   sendMessage(id: string, text: string, behavior?: "steer" | "followUp"): Promise<{ run: RunLike | null }> {

@@ -7,7 +7,7 @@
 // LiteLLM's management API, as used here (https://docs.litellm.ai/docs/proxy/virtual_keys,
 // /docs/proxy/users, /docs/proxy/cost_tracking):
 //   GET  /user/info?user_id=        the user and its keys (`keys[].token` is the key's hashed id)
-//   POST /user/new                  { user_id, user_email, auto_create_key: false }
+//   POST /user/new                  { user_id, user_role: internal_user, auto_create_key: false, metadata: { email } }
 //   POST /key/generate              { key_alias, user_id, duration, max_budget, budget_duration,
 //                                     rpm_limit, models?, metadata } -> { key, token, expires }
 //   POST /key/delete                { keys: [token] } or { key_aliases: [alias] }
@@ -21,6 +21,8 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { LOCAL_HOST_ACCESS_GROUP } from "../local-hosts/contract.ts";
+import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
 import type { Store } from "../store/types.ts";
 import type { DeviceDelivery, DeviceLifecycle, LifecycleDevice } from "./device-lifecycle.ts";
@@ -64,7 +66,7 @@ export interface UserSpend {
 }
 
 export interface LitellmKeys {
-  /** Creates the LiteLLM user `userId` (user_email = email) if missing. Idempotent. */
+  /** Creates the LiteLLM user `userId` (an internal_user, email in metadata) if missing. Idempotent. */
   ensureLitellmUser(user: { userId: string; email: string }): Promise<void>;
   /** /key/generate with key_alias `kernal-device-<deviceId>`, user_id, limits, and metadata
    * {outfitter: "device", deviceId, deviceName}. Records a RouterKey (store/keys.ts). Deletes the
@@ -145,7 +147,11 @@ export function parseModelList(value: unknown): string[] | undefined {
  * and `router.runKey.maxBudgetUsd` (fleet level only, locked; defaults in settings-schema.ts). */
 export function routerKeyLimits(fleet: FleetSettings): RouterKeyLimits {
   const values = fleetLevelValues(fleet);
-  const models = parseModelList(fleetSetting(values, "router.keys.models"));
+  const listed = parseModelList(fleetSetting(values, "router.keys.models"));
+  // #384 (local-host.md §3.6): everyone signed in may use shared laptop models, Drives too. A fleet
+  // list that restricts keys gets the `local-hosts` model access group, which LiteLLM resolves to
+  // every deployment carrying model_info.access_groups ["local-hosts"].
+  const models = listed && !listed.includes(LOCAL_HOST_ACCESS_GROUP) ? [...listed, LOCAL_HOST_ACCESS_GROUP] : listed;
   return {
     device: {
       duration: `${numberSetting(values, "router.deviceKey.durationDays", DEVICE_KEY_DURATION_DAYS)}d`,
@@ -204,6 +210,21 @@ export class LitellmError extends Error {
   }
 }
 
+/** #424: `task` counted as `<name>` with its outcome (ok, failed), and timed as `<name>.duration`
+ * in milliseconds. Nothing but the task while Sentry's metrics are off (sentry.ts). */
+async function measured<T>(name: string, attributes: MetricAttributes, task: () => Promise<T>): Promise<T> {
+  const started = performance.now();
+  let outcome = "failed";
+  try {
+    const value = await task();
+    outcome = "ok";
+    return value;
+  } finally {
+    metrics.count(name, { ...attributes, outcome });
+    metrics.distribution(`${name}.duration`, performance.now() - started, "millisecond", { ...attributes, outcome });
+  }
+}
+
 /** Anything key-shaped out of an upstream detail before it reaches a message: LiteLLM's auth errors
  * quote part of the key they were given. */
 function scrub(detail: string): string {
@@ -233,10 +254,6 @@ function errorDetail(body: unknown): string {
 /** /key/delete's ways of saying the key is already gone. */
 function isKeyGone(status: number, detail: string): boolean {
   return status === 404 || /not found|does not exist|keys deleted: 0/i.test(detail);
-}
-
-function isUserExists(detail: string): boolean {
-  return /already exists|unique constraint/i.test(detail);
 }
 
 function toIso(value: unknown): string | undefined {
@@ -352,11 +369,20 @@ class HttpLitellmKeys implements LitellmKeys {
     const info = await this.call("GET", "/user/info", { query: { user_id: user.userId } });
     const existing = info.ok && (info.body as { user_info?: unknown } | undefined)?.user_info;
     if (!existing) {
+      // No user_email: LiteLLM keeps emails unique, and the person may already have a LiteLLM login
+      // under that email (the owner's is a proxy_admin). Adopting it would make every device key an
+      // admin key, since a key's role comes from its user; colliding with it failed the mint (409,
+      // 2026-10-04). The email goes in metadata instead, and the role is pinned to internal_user.
       const created = await this.call("POST", "/user/new", {
-        body: { user_id: user.userId, user_email: user.email, auto_create_key: false },
+        body: { user_id: user.userId, user_role: "internal_user", auto_create_key: false, metadata: { email: user.email, source: "outfitter" } },
       });
-      // Another instance may have created it a moment ago.
-      if (!created.ok && !isUserExists(errorDetail(created.body))) throw this.failure("/user/new", created.status, created.body);
+      // Another instance may have created it a moment ago. Only that counts: re-check by id rather
+      // than trusting an "already exists" message, which LiteLLM also uses for other fields.
+      if (!created.ok) {
+        const again = await this.call("GET", "/user/info", { query: { user_id: user.userId } });
+        const nowExists = again.ok && (again.body as { user_info?: unknown } | undefined)?.user_info;
+        if (!nowExists) throw this.failure("/user/new", created.status, created.body);
+      }
     }
     this.knownUsers.add(user.userId);
   }
@@ -385,6 +411,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async mintDeviceKey(args: { userId: string; email: string; deviceId: string; deviceName: string } & KeyLimits): Promise<MintedKey> {
+    return measured("router.key.mint", { kind: "device" }, () => this.mintDeviceKeyNow(args));
+  }
+
+  private async mintDeviceKeyNow(args: { userId: string; email: string; deviceId: string; deviceName: string } & KeyLimits): Promise<MintedKey> {
     const alias = deviceKeyAlias(args.deviceId);
     // One live key per device: the old one goes first (LiteLLM keeps aliases unique, too).
     // A failed delete here is not owed to the sweep: the previous key is still the device's live
@@ -418,6 +448,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async mintRunKey(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey> {
+    return measured("router.key.mint", { kind: "run" }, () => this.mintRunKeyNow(args));
+  }
+
+  private async mintRunKeyNow(args: { userId: string; email: string; runId: string; sessionId: string; durationSeconds: number; mint?: number } & KeyLimits): Promise<MintedKey> {
     const alias = runKeyAlias(args.runId, args.mint);
     const seconds = Math.max(1, Math.ceil(args.durationSeconds));
     const maxBudget = args.maxBudget ?? RUN_KEY_MAX_BUDGET_USD;
@@ -486,7 +520,14 @@ class HttpLitellmKeys implements LitellmKeys {
   async userSpend(userId: string, month: string): Promise<UserSpend> {
     const cacheKey = `${userId}|${month}`;
     const cached = this.spendCache.get(cacheKey);
-    if (cached && this.now().getTime() - cached.at < SPEND_CACHE_MS) return cached.value;
+    if (cached && this.now().getTime() - cached.at < SPEND_CACHE_MS) {
+      metrics.count("spend.lookup", { scope: "user", outcome: "cached" });
+      return cached.value;
+    }
+    return measured("spend.lookup", { scope: "user" }, () => this.userSpendNow(userId, month, cacheKey));
+  }
+
+  private async userSpendNow(userId: string, month: string, cacheKey: string): Promise<UserSpend> {
 
     const { start, end } = monthRange(month);
     const [info, logs] = await Promise.all([
@@ -535,6 +576,10 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   async allUsersSpend(month: string): Promise<Array<{ userId: string; email?: string; total: number }>> {
+    return measured("spend.lookup", { scope: "all" }, () => this.allUsersSpendNow(month));
+  }
+
+  private async allUsersSpendNow(month: string): Promise<Array<{ userId: string; email?: string; total: number }>> {
     const { start, end } = monthRange(month);
     const [logs, users] = await Promise.all([
       this.ok("GET", "/spend/logs", { query: { start_date: start, end_date: end } }),
@@ -553,8 +598,11 @@ class HttpLitellmKeys implements LitellmKeys {
       }
     }
     const emails = new Map<string, string>();
-    const userRows = (Array.isArray(users) ? users : ((users as { users?: unknown[] } | undefined)?.users ?? [])) as Array<{ user_id?: string; user_email?: string | null }>;
-    for (const u of userRows) if (u.user_id && u.user_email) emails.set(u.user_id, u.user_email);
+    const userRows = (Array.isArray(users) ? users : ((users as { users?: unknown[] } | undefined)?.users ?? [])) as Array<{ user_id?: string; user_email?: string | null; metadata?: { email?: unknown } | null }>;
+    for (const u of userRows) {
+      const email = u.user_email || (typeof u.metadata?.email === "string" ? u.metadata.email : undefined);
+      if (u.user_id && email) emails.set(u.user_id, email);
+    }
     return [...totals.entries()]
       .filter(([userId]) => userId)
       .map(([userId, total]) => ({ userId, ...(emails.has(userId) ? { email: emails.get(userId) } : {}), total: money(total) }))

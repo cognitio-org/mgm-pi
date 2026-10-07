@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MemoryStore } from "../src/store/memory.ts";
-import { buildTestApp, type TestApp } from "./helpers.ts";
+import { buildTestApp, seedDongle, type TestApp } from "./helpers.ts";
 
 async function close(app: TestApp): Promise<void> {
   app.stopBackgroundTasks();
@@ -76,8 +76,7 @@ test("the link role does not serve the catalog", async () => {
   const web = await buildTestApp({}, { store });
   const link = await buildTestApp({ OUTFITTER_ROLE: "link" }, { store });
   try {
-    const created = await web.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "laptop" } });
-    const token = created.json().token as string;
+    const { token } = await seedDongle(store, "dev@localhost");
     const res = await link.fastify.inject({
       method: "GET",
       url: "/api/github/repos",

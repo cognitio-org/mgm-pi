@@ -282,10 +282,10 @@ export function manifestFromGit(params: { id: string; name?: string; host: strin
 // ---------- model remap ----------
 
 export type ModelPick = { provider: string; modelId: string };
-export const FALLBACK_MODEL: ModelPick = { provider: "litellm", modelId: "local-qwen-mlx" };
+export const FALLBACK_MODEL: ModelPick = { provider: "litellm", modelId: "gpt-5.4-nano" };
 
 /** The last model_change entry in the (already-active-path) entries, if its provider is available on
- * this host; otherwise the local MLX fallback. */
+ * this host; otherwise the cloud default. */
 export function pickModelForHost(entries: any[], availableProviders: string[]): ModelPick {
   let last: ModelPick | undefined;
   for (const e of entries) {

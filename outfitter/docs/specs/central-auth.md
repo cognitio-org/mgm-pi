@@ -212,7 +212,7 @@ app" }`), so no signed-in Kernal can approve another.
   of a device access token (the only re-check a machine token, §1.7, ever gets). Dev mode
   with an empty list allows everyone. Outside dev mode an empty list refuses every device login
   (`login_unavailable`) and leaves Dongles as they are today.
-- **Dongles** (until CA-10): also refused (generic 401) when the owner is no longer allowed, on
+- **Dongles** (no new ones since CA-10; existing ones until they expire or are revoked): also refused (generic 401) when the owner is no longer allowed, on
   every use, whenever `loginAllow` is non-empty. This is the "tokens outlive the owner's access"
   fix.
 - `deploy/service.sh` sets `OUTFITTER_LOGIN_ALLOW` the way it sets PREVIEW_ALLOW (IAP_MEMBERS
@@ -351,6 +351,10 @@ export function outfitterBearer(creds?: OutfitterCredentials): Promise<string | 
   one-line edits in those files and nothing else there. `bin/kernal`'s `pi_memory_env` checks
   "OUTFITTER_API and OUTFITTER_TOKEN"; E extends it to "or a stored login" by testing for
   `~/.kernal/auth/accounts.json` (no node call needed).
+- **CA-10 (#399) removed the Dongle branch**: signed out, `outfitterCredentials()` is
+  `{ api: OUTFITTER_API, token: undefined }`, `source` is only ever `"session"`, a leftover
+  `OUTFITTER_TOKEN` gets the one-time notice `Dongles are retired; run kernal login` (and is still
+  scrubbed from process.env), and `pi_memory_env` tests only for `accounts.json`.
 
 ## 3. Central settings (CA-3, task C, #392)
 
@@ -417,10 +421,42 @@ v1 keys (`SETTINGS_SCHEMA_VERSION = 1`):
 | `router.keys.models` | string, comma-separated | no | fleet | none | (unset: every model) | |
 | `router.runKey.maxBudgetUsd` | number 0..100000 | no | fleet | none | 20 | |
 
+v2 keys (`SETTINGS_SCHEMA_VERSION = 2`, #424), stored in the fleet document's `telemetry.sentry`
+with the three Sentry keys above and set at the fleet level only while Sentry is on:
+
+| Key | Type | Secret | Levels | Override | Default | Env |
+|---|---|---|---|---|---|---|
+| `telemetry.sentry.logs` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.metrics` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.agentTraces` | boolean | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.agentContent` | boolean (needs agentTraces) | no | fleet, local | opt-out | false | |
+| `telemetry.sentry.profilesSampleRate` | number 0..1 | no | fleet | none | 0 | |
+
+v3 keys (`SETTINGS_SCHEMA_VERSION = 3`, #440), the curated OpenRouter list. Each is a string of
+comma-separated model ids. There is one add and one remove key per level, so the levels combine
+instead of the lowest one replacing the list.
+
+Kernal builds the list from its defaults, then applies each level's removes and adds in this order:
+the fleet's adds, the user, the profile, then this machine. A nearer level wins: this machine can
+add back a model your account removed. The fleet's removals are applied last and always win.
+`OPENROUTER_MODELS` in `.env` replaces the defaults and every add; fleet removals still apply.
+
+| Key | Type | Secret | Levels | Override | Default | Env |
+|---|---|---|---|---|---|---|
+| `openrouter.models.fleetAdd` | string (ids) | no | fleet | none | | |
+| `openrouter.models.fleetRemove` | string (ids) | no | fleet | none | | |
+| `openrouter.models.add` | string (ids) | no | user | any | | |
+| `openrouter.models.remove` | string (ids) | no | user | any | | |
+| `openrouter.models.profileAdd` | string (ids) | no | profile | any | | |
+| `openrouter.models.profileRemove` | string (ids) | no | profile | any | | |
+| `openrouter.models.localAdd` | string (ids) | no | local | any | | |
+| `openrouter.models.localRemove` | string (ids) | no | local | any | | |
+
 `router.key` is never stored by Outfitter: it is the device's CA-5 key, which Kernal reads from its
 keychain (`getRouterKey`, §2.2). It is declared so `/config` and `/admin` can show its source.
-Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level is the
-existing `kernal.sentry: false` in settings.json.
+Personal provider keys are not settings (§4). `telemetry.sentry.enabled`'s local level (and the
+#424 signals') is this machine's config layer, `~/.kernal/config.local.json`, which `/sentry off`
+and `/admin` both write; the legacy `kernal.sentry: false` in settings.json still counts as `false`.
 
 The `router.deviceKey.*`, `router.keys.models` and `router.runKey.*` keys are the router key limits
 (§5.2, owner decision of 2026-10-04): operators set them at the fleet level only (`PUT
@@ -503,6 +539,7 @@ version, updatedAt }`.
 | `PATCH /api/config/profiles/:name` `{ rename?, isDefault?: true }` (If-Match) | the user |
 | `DELETE /api/config/profiles/:name` (If-Match) → 204 | the user |
 | `GET`/`PUT /api/config/devices/:deviceId` (own active devices only, else 404) | the user |
+| `GET /api/config/models?profile=` → `{ providers: [{ id, label, models, note? }] }` (#458: options for the model dropdowns; router list cached 5 min) | the user |
 | `GET`/`PUT /api/operator/config/fleet` (web/all, `requireOperator`) | operators |
 
 Who "the user" can be: on web, an IAP person; on link, a device token. A Dongle may `GET
@@ -637,7 +674,10 @@ previous key first. `deleteKey` treats "not found" as deleted; on any other fail
 
 - **`POST /api/device/router-key`** (link/all, device token only) → 200 `{ routerKey }`: deletes
   the device's key and mints a new one. Kernal calls it when its key is within 7 days of
-  `expiresAt` or the router answered 401 for the key (CA-8), then `setRouterKey`.
+  `expiresAt` or the router answered 401 for the key (CA-8), then `setRouterKey`. After a 401 it
+  first reads the keychain again (#443): a different key there means another Kernal signed in
+  again (revoking this device and its key), so that key is adopted and nothing is minted. Only a
+  keychain that still holds the refused key leads to a re-mint (once per process).
 - **Sweep**: the link role's `/api/hooks/tick` (existing Cloud Scheduler tick) calls a
   `sweepRouterKeys()` exported by task D, which retries deletes in `listPendingDelete(50)`. Task D
   adds that one call to the tick handler.
@@ -667,6 +707,10 @@ previous key first. `deleteKey` treats "not found" as deleted; on any other fail
   profile's values with controls generated from `GET /api/config/schema` (only keys whose levels
   include `profile`). A 409 shows "changed elsewhere, reload" and never overwrites.
 - **Account-wide values** (the `user` level): same editor.
+- **Model fields** (#458): `model.provider` is a select; `model.default` is a searchable dropdown of
+  the selected provider's models and `compaction.summaryModel` of every provider's (as
+  `provider/id`), from `GET /api/config/models`. "Other…" types any id; a stored value that isn't
+  listed is shown, marked "not in the list". Writes are validated by type only, as before.
 - **Where values come from**: `GET /api/config?profile=` drives a read-only "effective value" column
   with its source; `locked` values (fleet wins) are shown read-only with "set by your Sysop".
 - **Keys**: personal provider keys, write-only: shows `…last4` and the date, Set/Replace/Remove.
@@ -750,6 +794,50 @@ function providerKey(provider: string): string | undefined;   // §4, memory onl
   three keys from central-config (F changes the sentry extension's source, task E having already
   switched its bearer).
 
+### 10.1 Applying the personal keys (CA-11, #437)
+
+`model.provider`, `model.default`, `model.thinking`, `compaction.summaryModel`,
+`compaction.masking`, `memory.mode`, `voice.enabled`, `voice.language` (`accountFirst` in Kernal's
+`KNOWN_SETTINGS`) are applied, not only shown. Their order differs from the one above (rule `any`
+still, so nothing is locked):
+
+1. this machine (`config.local.json`, source `local`);
+2. the account, as the server resolved it: device → profile → user;
+3. legacy local values (source `legacy`, `sourceName` says where; `/config` shows "<where>
+   (legacy)"): settings.json `defaultProvider`/`defaultModel` (as a pair) and
+   `defaultThinkingLevel`, unless equal to the release's `settings.shipped.json`;
+   `kernal.compaction.summaryModel`/`masking`; `kernal.memory`; pi-listen's `voice.enabled`/
+   `voice.language`; `KERNAL_SUMMARY_MODEL` in .env (still warned about), then in the shell;
+4. fleet and group; then the default.
+
+Where each applies (`_shared/central-apply.ts`): only a value from this machine or from Outfitter
+is applied over what pi, pi-listen and compaction read for themselves; a legacy value or a default
+changes nothing, so an unconfigured Kernal starts as before.
+- **Model and thinking**: pi chooses its start-up model from settings.json before any extension's
+  `session_start`, and has no hook to change that choice earlier, so `kernal-config` switches a
+  new, empty session (`session_start` reasons `startup` and `new`) once with `pi.setModel` and
+  `pi.setThinkingLevel` (pi's supported extension API). Never a session with messages (resume,
+  fork, continue), never over `--model`/`--models`/`--provider`/`--thinking`, never in a Drive;
+  pi's per-model `modelThinkingLevels` still wins over `model.thinking`. A change therefore reaches
+  the next session; a running conversation never switches model. Writing settings.json before pi
+  starts was rejected: it would turn every central value into a "legacy" one, so removing it from
+  the account would leave the machine on it.
+- **Compaction**: read on every use; this machine and the account from the resolution, the legacy
+  places live (as before), then the fleet.
+- **Memory**: decided at start. `outfitter-agentengine/laptop.ts` (`chosenMode`) and `bin/kernal`
+  decide the same way; bin/kernal runs before pi, so central-config writes the signed-in resolution
+  (non-secret: `values`, `sources`, and the personal keys' `fleet` values) to
+  `<cache dir>/effective.json` (`effective.<profile>.json` with `--profile`), one key per line so a
+  shell without node reads it with sed. Rewritten on each resolve, refresh and local save.
+- **Voice**: written into pi-listen's settings (at kernal-voice's load, the start-up refresh,
+  `/config reload` and `/admin` saves); pi-listen reads them at its next `session_start`.
+- **Mid-session**: the start-up refresh takes over the personal keys' fresh values at once (the
+  rest still waits for the next start or `/config reload`); `/config` says when each kind applies.
+- **Drives**: agentd passes the owner's settings to Kernal as `KERNAL_RUN_SETTINGS` (values and
+  each one's source level); inside a sandbox central-config reads them as the central layer, ranked
+  with the fleet so the tape and its env stay in charge (agentd already turns `model.default`,
+  `model.thinking` and `compaction.summaryModel` into the guru's model, thinking and env).
+
 ## 11. /admin (CA-9, task G, #398; after F)
 
 `kernal/.pi/extensions/kernal-admin/*` only.
@@ -761,7 +849,37 @@ function providerKey(provider: string): string | undefined;   // §4, memory onl
   "Only this machine" → `setLocalOverride`.
 - Signed in, keys typed into `/admin` go to `PUT /api/me/provider-keys/:provider` (link), not `.env`.
 - `locked` values are read-only with "set by your Sysop".
+- **Model fields (#458)**: the Settings page's `model.default` and `compaction.summaryModel` are
+  searchable dropdowns like the web's (§7), their options from `connect`'s discovered models (the
+  router's, the curated OpenRouter list, the local server's) over the `kernal:connect` bus (op
+  `state`, as the Model page), in `GET /settings`'s `modelOptions`. "Other…" and "not in the list"
+  as on the web; a provider that isn't connected has no list.
 - Signed out: exactly today's behaviour (.env and settings.json).
+- **Default model (CA-11, #437)**: signed in, the Model page and `/connect` (TUI: `ctx.ui.select`)
+  offer the same two targets for a newly chosen default, through the same versioned PUT
+  (`saveModelDefault`: `model.provider` and `model.default`); an account save also clears this
+  machine's own `model.*` overrides, which would otherwise keep winning there. Both still write
+  settings.json (pi's own default). Signed out, without a UI, or on Escape: settings.json only.
+  Saves say when each key applies (`whenSaved`).
+- **A default set inside Kernal goes to the account (owner decision 2026-10-04, #437)**: pi's model
+  picker Ctrl+S ("set as default"), the default thinking level and pi's `/login` default model are
+  written by pi itself to settings.json (`defaultProvider`+`defaultModel` as a pair,
+  `defaultThinkingLevel`). Kernal (`_shared/default-sync.ts`, registered by kernal-config) saves
+  each such change to the account (active profile, else the user level) through the same versioned
+  PUT (`saveAccountDefaults`: GET for the version, PUT with If-Match; a 409 refetches the version
+  and retries once), so new sessions on every machine start with it. pi 0.87's `model_select` /
+  `thinking_level_select` carry no persist flag, so the change is detected in settings.json against
+  a record of the three keys as last seen (`kernal-defaults-synced.json` next to settings.json):
+  created from settings.json when missing, moved on after Kernal's own writes (`/connect`, the Model
+  page: `noteOwnDefaultsWrite`) and after every sync. It is checked a moment after those events (pi
+  queues its write), and at `session_start` and `agent_start` (a Ctrl+S that emits nothing, or one
+  made just before quitting). No fs.watch. Per-session changes (Enter in the picker, cycling, a
+  session's thinking level) never write settings.json and never reach the account. Signed out, in a
+  Drive, or without kernal-admin: nothing is sent and the record moves on. A failure (offline, 401,
+  a second 409, a refused value) never breaks the session; one notice says it stays on this machine.
+  On success a `config.local.json` pin of the same key is removed (the notice says so), so the new
+  default applies on this machine too. A backend outside `model.provider`'s choices is saved as
+  `model.default = "<provider>/<id>"`.
 
 ## 12. Migration (CA-10, task J, #399; after E and F)
 
@@ -769,12 +887,22 @@ function providerKey(provider: string): string | undefined;   // §4, memory onl
    (`OPENROUTER_API_KEY`, …; never `LITELLM_AGENT_KEY`, which the device key replaces) to the
    account (`PUT /api/me/provider-keys/:provider`), then removes them from `.env` with connect's
    `writeEnvValues`. Asks once per key; never in `-p` mode.
-2. Retire the paste-a-Dongle flow: the Tokens page's Dongle creation, the `OUTFITTER_TOKEN`
-   fallback in `outfitter-env.ts` (after E merged, J owns that removal), and `/api/me/tokens` for
-   kind `dongle` (A2A keys stay).
+2. Retire the paste-a-Dongle flow (owner decision 2026-10-05): the Tokens page no longer creates
+   Dongles (it lists existing ones, marked retired, and still revokes them), Kernal no longer reads
+   `OUTFITTER_TOKEN` (`outfitter-env.ts`; a leftover one gets one notice, "Dongles are retired; run
+   kernal login", and is scrubbed from the environment), and `POST /api/me/tokens` refuses kind
+   `dongle` (and a missing kind) with 410. A2A keys are unchanged. Existing Dongles keep
+   authenticating until they expire or are revoked: auth does not reject them.
 3. Update `kernal/.env.example`, the READMEs and the setup docs.
 4. Rework #381, #382, #383 (Local Host) to authenticate with the device login: issue comments.
-5. Blocking the shared router keys is an owner step (§14).
+5. Drives use per-run keys only: `deploy/config.env` sets `OUTFITTER_RUN_KEY_FALLBACK=0`, so a
+   failed mint is a retryable run.spec failure (§9), never the shared key.
+6. Blocking the shared router keys is an owner step (§14) with `deploy/litellm-retire-keys.sh`:
+   `system-key` moves Outfitter's own calls (`outfitter-litellm-key-default`) from `MGM-Pi` (a key of
+   the owner's proxy_admin login) to an `outfitter-system` internal_user key in the
+   `outfitter-system` team; `block` then blocks `MGM-Pi`, `agent-testing` and
+   `litellm-autorouter-testing-c` (Matej's: he runs `kernal update && kernal login`). Not blocked
+   for now: `UPSTREAM_LITELLM_API_KEY`, `ROUTER_ADMIN_KEY`, `local-test`, `cognitio-mgmsr`.
 
 ## 13. File ownership
 
@@ -831,9 +959,11 @@ in this document.
    through a release tag (`LITELLM_ADMIN_KEY` is already mounted). Optionally set the router key
    limits (§3.2) with `PUT /api/operator/config/fleet`; the defaults apply otherwise.
 4. Point `link.kernal.one` at the link service if it isn't already (it's baked into releases).
-5. Move Outfitter's own default key into the `outfitter-system` team (I's PR says which).
-6. After everyone is on device keys: block the hand-issued `LITELLM_AGENT_KEY`s, Matej's key and the
-   shared Drive keys (`outfitter-litellm-key-*`) in LiteLLM.
+5. Move Outfitter's own default key into the `outfitter-system` team:
+   `deploy/litellm-retire-keys.sh system-key` (#399; DRY_RUN=1 first).
+6. After everyone is on device keys and a release with `OUTFITTER_RUN_KEY_FALLBACK=0` is out:
+   `deploy/litellm-retire-keys.sh block` (`MGM-Pi`, `agent-testing`,
+   `litellm-autorouter-testing-c`; #399).
 
 ## 15. Decisions (made for this contract; the owner may revisit)
 

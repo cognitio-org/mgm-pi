@@ -4,7 +4,7 @@
 
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp } from "./helpers.ts";
+import { buildTestApp, seedDongle } from "./helpers.ts";
 import { openAgentSocket, makeRunningSession, sendHello } from "./agent-socket.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import {
@@ -32,13 +32,10 @@ function on(dsn = DSN, tracesSampleRate = 0.05): FleetSettings {
   return { telemetry: { sentry: { enabled: true, dsn, tracesSampleRate } } };
 }
 
-/** A Dongle for `ownerEmail`, minted through a throwaway dev-mode app on the same store. */
+/** An existing Dongle for `ownerEmail` (#399: no longer created through the API, still accepted). */
 async function bearerFor(store: MemoryStore, ownerEmail: string): Promise<{ authorization: string }> {
-  const dev = await buildTestApp({}, { store });
-  const created = await dev.fastify.inject({ method: "POST", url: "/api/me/tokens", payload: { name: "t" } });
-  await store.tokens.update(created.json().record.id, { ownerEmail });
-  await dev.fastify.close();
-  return { authorization: `Bearer ${created.json().token}` };
+  const { token } = await seedDongle(store, ownerEmail, "t");
+  return { authorization: `Bearer ${token}` };
 }
 
 describe("fleet settings document", () => {
@@ -47,6 +44,7 @@ describe("fleet settings document", () => {
     assert.deepEqual(defaultFleetSettings().telemetry.sentry, { enabled: false, dsn: DEFAULT_SENTRY_DSN, tracesSampleRate: 0.05 });
     assert.equal(isSentryDsn(DEFAULT_SENTRY_DSN), true);
     assert.deepEqual(clientFleetSettings(defaultFleetSettings()).telemetry.sentry, { enabled: false }, "never sent to clients while off");
+    assert.deepEqual(clientFleetSettings(defaultFleetSettings(), { release: "outfitter-v1" }).telemetry.sentry, { enabled: false }, "no release while off");
   });
 
   test("ensureFleetSettings stores the defaults once and never overwrites an operator's document", async () => {
@@ -177,6 +175,18 @@ describe("GET /api/fleet-settings", () => {
       updatedAt: "2026-10-03T00:00:00.000Z",
     });
     assert.equal(res.json().updatedBy, undefined, "who changed it is for operators only");
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("names the deploy's release while Sentry is on, never while off (#421)", async () => {
+    const store = new MemoryStore();
+    const app = await buildTestApp({ OUTFITTER_RELEASE: "outfitter-v2026.10.04.1" }, { store });
+    const offRes = await app.fastify.inject({ method: "GET", url: "/api/fleet-settings" });
+    assert.deepEqual(offRes.json(), { telemetry: { sentry: { enabled: false } } });
+    await store.fleetSettings.put(on());
+    const onRes = await app.fastify.inject({ method: "GET", url: "/api/fleet-settings" });
+    assert.deepEqual(onRes.json().telemetry.sentry, { enabled: true, dsn: DSN, tracesSampleRate: 0.05, release: "outfitter-v2026.10.04.1" });
     app.stopBackgroundTasks();
     await app.fastify.close();
   });

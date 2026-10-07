@@ -47,6 +47,11 @@ function glyphTop(): number {
   return window.innerHeight - 70;
 }
 
+/** Where a card that fits opens: 6px under the 16px-tall glyph (the chip row sits under its message). */
+function belowGlyph(): number {
+  return glyphTop() + 16 + 6;
+}
+
 function mount(item: RailTool = tool) {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -103,7 +108,7 @@ describe("TranscriptRail card", () => {
     const card = container!.querySelector<HTMLElement>(".rail-card")!;
     expect(RecordingResizeObserver.all).toHaveLength(1);
     expect(RecordingResizeObserver.all[0]!.el).toBe(card);
-    expect(card.style.top).toBe(`${glyphTop()}px`);
+    expect(card.style.top).toBe(`${belowGlyph()}px`);
 
     card.style.top = "3px";
     act(() => RecordingResizeObserver.all[0]!.fire());
@@ -121,7 +126,7 @@ describe("TranscriptRail card", () => {
     expect(RecordingResizeObserver.all[0]!.el).toBe(grown);
     setHeight(grown, 1);
     act(() => RecordingResizeObserver.all[0]!.fire());
-    expect(grown.style.top).toBe(`${glyphTop()}px`);
+    expect(grown.style.top).toBe(`${belowGlyph()}px`);
   });
 
   it("does not close on Escape while a modal dialog is open", () => {

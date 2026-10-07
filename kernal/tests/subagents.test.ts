@@ -129,4 +129,60 @@ describe("command-line agents in the subagent tool's own output", () => {
     assert.equal(await handlers[0](ev({ isError: true })), undefined, "an error");
     assert.equal(await handlers[0](ev({ content: [{ type: "text", text: "- scout (builtin): recon" }] })), undefined, "nothing to correct");
   });
+
+  test("a subscription that is not off hides that vendor's builtins; off leaves them", async () => {
+    const { annotateSubagentText } = await import("../.pi/extensions/kernal-subagents/lib.ts");
+    const { hiddenSubscriptionAgents } = await import("../.pi/extensions/kernal-subscriptions/vendors.ts");
+    const text = [
+      "Executable agents:",
+      "- claude-code (builtin, external-cli:claude): Read-only",
+      "- claude-code-writer (builtin, external-cli:claude): Writes",
+      "- codex-exec (builtin, external-cli:codex): Read-only",
+      "- codex-exec-writer (builtin, external-cli:codex): Writes",
+      "- cursor-agent (builtin, external-cli:cursor-agent): Cursor",
+      "- scout (builtin): recon",
+    ].join("\n");
+    const off = annotateSubagentText(text, undefined, hiddenSubscriptionAgents({ claude: "off", codex: "off" }));
+    assert.match(off, /^- claude-code \(builtin/m);
+    assert.match(off, /^- codex-exec-writer \(builtin/m);
+    const claudeOn = annotateSubagentText(text, undefined, hiddenSubscriptionAgents({ claude: "sandboxed", codex: "off" }));
+    assert.doesNotMatch(claudeOn, /^- claude-code /m);
+    assert.doesNotMatch(claudeOn, /^- claude-code-writer /m);
+    assert.match(claudeOn, /^- codex-exec \(builtin/m);
+    assert.match(claudeOn, /^- codex-exec-writer \(builtin/m);
+    assert.match(claudeOn, /^- cursor-agent \(builtin/m);
+    assert.match(claudeOn, /^- scout \(builtin/m);
+    const both = annotateSubagentText(text, undefined, hiddenSubscriptionAgents({ claude: "full", codex: "full" }));
+    assert.doesNotMatch(both, /claude-code|codex-exec/);
+    assert.match(both, /^- cursor-agent \(builtin/m);
+    assert.equal(annotateSubagentText(both, undefined, hiddenSubscriptionAgents({ claude: "full", codex: "full" })), both);
+    const models = "Subagent models\nclaude-code\n  model:\n    litellm/x\n  source: subagents default\ncodex-exec\n  model:\n    litellm/y\nscout\n  model:\n    litellm/z\n";
+    const hiddenModels = annotateSubagentText(models, undefined, hiddenSubscriptionAgents({ claude: "full", codex: "sandboxed" }));
+    assert.doesNotMatch(hiddenModels, /claude-code|codex-exec/);
+    assert.match(hiddenModels, /^scout\n {2}model:\n {4}litellm\/z/m);
+    const get = annotateSubagentText("Agent: claude-code-writer\nModel: litellm/a\nRunner: external-cli claude\n", undefined, ["claude-code-writer"]);
+    assert.equal(get, "claude-code-writer is hidden while its subscription is on.");
+    assert.deepEqual(hiddenSubscriptionAgents({}), []);
+  });
+
+  test("the extension applies that hide from the subscription settings", async () => {
+    const { _resetCentralConfig, setLocalOverride } = await import("../.pi/extensions/_shared/central-config.ts");
+    const handlers: Function[] = [];
+    const mod = await import("../.pi/extensions/kernal-subagents/index.ts");
+    mod.default({ on: (ev: string, h: Function) => { if (ev === "tool_result") handlers.push(h); } } as any);
+    const text = "Executable agents:\n- claude-code (builtin, external-cli:claude): Read-only\n- codex-exec (builtin, external-cli:codex): Read-only\n- scout (builtin): recon";
+    const ev = { toolName: "subagent", input: { action: "list" }, content: [{ type: "text", text }], isError: false };
+    try {
+      setLocalOverride("subscriptions.claude", "full");
+      setLocalOverride("subscriptions.codex", "off");
+      const r = await handlers[0](ev);
+      assert.doesNotMatch(r.content[0].text, /^- claude-code /m);
+      assert.match(r.content[0].text, /^- codex-exec /m);
+      assert.match(r.content[0].text, /^- scout /m);
+    } finally {
+      setLocalOverride("subscriptions.claude", undefined);
+      setLocalOverride("subscriptions.codex", undefined);
+      _resetCentralConfig();
+    }
+  });
 });

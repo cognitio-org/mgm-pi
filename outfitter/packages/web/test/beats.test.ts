@@ -37,7 +37,7 @@ function thought(id: string): RailThinking {
 }
 
 describe("groupBeats", () => {
-  it("closes a rail when assistant prose arrives", () => {
+  it("closes a rail when assistant prose arrives, and a tool after that prose stays with it", () => {
     const beats = groupBeats(
       groupThinkingBlocks([
         thinking("t1", "plan"),
@@ -47,25 +47,59 @@ describe("groupBeats", () => {
         call("c2", "tc2"),
       ]),
     );
-    expect(beats.map((beat) => beat.kind)).toEqual(["assistant", "tools-only"]);
+    expect(beats.map((beat) => beat.kind)).toEqual(["assistant"]);
     expect(beats[0]).toMatchObject({ kind: "assistant", id: "thinking-group:t1", prose: "done" });
-    expect((beats[0] as AssistantBeat).rail.map((item) => item.kind)).toEqual(["thinking", "tool"]);
+    expect((beats[0] as AssistantBeat).rail.map((item) => item.id)).toEqual(["thinking-group:t1", "c1", "c2"]);
     expect((beats[0] as AssistantBeat).rail[1]).toMatchObject({ id: "c1", running: false, output: "files" });
-    expect(beats[1]).toMatchObject({ kind: "tools-only", id: "c2" });
+    expect((beats[0] as AssistantBeat).rail[2]).toMatchObject({ id: "c2", running: true });
   });
 
-  it("does not pull a tool that starts after prose back into that beat", () => {
+  it("puts a tool under the message that announced it, not the next one", () => {
     const beats = groupBeats(
       groupThinkingBlocks([text("a1", "looking"), call("c1", "tc"), result("r1", "tc", "out"), text("a2", "done")]),
     );
     expect(beats).toHaveLength(2);
-    expect(beats[0]).toMatchObject({ kind: "assistant", id: "a1", prose: "looking", rail: [] });
-    expect(beats[1]).toMatchObject({
+    expect(beats[0]).toMatchObject({
       kind: "assistant",
-      id: "c1",
-      prose: "done",
+      id: "a1",
+      prose: "looking",
       rail: [{ kind: "tool", id: "c1", running: false, output: "out" }],
     });
+    expect(beats[1]).toMatchObject({ kind: "assistant", id: "a2", prose: "done", rail: [] });
+  });
+
+  it("starts a new beat at a thought: tools after it wait for the next message", () => {
+    const beats = groupBeats(
+      groupThinkingBlocks([text("a1", "first"), call("c1", "tc1"), thinking("t2", "hmm"), call("c2", "tc2"), text("a2", "second")]),
+    );
+    expect(beats.map((beat) => [beat.kind, (beat as AssistantBeat).rail.map((item) => item.id)])).toEqual([
+      ["assistant", ["c1"]],
+      ["assistant", ["thinking-group:t2", "c2"]],
+    ]);
+    expect(beats[1]).toMatchObject({ id: "thinking-group:t2", proseId: "a2" });
+  });
+
+  it("does not carry tools across a user message or a system note", () => {
+    const afterUser = groupBeats([
+      ...groupThinkingBlocks([text("a1", "done")]),
+      { kind: "user", id: "u1", text: "next" },
+      ...groupThinkingBlocks([call("c1", "tc1")]),
+    ]);
+    expect(afterUser.map((beat) => beat.kind)).toEqual(["assistant", "user", "tools-only"]);
+    expect((afterUser[0] as AssistantBeat).rail).toEqual([]);
+
+    const afterNote = groupBeats([
+      ...groupThinkingBlocks([text("a1", "done")]),
+      { kind: "system", id: "s1", text: "note" },
+      ...groupThinkingBlocks([call("c1", "tc1")]),
+    ]);
+    expect(afterNote.map((beat) => beat.kind)).toEqual(["assistant", "passthrough", "tools-only"]);
+  });
+
+  it("puts an orphan result after a message under that message", () => {
+    const beats = groupBeats(groupThinkingBlocks([text("a1", "checking"), result("r1", "lost", "late", false, "bash")]));
+    expect(beats).toHaveLength(1);
+    expect((beats[0] as AssistantBeat).rail).toMatchObject([{ id: "r1", output: "late" }]);
   });
 
   it("pairs a call with the result that shares its toolCallId", () => {

@@ -193,6 +193,26 @@ export function ThinkingIcon(props: IconProps) {
   );
 }
 
+/** Modems -- local models shared by the fleet. An external modem: phone cord, faceplate, LED pixels.
+ * LEDs use var(--ok) while at least one listed host is online; otherwise they stay ink. */
+export function ModemIcon({ lit = false, ...props }: IconProps & { lit?: boolean }) {
+  const led = lit ? "var(--ok, currentColor)" : "currentColor";
+  return (
+    <Grid {...props}>
+      <rect x="6" y="0" width="3" height="1" />
+      <rect x="7" y="1" width="1" height="2" />
+      <rect x="1" y="3" width="14" height="12" />
+      <rect x="2" y="5" width="12" height="4" fill="var(--bg-elevated, #fff)" />
+      <rect x="3" y="6" width="1" height="2" fill={led} />
+      <rect x="5" y="6" width="1" height="2" fill={led} />
+      <rect x="7" y="6" width="1" height="2" fill={led} />
+      <rect x="9" y="6" width="1" height="2" fill={led} />
+      <rect x="3" y="11" width="7" height="1" fill="var(--bg-elevated, #fff)" />
+      <rect x="3" y="13" width="7" height="1" fill="var(--bg-elevated, #fff)" />
+    </Grid>
+  );
+}
+
 /** Toolbox -- rail glyph for a tool call and its result. Box, handle, latch. */
 export function ToolboxIcon(props: IconProps) {
   return (

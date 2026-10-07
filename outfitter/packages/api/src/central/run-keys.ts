@@ -13,8 +13,8 @@
 //   - Settings. The owner's resolved settings (CA-3, their default profile, no device level) ride
 //     run.spec as `settings`, so a laptop and a Drive read the same values (agentd/src/settings.ts).
 //
-// Until CA-10 the shared key stays as the fallback (config.runKeyFallback, OUTFITTER_RUN_KEY_FALLBACK):
-// a mint that fails, or a re-sent spec whose first key may still be in use, gets the shared key
+// The shared key can stay as a fallback (config.runKeyFallback, OUTFITTER_RUN_KEY_FALLBACK; on when
+// unset, off in production since CA-10, #399: deploy/config.env sets 0): a mint that fails, or a re-sent spec whose first key may still be in use, gets the shared key
 // instead of failing the run. With the fallback off a failed mint is a transient run.spec failure
 // (agentd retries the connection), and a re-sent spec whose first key may be in use gets an
 // additional run key (`outfitter-run-<runId>-2`, ...) while the first stays live until the run ends.

@@ -55,13 +55,28 @@ export interface SettingDecl {
 }
 
 /** Bumped whenever a key is added or retired (§3.6). */
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 4;
+
+/** Personal subscription workers (docs/specs/subscriptions.md §2). Also the secret-store vendors. */
+export const SUBSCRIPTION_VENDORS = ["claude", "grok", "codex", "gemini"] as const;
+export type SubscriptionVendor = (typeof SUBSCRIPTION_VENDORS)[number];
 
 const PERSONAL = ["fleet", "user", "profile", "device", "local"] as const;
 
 /** Router key limits (#389 follow-up, §5.2): what api/central/litellm-keys.ts mints device and run
  * keys with, read from the fleet level at mint time. Operators only: the fleet level, locked. */
 const ROUTER_LIMIT = { secret: false, levels: ["fleet"], override: "none", since: 1 } as const;
+
+/** #424's Sentry signal switches: telemetry.sentry.enabled's shape (fleet on, local opt-out). */
+const SENTRY_SIGNAL = { type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, since: 2 } as const;
+
+/** #440's curated OpenRouter list: comma-separated model ids, one add and one remove key per level
+ * so the levels combine instead of the lowest level replacing the list. Kernal applies them from
+ * the fleet's adds down to this machine's, the nearer level winning; a fleet removal always wins. */
+const OPENROUTER_LIST = { type: "string", secret: false, since: 3 } as const;
+
+/** Subscription mode and prefer order. Not fleet: an operator cannot turn a person's subscription on. */
+const SUBSCRIPTION = { secret: false, levels: ["user", "profile", "device", "local"] as const, override: "any" as const, since: 4 };
 
 /** The v1 keys (spec §3.2). */
 export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
@@ -262,6 +277,57 @@ export const SETTINGS_SCHEMA: readonly SettingDecl[] = [
     since: 1,
     description: "Fraction of traces kept.",
   },
+  // #424: the other Sentry signals. Stored in the fleet document's `telemetry.sentry` with the
+  // three keys above (fleet-settings.ts), and set at the fleet level only while Sentry is on
+  // (settings-resolver.ts fleetLevelValues), so all of them read off while it is off. The switches
+  // follow telemetry.sentry.enabled's rule: only the fleet turns one on, a machine may turn it off.
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.logs",
+    description: "Send server logs (Outfitter api/link and Drives) to Sentry. Kernal laptops send none.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.metrics",
+    description: "Send counters and distributions (logins, router keys, runs, tool calls, tokens, spend) to Sentry.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.agentTraces",
+    description: "Send AI agent spans (agent runs, model calls, tool calls) with models, tokens, cost and timing.",
+  },
+  {
+    ...SENTRY_SIGNAL,
+    key: "telemetry.sentry.agentContent",
+    description: "Include prompts, responses and tool inputs and outputs (redacted) in agent spans; needs agentTraces.",
+  },
+  {
+    key: "telemetry.sentry.profilesSampleRate",
+    type: "number",
+    min: 0,
+    max: 1,
+    secret: false,
+    levels: ["fleet"],
+    override: "none",
+    default: 0,
+    since: 2,
+    description: "Fraction of processes or page loads profiled (api/link, Drives, the web app; not Kernal).",
+  },
+  // v3 (#440)
+  { ...OPENROUTER_LIST, key: "openrouter.models.fleetAdd", levels: ["fleet"], override: "none", description: "OpenRouter models offered to everyone on top of Kernal's curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.fleetRemove", levels: ["fleet"], override: "none", description: "OpenRouter models hidden from everyone, comma-separated; nobody can add them back." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.add", levels: ["user"], override: "any", description: "OpenRouter models you added to your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.remove", levels: ["user"], override: "any", description: "OpenRouter models you removed from your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.profileAdd", levels: ["profile"], override: "any", description: "OpenRouter models this profile adds to your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.profileRemove", levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.localAdd", levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list, comma-separated." },
+  { ...OPENROUTER_LIST, key: "openrouter.models.localRemove", levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list, comma-separated." },
+  // v4 (docs/specs/subscriptions.md §2)
+  { ...SUBSCRIPTION, key: "subscriptions.claude", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Claude subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.grok", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Grok subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.codex", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Codex subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.gemini", type: "enum", values: ["off", "sandboxed", "full"], default: "off", description: "How Kernal spends this person's Antigravity subscription: off, sandboxed, or full." },
+  { ...SUBSCRIPTION, key: "subscriptions.prefer", type: "string", default: SUBSCRIPTION_VENDORS.join(","), description: "Subscription vendors to try when a plan window is spent, comma-separated, no spaces. A subset is allowed." },
 ];
 
 export function settingDecl(key: string): SettingDecl | undefined {
@@ -281,6 +347,17 @@ export const MAX_PROFILES = 20;
 
 const MAX_STRING_LENGTH = 1024;
 const MAX_URL_LENGTH = 2048;
+
+/** `subscriptions.prefer`: comma-separated unique vendor ids, no spaces. A subset is valid; empty is not. */
+function isSubscriptionPrefer(value: string): boolean {
+  const ids = value.split(",");
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!(SUBSCRIPTION_VENDORS as readonly string[]).includes(id) || seen.has(id)) return false;
+    seen.add(id);
+  }
+  return true;
+}
 
 /** Options for coerceSettingValue and parseValueWrite. `allowHttp` (dev mode only) also accepts
  * http:// URLs; otherwise a `url` must be https, so a Kernal never sends its router key in clear. */
@@ -306,7 +383,10 @@ export function coerceSettingValue(decl: SettingDecl, value: unknown, opts: Coer
     case "string": {
       if (typeof value !== "string") return undefined;
       const v = value.trim();
-      return v && v.length <= MAX_STRING_LENGTH && !/[\u0000-\u001f\u007f]/.test(v) ? v : undefined;
+      if (!v || v.length > MAX_STRING_LENGTH || /[\u0000-\u001f\u007f]/.test(v)) return undefined;
+      // Other string keys stay "any non-empty trimmed string". Only prefer has a shape.
+      if (decl.key === "subscriptions.prefer" && !isSubscriptionPrefer(v)) return undefined;
+      return v;
     }
     case "url": {
       if (typeof value !== "string") return undefined;

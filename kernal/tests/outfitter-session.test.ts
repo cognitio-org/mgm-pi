@@ -1,8 +1,8 @@
 /**
  * Kernal's Outfitter login (#391 CA-2, outfitter/docs/specs/central-auth.md §2): the device-code
  * flow, the index and secret storage, refresh with its cross-process lock, logout, the keychain
- * backends (with a fake `security`/`secret-tool`), and outfitter-env.ts's session-or-Dongle
- * credentials. No network: every request goes to a scripted fake fetch.
+ * backends (with a fake `security`/`secret-tool`), and outfitter-env.ts's session credentials (Dongles
+ * are retired, #399). No network: every request goes to a scripted fake fetch.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -436,7 +436,7 @@ describe("keychain backends", () => {
   });
 });
 
-describe("outfitter-env: session first, the Dongle as a deprecated fallback", () => {
+describe("outfitter-env: the session only; Dongles are retired", () => {
   async function home() {
     const h = mkdtempSync(join(tmpdir(), "kernal-home-"));
     const dir = join(h, ".kernal", "auth");
@@ -445,7 +445,7 @@ describe("outfitter-env: session first, the Dongle as a deprecated fallback", ()
     return h;
   }
 
-  test("signed in to OUTFITTER_API: the session, even with a Dongle set", async () => {
+  test("signed in to OUTFITTER_API: the session, even with a leftover Dongle set", async () => {
     const HOME = await home();
     const env = { HOME, KERNAL_AUTH_BACKEND: "file", OUTFITTER_API: API, OUTFITTER_TOKEN: "outf_old" };
     const creds = outfitterCredentials(env);
@@ -453,11 +453,11 @@ describe("outfitter-env: session first, the Dongle as a deprecated fallback", ()
     assert.equal(await outfitterBearer(creds), "kda_1");
   });
 
-  test("a login for another api is not used; the Dongle is", async () => {
+  test("a login for another api is not used, and neither is a Dongle", async () => {
     const HOME = await home();
     const creds = outfitterCredentials({ HOME, KERNAL_AUTH_BACKEND: "file", OUTFITTER_API: "https://other.test", OUTFITTER_TOKEN: "outf_x" });
-    assert.deepEqual(creds, { api: "https://other.test", token: "outf_x", source: "dongle" });
-    assert.equal(await outfitterBearer(creds), "outf_x");
+    assert.deepEqual(creds, { api: "https://other.test", token: undefined });
+    assert.equal(await outfitterBearer(creds), undefined);
   });
 
   test("an explicit env without HOME or KERNAL_AUTH_DIR never looks at this machine's login", () => {
@@ -577,15 +577,15 @@ describe("review fixes: a backend switch on rewrite, the 401 retry, the browser 
     assert.equal(still.status, 401);
     assert.deepEqual(once, ["kda_9"], "no newer token: one request, no retry");
 
-    const dongle: (string | undefined)[] = [];
+    const plain: (string | undefined)[] = [];
     await sendWithBearer(
-      (r) => outfitterBearer({ api: API, token: "outf_x", source: "dongle" }, r),
+      (r) => outfitterBearer({ api: API, token: "outf_x" }, r),
       async (tok) => {
-        dongle.push(tok);
+        plain.push(tok);
         return new Response("", { status: 401 });
       },
     );
-    assert.deepEqual(dongle, ["outf_x"], "a Dongle is never retried");
+    assert.deepEqual(plain, ["outf_x"], "a token without a session is never retried");
   });
 
   test("the consumers retry once after a 401: admin transport, fleet settings",async () => {

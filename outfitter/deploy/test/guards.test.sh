@@ -19,7 +19,7 @@ exit 0
 SH
 chmod +x "${WORK}/bin/gcloud"
 export PATH="${WORK}/bin:${PATH}"
-unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN
+unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN LITELLM_BASE_URL
 
 git init -q --bare "${WORK}/origin.git"
 git clone -q "${WORK}/origin.git" "${WORK}/repo" 2>/dev/null
@@ -73,6 +73,13 @@ git -C "${REPO}" checkout -q main
 check "production runs an older commit" ok "regression_guard img:${FIRST}"
 check "production tag isn't a commit here" ok "regression_guard img:1690000000"
 check "nothing deployed yet" ok "regression_guard ''"
+# The retired Augment proxy must not ride into a deploy from a laptop .env.
+retired="$(cd "${REPO}" && LITELLM_BASE_URL=https://litellm.augment-code.support/v1 bash -c 'source outfitter/deploy/env.sh' 2>&1)" && got=ok || got=refuse
+if [[ "${got}" == "refuse" && "${retired}" == *litellm.augment-code.support* ]]; then
+  pass=$((pass + 1)); echo "ok   retired router host is refused"
+else
+  fail=$((fail + 1)); echo "FAIL retired router host is refused: got ${got}: ${retired}"
+fi
 
 echo "${pass} passed, ${fail} failed"
 [[ "${fail}" -eq 0 ]]

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Kernal</title>
+<meta name="description" content="How Kernal and Outfitter collect, use and protect personal data.">
+<meta name="theme-color" content="#302870" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f1ebdd" media="(prefers-color-scheme: light)">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<script>
+  // Apply a saved theme before first paint. Storage can be missing or blocked; the OS preference
+  // is the fallback either way.
+  try {
+    var t = localStorage.getItem("kernalTheme");
+    if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<div class="border">
+  <main class="screen">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Kernal home">
+        <svg class="mark" viewBox="0 0 16 16" width="28" height="28" shape-rendering="crispEdges" aria-hidden="true">
+          <g fill="currentColor">
+            <rect x="5" y="0" width="2" height="5"/><rect x="9" y="0" width="2" height="5"/>
+            <rect x="4" y="3" width="8" height="2"/><rect x="3" y="4" width="10" height="11"/>
+          </g>
+          <rect x="7" y="6" width="2" height="2" class="cut"/>
+          <rect x="5" y="9" width="6" height="5" class="cut" opacity="0.55"/>
+          <rect class="cursor-px" x="12" y="12" width="2" height="3"/>
+        </svg>
+        <span class="wordmark">KERNAL</span>
+      </a>
+    </header>
+    <article class="legal">
+
+<h1>Privacy Policy</h1>
+<p class="meta">Last updated 5 October 2026</p>
+
+<div class="summary">
+  <p><strong>In short:</strong> we collect what we need to run Kernal and Outfitter for invited people:
+  your Google email, what you and your agents do in Outfitter, and the keys you choose to store. We don't
+  sell personal data, don't run advertising or analytics trackers, and send data to other companies only
+  to provide the service (the cloud, the database and the AI models your agents use).</p>
+</div>
+
+<h2>1. Who we are</h2>
+<p>Kernal and Outfitter (together, “the Service”) are run by Cognitio Flow Ltd, 59624 Sunflower Drive, Yucca Valley, California 92284, USA (“we”, “us”). We are the
+controller of the personal data described here. Questions and requests: <a href="mailto:mgm@mgms.eu">mgm@mgms.eu</a>.</p>
+
+<h2>2. What this policy covers</h2>
+<ul>
+  <li>the website <strong>kernal.one</strong>;</li>
+  <li><strong>Outfitter</strong>, the web app at app.kernal.one and its API (link.kernal.one), including agent
+    sandboxes (“Drives”) and preview links on kernal.run;</li>
+  <li><strong>Kernal</strong>, the coding agent you run on your own computer, where it connects to our services.</li>
+</ul>
+<p>Outfitter is currently available by invitation only.</p>
+
+<h2>3. What we collect</h2>
+<h3>Account and sign-in</h3>
+<ul>
+  <li>Your <strong>email address</strong>, from Google sign-in. We don't receive your Google password and we don't
+    store your Google account ID.</li>
+  <li>When you sign Kernal in on a computer: a <strong>device record</strong> (the device's name and platform, and
+    the Kernal version). Device and API tokens are stored only as one-way hashes; you can see and revoke them.</li>
+  <li>Optional profile details an administrator may add for commit attribution: display name, GitHub username and
+    GitHub no-reply email.</li>
+  <li>Your settings and named profiles (for example your default model or voice preferences).</li>
+</ul>
+<h3>What you and your agents do</h3>
+<ul>
+  <li><strong>Agent sessions:</strong> your prompts, the agents' replies, tool calls and their results, files and
+    code the agents read or write in their sandboxes, messages between agents, and browser captures you request.
+    This can include anything you put in your repositories or prompts, so please don't paste data you aren't
+    allowed to share.</li>
+  <li><strong>Search index:</strong> sessions are split into chunks for search. Secret-looking strings are redacted
+    before indexing.</li>
+  <li><strong>Agent memory</strong> (where enabled): facts the agents keep between sessions. On a laptop, memory
+    recording is off unless you turn it on.</li>
+  <li><strong>Repository access:</strong> agents work in GitHub repositories you connect, through a GitHub App or a
+    token you provide.</li>
+</ul>
+<h3>Keys and secrets you give us</h3>
+<ul>
+  <li>Personal provider API keys (for example an OpenRouter key) you choose to save to your account. They are
+    stored in Google Secret Manager, delivered only to your own signed-in devices, and not shown again in the web app.</li>
+  <li>Keys kept only in Kernal on your computer (its <code>.env</code> file) stay on your computer.</li>
+</ul>
+<h3>Usage and cost</h3>
+<ul>
+  <li>AI model usage and cost per person and per agent: model names, token counts, spend and budgets. Your
+    router key is linked to your email so spend can be attributed to you.</li>
+  <li>Voice usage totals, under a pseudonymous ID derived from your email.</li>
+</ul>
+<h3>Voice</h3>
+<p>If you use voice input, audio streams from your browser or computer directly to our speech-to-text
+provider; we don't store the audio.</p>
+<h3>Technical data</h3>
+<ul>
+  <li>Server logs kept by our cloud provider (for example request times, paths and IP addresses) for security
+    and operations.</li>
+  <li>Error reports, only if error reporting is switched on (it is off by default). Request bodies and headers
+    are removed, and Kernal strips secrets from errors before sending. If an administrator turns on agent
+    tracing, prompts and outputs may be included in redacted form. On the web app, an error may include a
+    replay of the page session with text and inputs masked.</li>
+</ul>
+
+<h2>4. Cookies and local storage</h2>
+<p>We use no advertising or analytics cookies.</p>
+<ul>
+  <li><strong>Google sign-in cookies</strong>, set by Google's Identity-Aware Proxy, keep you signed in to the
+    web app. They are strictly necessary.</li>
+  <li><strong><code>kernal_welcome</code></strong>: your first name, so kernal.one can greet you (180 days).</li>
+  <li><strong>Local storage</strong> in your browser for preferences: theme, sound, the BASIC programs you save on
+    kernal.one, tour progress and similar. These never leave your browser.</li>
+</ul>
+
+<h2>5. How we use it, and our legal bases</h2>
+<div class="table-wrap"><table>
+  <tr><th>Purpose</th><th>Legal basis (GDPR)</th></tr>
+  <tr><td>Signing you in, running your agents and sessions, storing your settings and keys</td><td>Performing our contract with you</td></tr>
+  <tr><td>Tracking and limiting AI spend per person and agent</td><td>Contract; our legitimate interest in controlling costs</td></tr>
+  <tr><td>Security, abuse prevention, debugging and error reports</td><td>Legitimate interest in a safe, working Service</td></tr>
+  <tr><td>Legal obligations, and responding to lawful requests</td><td>Legal obligation</td></tr>
+</table></div>
+<p>We don't use your data for advertising, we don't sell or rent it, and we don't use your content to train
+our own models.</p>
+
+<h2>6. Who we share it with</h2>
+<p>Only the service providers below, acting for us under their data processing terms, and only for the purposes
+above:</p>
+<div class="table-wrap"><table>
+  <tr><th>Provider</th><th>What for</th><th>Location</th></tr>
+  <tr><td>Google Cloud</td><td>Sign-in (Identity-Aware Proxy), hosting (Cloud Run, Kubernetes sandboxes), secrets, task queues, logs</td><td>United States (us-central1)</td></tr>
+  <tr><td>MongoDB Atlas</td><td>Database, agent memory, search embeddings</td><td>United States (Google Cloud, Iowa)</td></tr>
+  <tr><td>AI model providers, through our model router</td><td>Prompts and context are sent to the model that answers them (for example Anthropic, Google or OpenAI models)</td><td>Mainly United States</td></tr>
+  <tr><td>OpenRouter</td><td>Only if you add your own OpenRouter key: prompts to the models you pick</td><td>United States</td></tr>
+  <tr><td>GitHub</td><td>Access to the repositories you connect; commits made by agents</td><td>United States</td></tr>
+  <tr><td>Deepgram</td><td>Speech-to-text, only when you use voice</td><td>United States</td></tr>
+  <tr><td>ngrok</td><td>Preview links to apps running in a sandbox (kernal.run)</td><td>United States</td></tr>
+  <tr><td>Sentry</td><td>Error reports, only when switched on</td><td>United States</td></tr>
+</table></div>
+<p>AI providers process prompts under their own API terms, which generally don't allow training on API data.
+We may also disclose data if the law requires it, or to protect the rights and safety of our users or others.
+If the Service changes hands, data would transfer under this policy.</p>
+
+<h2>7. International transfers</h2>
+<p>We host in the United States. Where data leaves the European Economic Area or the UK, we rely on the
+providers' Standard Contractual Clauses or the EU–US Data Privacy Framework.</p>
+
+<h2>8. How long we keep it</h2>
+<ul>
+  <li><strong>Sessions</strong> are kept until you delete them. Deleting (“formatting”) a session erases its
+    transcript, runs, search index, memory sessions and browser data. A small record that it was deleted, and by
+    whom, remains.</li>
+  <li><strong>Messages between agents and short-lived approvals</strong> expire automatically.</li>
+  <li><strong>Your account, settings, keys and usage records</strong> are kept while you have access. When access
+    ends, or when you ask, we delete or anonymise them within 30 days, except what we must keep by law.</li>
+  <li><strong>Logs and error reports</strong> are kept for the providers' standard periods (typically 30 to 90 days).</li>
+</ul>
+
+<h2>9. Security</h2>
+<p>Traffic is encrypted (HTTPS only). The web app sits behind Google sign-in with an allow-list. Secrets live
+in Secret Manager and reach sandboxes over authenticated connections, never in plain configuration. Tokens are
+stored hashed, and each agent sandbox is isolated. No system is perfectly secure; we will tell you without
+undue delay if a breach affects your data.</p>
+
+<h2>10. Your rights</h2>
+<p>Depending on where you live (for example under the GDPR or UK GDPR), you can ask to access, correct, delete,
+restrict or port your data, and object to processing based on legitimate interests. Write to <a href="mailto:mgm@mgms.eu">mgm@mgms.eu</a>; we
+answer within one month. You can also delete sessions and revoke devices and tokens yourself in the web app. If
+you are in the EEA or UK, you may complain to your data protection authority.</p>
+
+<h2>11. California privacy rights</h2>
+<p>If you live in California, the California Consumer Privacy Act (as amended by the CPRA) gives you these rights:</p>
+<ul>
+  <li><strong>Know and access:</strong> the categories and specific pieces of personal information we have about you,
+    where it came from, why we use it and who we disclose it to.</li>
+  <li><strong>Delete</strong> personal information we collected from you, and <strong>correct</strong> inaccurate
+    information.</li>
+  <li><strong>Opt out of sale or sharing.</strong> We don't sell your personal information or share it for
+    cross-context behavioural advertising, and haven't in the past 12 months.</li>
+  <li><strong>Limit use of sensitive personal information.</strong> We only use it, for example account
+    credentials, to provide the Service.</li>
+  <li><strong>Non-discrimination:</strong> we won't treat you differently for using these rights.</li>
+</ul>
+<p>In the past 12 months we collected these categories, for the purposes in section 5, from you, your devices
+and the services you connect: identifiers (email, device and account IDs); customer records (name, GitHub
+details); internet and network activity (usage, logs); professional information in the content you give the
+Service; account credentials (stored hashed or in Secret Manager); and audio, which is streamed for
+transcription and not kept. We disclosed them to the service providers in section 6, for business purposes
+only.</p>
+<p>To make a request, email <a href="mailto:mgm@mgms.eu">mgm@mgms.eu</a>. We'll verify it by matching the request to your signed-in account email,
+and answer within 45 days. You can use an authorised agent with your written permission.</p>
+<p><strong>Do Not Track.</strong> We don't track you across other sites, and we don't use third-party trackers,
+so we treat every visit the same whether or not your browser sends a Do Not Track or Global Privacy Control
+signal.</p>
+
+<h2>12. Children</h2>
+<p>The Service is for professionals and isn't directed at anyone under 16. We don't knowingly collect their data.</p>
+
+<h2>13. Changes</h2>
+<p>We'll update this page when our practices change, and tell signed-in users about material changes before they
+take effect. If we add new kinds of data, for example financial data for a banking integration, we'll update
+this policy and ask for consent where required before collecting it.</p>
+
+<h2>14. Contact</h2>
+<p>Cognitio Flow Ltd, 59624 Sunflower Drive, Yucca Valley, California 92284, USA. Email: <a href="mailto:mgm@mgms.eu">mgm@mgms.eu</a>.</p>
+
+    </article>
+    <footer class="foot">
+      <a href="/">KERNAL.ONE</a>
+      <a href="/privacy/">PRIVACY</a>
+      <a href="/terms/">TERMS</a>
+      <span class="ok">READY.</span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

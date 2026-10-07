@@ -163,6 +163,8 @@ export function accountErrorText(err: unknown, fallback: string): string {
       return "One of the settings can't be saved here.";
     case "unknown_provider":
       return "Unknown provider.";
+    case "version_conflict":
+      return "That login changed somewhere else. Reload and try again.";
     case "if_match_required":
       return "Reload and try again.";
     default:

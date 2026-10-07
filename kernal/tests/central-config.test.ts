@@ -11,8 +11,8 @@ import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, activeProfile, combine, configCachePath, describeSource,
-  displayValue, getValue, isCentralSource, layerCentralEnv, localOverridesPath, parseConfigResponse, providerKey,
+  KNOWN_SCHEMA_VERSION, KNOWN_SETTINGS, _resetCentralConfig, _setCentralConfigDeps, activeProfile, coerce, combine, configCachePath, describeSource,
+  displayValue, getValue, isCentralSource, layerCentralEnv, localOverridesPath, parseConfigResponse, providerKey, subscriptionPrefer,
   refreshConfig, refreshProviderKeys, reloadConfig, remintRouterKeyIfDue, resolve, setLocalOverride, startBackgroundRefresh,
   webOrigin, MAX_CACHE_AGE_MS, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
@@ -60,6 +60,8 @@ let signedIn: boolean;
 let shell: NodeJS.ProcessEnv;
 let dotenv: Record<string, string>;
 let settings: Record<string, unknown>;
+let shipped: Record<string, unknown>;
+let voice: Record<string, unknown>;
 let now: number;
 
 function setup(f?: typeof fetch) {
@@ -74,6 +76,8 @@ function setup(f?: typeof fetch) {
     env: () => shell,
     dotenv: () => dotenv,
     settings: () => settings,
+    shippedSettings: () => shipped,
+    voiceSettings: () => voice,
     now: () => now,
     warn: (line) => warnings.push(line),
     ...(f ? { fetch: f } : { fetch: (async () => { throw new Error("no network in this test"); }) as typeof fetch }),
@@ -97,6 +101,8 @@ beforeEach(() => {
   shell = { OUTFITTER_API: API };
   dotenv = {};
   settings = {};
+  shipped = {};
+  voice = {};
   now = Date.parse("2026-10-04T12:00:00.000Z");
   setup();
 });
@@ -121,20 +127,37 @@ describe("signed out", () => {
     assert.equal(r.values["model.default"], undefined);
   });
 
-  test("shell beats .env beats this machine's overrides; .env is not deprecated while signed out", () => {
-    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "compaction.summaryModel": "from-file" } }));
+  test("shell beats .env beats this machine's overrides for a key that isn't personal", () => {
+    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "router.baseUrl": "https://file.test/v1" } }));
     setup();
-    assert.equal(resolve().values["compaction.summaryModel"].source, "local");
+    assert.equal(resolve().values["router.baseUrl"].source, "local");
+    dotenv = { LITELLM_BASE_URL: "https://dotenv.test/v1" };
+    setup();
+    assert.deepEqual(resolve().values["router.baseUrl"], { value: "https://dotenv.test/v1", source: "dotenv", sourceName: "LITELLM_BASE_URL", override: "none", locked: false });
+    // bin/kernal exports .env into the process: the same value in the shell is still .env's.
+    shell = { LITELLM_BASE_URL: "https://dotenv.test/v1" };
+    setup();
+    assert.equal(resolve().values["router.baseUrl"].source, "dotenv");
+    shell = { LITELLM_BASE_URL: "https://shell.test/v1" };
+    setup();
+    assert.deepEqual(resolve().values["router.baseUrl"], { value: "https://shell.test/v1", source: "env", sourceName: "LITELLM_BASE_URL", override: "none", locked: false });
+    assert.deepEqual(warnings, []);
+  });
+
+  test("a personal key (#437): this machine beats the legacy shell, which beats legacy .env; no deprecation signed out", () => {
     dotenv = { KERNAL_SUMMARY_MODEL: "from-dotenv" };
     setup();
-    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-dotenv", source: "dotenv", sourceName: "KERNAL_SUMMARY_MODEL", override: "any", locked: false });
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-dotenv", source: "legacy", sourceName: "KERNAL_SUMMARY_MODEL in .env", override: "any", locked: false });
     // bin/kernal exports .env into the process: the same value in the shell is still .env's.
     shell = { KERNAL_SUMMARY_MODEL: "from-dotenv" };
     setup();
-    assert.equal(resolve().values["compaction.summaryModel"].source, "dotenv");
+    assert.equal(resolve().values["compaction.summaryModel"].sourceName, "KERNAL_SUMMARY_MODEL in .env");
     shell = { KERNAL_SUMMARY_MODEL: "from-shell" };
     setup();
-    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-shell", source: "env", sourceName: "KERNAL_SUMMARY_MODEL", override: "any", locked: false });
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-shell", source: "legacy", sourceName: "KERNAL_SUMMARY_MODEL in the shell", override: "any", locked: false });
+    writeFileSync(localOverridesPath(), JSON.stringify({ version: 1, values: { "compaction.summaryModel": "from-file" } }));
+    setup();
+    assert.deepEqual(resolve().values["compaction.summaryModel"], { value: "from-file", source: "local", override: "any", locked: false });
     assert.deepEqual(warnings, []);
   });
 
@@ -388,11 +411,20 @@ describe("override rules", () => {
     assert.equal(combine(decl("telemetry.sentry.dsn"), undefined, undefined, [L("https://k@x.test/1", "local")]), undefined);
   });
 
-  test("kernal.sentry: false in settings.json is the local opt-out", () => {
+  test("the legacy kernal.sentry: false in settings.json is still a local opt-out", () => {
     writeCacheFile(response({ "telemetry.sentry.enabled": { value: true, source: "fleet" } }));
     settings = { kernal: { sentry: false } };
     setup();
     assert.equal(getValue("telemetry.sentry.enabled"), false);
+  });
+
+  test("#424: the legacy kernal.sentryAgentTraces: false (and so on) still opt those signals out; a local true can't turn one on", () => {
+    writeCacheFile(response({ "telemetry.sentry.agentTraces": { value: true, source: "fleet" }, "telemetry.sentry.metrics": { value: true, source: "fleet" } }));
+    settings = { kernal: { sentryAgentTraces: false, sentryAgentContent: true } };
+    setup();
+    assert.equal(getValue("telemetry.sentry.agentTraces"), false);
+    assert.equal(getValue("telemetry.sentry.metrics"), true);
+    assert.equal(getValue("telemetry.sentry.agentContent"), false, "the default, whatever settings.json says");
   });
 });
 
@@ -549,5 +581,56 @@ describe("sentry from central settings", () => {
     assert.deepEqual(on, { telemetry: { sentry: { enabled: true, dsn: "https://k@o0.ingest.sentry.io/1", tracesSampleRate: 0.1 } } });
     assert.deepEqual(fleetFromConfig({ "telemetry.sentry.enabled": { value: true, source: "fleet", override: "opt-out", locked: false } }), { telemetry: { sentry: { enabled: false } } });
     assert.deepEqual(fleetFromConfig({}), { telemetry: { sentry: { enabled: false } } });
+  });
+});
+
+describe("subscription settings (schema 4)", () => {
+  test("five account-first keys, not fleet, session, with the spec defaults", () => {
+    assert.equal(KNOWN_SCHEMA_VERSION, 4);
+    const keys = ["subscriptions.claude", "subscriptions.grok", "subscriptions.codex", "subscriptions.gemini", "subscriptions.prefer"];
+    for (const key of keys) {
+      const d = decl(key);
+      assert.equal(d.accountFirst, true, key);
+      assert.equal(d.takesEffect, "session", key);
+      assert.equal(d.secret, false, key);
+      assert.equal(d.override, "any", key);
+      assert.deepEqual([...d.levels], ["user", "profile", "device", "local"], key);
+      assert.equal(d.levels.includes("fleet"), false, key);
+    }
+    for (const key of keys.slice(0, 4)) {
+      assert.equal(decl(key).type, "enum");
+      assert.deepEqual(decl(key).values, ["off", "sandboxed", "full"]);
+      assert.equal(decl(key).default, "off");
+    }
+    assert.equal(decl("subscriptions.prefer").default, "claude,grok,codex,gemini");
+    assert.equal(getValue("subscriptions.claude"), "off");
+    assert.equal(getValue("subscriptions.prefer"), "claude,grok,codex,gemini");
+  });
+
+  test("prefer accepts a subset in order and rejects spaces, duplicates, empty, and unknown ids", () => {
+    const d = decl("subscriptions.prefer");
+    assert.equal(coerce(d, "grok,codex"), "grok,codex");
+    assert.equal(coerce(d, "gemini"), "gemini");
+    assert.equal(subscriptionPrefer("claude,grok,codex,gemini"), "claude,grok,codex,gemini");
+    for (const bad of ["", "claude,grok,codex,gemini,claude", "claude, claude", "claude,grok ", "all", "claude,grok,codex,gemini,", "Claude"]) {
+      assert.equal(coerce(d, bad), undefined, bad);
+    }
+    assert.throws(() => setLocalOverride("subscriptions.prefer", "claude,claude"), /invalid value/);
+    setLocalOverride("subscriptions.prefer", "codex,claude");
+    assert.equal(getValue("subscriptions.prefer"), "codex,claude");
+    assert.equal(resolve().values["subscriptions.prefer"].source, "local");
+  });
+
+  test("a bad prefer from the server is dropped; an account value beats the default", () => {
+    writeCacheFile(response({
+      "subscriptions.prefer": { value: "claude,claude", source: "user" },
+      "subscriptions.claude": { value: "full", source: "user" },
+      "subscriptions.grok": { value: "sometimes", source: "profile" },
+    }));
+    setup();
+    assert.equal(getValue("subscriptions.prefer"), "claude,grok,codex,gemini");
+    assert.equal(resolve().values["subscriptions.prefer"].source, "default");
+    assert.equal(getValue("subscriptions.claude"), "full");
+    assert.equal(getValue("subscriptions.grok"), "off", "an unknown mode is not a value");
   });
 });

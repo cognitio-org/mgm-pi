@@ -79,6 +79,16 @@ deploy_fail() {
   exit 1
 }
 
+# litellm.augment-code.support is the retired Augment work proxy. config.env keeps an
+# already-exported LITELLM_BASE_URL, and a laptop .env used to export that host, so one
+# ./release.sh pointed production at a host that answers a Google HTML 500. The router is
+# https://router.kernal.one/v1. Refuse the retired host before any deploy reads the value.
+case "${LITELLM_BASE_URL}" in
+  *litellm.augment-code.support*)
+    deploy_fail "LITELLM_BASE_URL=${LITELLM_BASE_URL} is the retired Augment proxy. Unset it; deploys use https://router.kernal.one/v1."
+    ;;
+esac
+
 # deploy_guard <path>... -- paths are relative to the repo root: the build context the caller uploads.
 deploy_guard() {
   if [[ "${ALLOW_OFF_MAIN:-}" == 1 ]]; then
@@ -193,6 +203,25 @@ build_submit() {
   gcloud builds submit "${src}" --project="${PROJECT}" --config="${config}" \
     --gcs-source-staging-dir="gs://${PROJECT}_cloudbuild/source" \
     ${sa:+--service-account="${sa}"} "$@"
+}
+
+# build_api_image <source dir (outfitter/)> <image> -- outfitter-api's image (service.sh and
+# build-api-image.sh). With the secret sentry-release-token (sentry-token.sh), the web build uploads
+# its source maps to Sentry (cloudbuild-api-sentry.yaml, #423); without it, the same build without
+# them (cloudbuild-api.yaml), because Cloud Build fails a build whose availableSecrets name a
+# missing secret. The deployer can describe it: roles/secretmanager.viewer (ci-setup.sh) is
+# project-wide metadata, not the secret's value.
+SENTRY_TOKEN_SECRET="sentry-release-token"
+build_api_image() {
+  local src="$1" image="$2"
+  if gcloud_exists secrets describe "${SENTRY_TOKEN_SECRET}" --project="${PROJECT}"; then
+    echo "   Sentry: uploading web source maps to ${SENTRY_ORG}/${SENTRY_PROJECT} (secret ${SENTRY_TOKEN_SECRET})"
+    build_submit "${src}" "${src}/deploy/cloudbuild-api-sentry.yaml" \
+      --substitutions="_IMAGE=${image},_SENTRY_ORG=${SENTRY_ORG},_SENTRY_PROJECT=${SENTRY_PROJECT}" --timeout=20m
+  else
+    echo "   note: secret ${SENTRY_TOKEN_SECRET} does not exist yet; building without web source maps" >&2
+    build_submit "${src}" "${src}/deploy/cloudbuild-api.yaml" --substitutions="_IMAGE=${image}" --timeout=20m
+  fi
 }
 
 # web_iap_enabled -- whether outfitter-api still has IAP switched on (release.sh's smoke check; a

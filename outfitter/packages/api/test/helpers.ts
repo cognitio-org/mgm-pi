@@ -5,10 +5,12 @@ import assert from "node:assert/strict";
 import type { NgrokApi } from "../src/ngrok-api.ts";
 import { FakeAgentEngine } from "./fake-agent-engine.ts";
 import { createAgentEngine } from "../src/agentengine/index.ts";
-import { hashToken } from "../src/tokens.ts";
+import { randomUUID } from "node:crypto";
+import { generateToken, hashToken, tokenPrefix, TOKEN_TTL_MS } from "../src/tokens.ts";
+import { publicToken } from "../src/routes/tokens.ts";
 import { loadConfig, type SandboxProviderName } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
-import type { Store, Guru } from "../src/store/types.ts";
+import type { Store, Guru, ApiToken } from "../src/store/types.ts";
 import { NoopProvider } from "../src/providers/noop.ts";
 import { AppSecretCache, MemorySecretsBroker, MemorySecretAdmin, type SecretsBroker, type SecretAdmin } from "../src/secrets.ts";
 import type { GithubBroker } from "../src/github-broker.ts";
@@ -156,4 +158,27 @@ export async function seedGuru(store: Store, overrides: Partial<Guru> = {}): Pro
   };
   await store.gurus.insert(guru);
   return guru;
+}
+
+/**
+ * #399: POST /api/me/tokens no longer creates Dongles, but existing ones keep authenticating until
+ * they expire or are revoked. Tests that need one insert it into the store, the way it was minted
+ * before the retirement. Returns the same `{ token, record }` shape the route used to answer with.
+ */
+export async function seedDongle(store: Store, ownerEmail: string, name = "laptop", overrides: Partial<ApiToken> = {}) {
+  const token = generateToken();
+  const createdMs = Date.now();
+  const record: ApiToken = {
+    id: randomUUID(),
+    ownerEmail,
+    name,
+    prefix: tokenPrefix(token),
+    hash: hashToken(token),
+    createdAt: new Date(createdMs).toISOString(),
+    expiresAt: new Date(createdMs + TOKEN_TTL_MS).toISOString(),
+    kind: "dongle",
+    ...overrides,
+  };
+  await store.tokens.insert(record);
+  return { token, record: publicToken(record) };
 }

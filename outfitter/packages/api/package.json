@@ -20,6 +20,7 @@
     "@octokit/rest": "^22.0.1",
     "@outfitter/provider-local": "^0.1.0",
     "@sentry/node": "11.2.0",
+    "@sentry/profiling-node": "11.2.0",
     "fastify": "^5.12.5",
     "google-auth-library": "^11.1.0",
     "mongodb": "^7.6.0"

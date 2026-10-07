@@ -24,6 +24,7 @@ import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
+import { floppyModel, tapeThinking } from "./session-model.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
@@ -44,7 +45,8 @@ import {
 import { parseSessionRepo } from "./session-repo.ts";
 import { parseBootTimings, parseStartupPhases, startupLogLine, summarizeStartup, type StartupSummary } from "./startup.ts";
 import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-thought.ts";
-import { sentryOn, type FleetSettingsCache } from "./fleet-settings.ts";
+import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
+import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -280,8 +282,9 @@ export interface RunSpecMessage {
    * no owner on record; agentd then commits as the bot alone. See docs/protocol.md. */
   author?: { name: string; email: string; login?: string };
   /** Fleet settings (fleet-settings.ts): present only while an operator has Sentry on for the
-   * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. */
-  telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } };
+   * fleet. agentd starts Sentry with it (agentd/src/sentry.ts); absent, it sends nothing. #424's
+   * signals (logs, metrics, agentTraces, agentContent, profilesSampleRate) are there only when on. */
+  telemetry?: { sentry: { dsn: string; tracesSampleRate: number; environment: string; release?: string } & Partial<SentrySignals> };
   /** CA-6 (central-auth.md §9): the session owner's resolved settings (their default profile, no
    * device level; central/run-keys.ts runSpecSettings). Absent without an owner, for an A2A
    * session, or when they can't be resolved. agentd applies the keys it knows (settings.ts). */
@@ -1218,10 +1221,12 @@ export class AgentLink {
         throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
       }
     }
-    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
-    // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
-    const wanted = session.modelOverride ?? guru.model;
-    const online = await this.laptopProbe.isOnline();
+    // The floppy's own model (session-model.ts): pinned at creation, then whatever was switched to.
+    // A floppy from before the pin is pinned on its first spec here, from its transcript.
+    const wanted = await floppyModel(this.store, session, guru);
+    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model (`local/...`, or the
+    // `local-qwen-mlx` alias) for the guru's cloud fallback when that model is offline.
+    const online = await this.laptopProbe.isOnlineFor(wanted);
     const resolved = resolveRunModel({
       wanted,
       guruFallbackModel: guru.fallbackModel,
@@ -1363,7 +1368,8 @@ export class AgentLink {
         systemPrompt: guru.systemPrompt,
         appendSystemPrompt: guru.appendSystemPrompt,
         model: resolved.model,
-        thinking: guru.thinking,
+        // A tape's `:level` model suffix is its thinking level; the floppy's model is bare.
+        thinking: tapeThinking(guru),
         tools: guru.tools,
         excludeTools: guru.excludeTools,
         packages: guru.packages,
@@ -1394,6 +1400,7 @@ export class AgentLink {
                 tracesSampleRate: sentry.tracesSampleRate,
                 environment: this.config.devMode ? "development" : "production",
                 ...(this.config.release ? { release: this.config.release } : {}),
+                ...signalsOnWire(sentrySignals(sentry)),
               },
             },
           }
@@ -1937,12 +1944,17 @@ export class AgentLink {
         // reconnects and sends the bye again (the reconnect gets 4409 if the run did stop).
         let stored = false;
         try {
+          // #424: counted only when this bye ends the run; a user's stop (RunManager.stop, whose
+          // SIGTERM this bye may answer) or an earlier copy of this bye already counted it.
+          const before = await this.store.runs.findById(runId);
           await this.store.runs.update(runId, {
             state: reason === "error" ? "failed" : "stopped",
             reason,
             lastSeenAt: now,
             updatedAt: now,
           });
+          // agentd's ByeReason, or "other" for anything an older or newer agentd sends.
+          if (!isTerminal(before?.state)) countRunEnd(reason === "error" ? "failed" : "stopped", ["error", "stop", "idle", "sigterm"].includes(reason) ? `agent_${reason}` : "agent_other");
           // Mail this run was handed but never acked goes back to the queue now rather than after
           // its lease.
           await this.store.mail.releaseRun(runId);

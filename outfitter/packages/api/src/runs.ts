@@ -14,6 +14,20 @@ import type { Store, Run } from "./store/types.ts";
 import type { SandboxProvider } from "@outfitter/provider-local";
 import type { Config } from "./config.ts";
 import { SandboxProviders } from "./providers/registry.ts";
+import { metrics } from "./sentry.ts";
+
+export function isTerminal(state: string | undefined): boolean {
+  return state === "stopped" || state === "failed";
+}
+
+/** #424: a run reaching a terminal state, as Sentry metrics (a no-op while they are off):
+ * `run.finished` (stopped) or `run.failed`, with a fixed `cause`. Callers count only a run's move
+ * into a terminal state (not isTerminal before), so a run that a user's stop and agentd's
+ * answering bye both end is counted once. */
+export function countRunEnd(state: "stopped" | "failed" | undefined, cause: string): void {
+  if (state === "stopped") metrics.count("run.finished", { cause });
+  else if (state === "failed") metrics.count("run.failed", { cause });
+}
 
 const STALE_AFTER_MS = 90_000;
 const RECONCILE_INTERVAL_MS = 60_000;
@@ -235,6 +249,7 @@ export class RunManager {
         lastSeenAt: now,
         updatedAt: new Date().toISOString(),
       });
+      metrics.count("run.started", { provider: this.config.sandboxProvider, ...(typeof warm === "boolean" ? { warm } : {}) });
       // After the update above, not before: runTokenHash must land as soon as possible, since a fast
       // hello that arrives before it is refused 4401 for good. Its own write, not part of that
       // update: agentd may already have said hello (link role, another process) and stamped
@@ -258,6 +273,7 @@ export class RunManager {
         statusDetail: `this run's sandbox failed to start: ${messageForDetail}. Press Play to start a new one.`,
         updatedAt: new Date().toISOString(),
       });
+      countRunEnd("failed", "start");
       throw err;
     }
   }
@@ -280,11 +296,16 @@ export class RunManager {
         // best-effort: the reconciler will clean up an unresponsive sandbox later
       });
     }
-    return this.store.runs.update(runId, {
+    // #424: counted only on the move into a terminal state. Read again after the provider's stop:
+    // agentd answers its SIGTERM with a bye, which may already have ended (and counted) the run.
+    const ended = isTerminal(run.state) || isTerminal((await this.store.runs.findById(runId))?.state);
+    const stopped = await this.store.runs.update(runId, {
       state: "stopped",
       reason,
       updatedAt: new Date().toISOString(),
     });
+    if (!ended) countRunEnd("stopped", "stop");
+    return stopped;
   }
 
   /** Starts the 60s reconciler loop (stale-run failure and stuck-stopping cancellation); returns a
@@ -362,6 +383,7 @@ export class RunManager {
       if (sandboxExit && isCleanExit(sandboxExit)) {
         // agentd ended on its own and only its bye was lost: a stop, not a failure.
         await this.store.runs.update(run.id, { ...exitOutcome(sandboxExit), updatedAt: new Date().toISOString() });
+        countRunEnd("stopped", "sandbox_exit");
         continue;
       }
       await this.store.runs.update(run.id, {
@@ -377,6 +399,7 @@ export class RunManager {
         statusDetail: silentRunDetail({ ...run, sandboxExit }),
         updatedAt: new Date().toISOString(),
       });
+      countRunEnd("failed", "no_heartbeat");
     }
   }
 
@@ -418,7 +441,9 @@ export class RunManager {
     // A bye may have landed while exitInfo was in flight: that run already says how it ended.
     const now = await this.store.runs.findById(runId);
     if (!now || now.state === "stopped" || now.state === "failed" || now.state === "stopping") return true;
-    await this.store.runs.update(runId, { ...exitOutcome(exit, now.sandboxMemLimitMb), updatedAt: new Date().toISOString() });
+    const outcome = exitOutcome(exit, now.sandboxMemLimitMb);
+    await this.store.runs.update(runId, { ...outcome, updatedAt: new Date().toISOString() });
+    countRunEnd(outcome.state as "stopped" | "failed", exit.reason === "OOMKilled" ? "oom" : "sandbox_exit");
     await provider.stop(run.providerHandle).catch(() => {});
     return true;
   }
@@ -446,6 +471,7 @@ export class RunManager {
         reason: "stop grace expired",
         updatedAt: new Date().toISOString(),
       });
+      countRunEnd("stopped", "stop_grace_expired");
     }
   }
 }

@@ -33,15 +33,25 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
    It reads the client secret and the router master key from Secret Manager (never printed), and
    registers the `gcloud` server as `oauth2` authorization code. Settle the config now: editing an
    existing server purges every user's grant, so the script only shows an existing server unless
-   `FORCE_PURGE=1`. If GA-1 added a field for the authorize params, pass it in `EXTRA_FIELDS_JSON`.
+   `FORCE_PURGE=1`. If GA-1 added a field for the authorize params, pass it in `EXTRA_FIELDS_JSON`. `CONFIRM=1` refuses
+   without it (Google issues no refresh token without those params, and adding them later needs
+   `FORCE_PURGE=1`); `NO_REFRESH_OK=1` overrides that on purpose.
 5. **Grant IAM and the deny policy.** `DRY_RUN=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./gcloud-mcp-iam.sh`,
    then the same without `DRY_RUN`. It enables `cloudcli.googleapis.com`, grants
    `roles/mcp.toolUser` to the operators (`OUTFITTER_OPERATORS`, override with `GCLOUD_MCP_SYSOPS`),
    and creates the deny policy `gcloud-mcp-gateway-only`: `mcp.googleapis.com/tools.call` is denied
    to everyone unless `request.auth.oauth.client_id` is the router's client. Writing deny policies
    needs `roles/iam.denyAdmin` on the project (Owner does not include it): grant it to yourself,
-   run, remove it. The policy covers every Google remote MCP server in the project; the follow-on
-   servers below use the same client, so they pass.
+   run, remove it. The policy covers every Google remote MCP server in the project, and it blocks
+   every other caller too: a service account, Application Default Credentials, or another client
+   (Gemini CLI, an MCP Inspector) can no longer call Google remote MCP servers in this project. The
+   follow-on servers below use the same client, so they pass. It is attached to the project only;
+   attaching it to the folder or organization is a follow-on.
+   **First thing to check if every MCP call is denied after this step:** the condition compares
+   `request.auth.oauth.client_id` with the full `<n>-<x>.apps.googleusercontent.com` id, and that
+   value format is unverified against a live call. The policy fails closed and is reversible:
+   `gcloud --configuration=outfitter iam policies delete gcloud-mcp-gateway-only --attachment-point=cloudresourcemanager.googleapis.com/projects/outfitter-509211 --kind=denypolicies`,
+   then rerun the script with the corrected id.
 6. **Test** as a sysop (next section): connect, run `gcloud projects describe outfitter-509211`,
    wait over an hour, run it again (refresh works). Tick #495 and #491 only after that.
 

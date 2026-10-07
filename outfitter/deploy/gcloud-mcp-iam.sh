@@ -123,7 +123,7 @@ done
 
 if [[ "${deny_state}" != same ]]; then
   file="$(mktemp)"
-  trap 'rm -f "${file}"' EXIT
+  register_cleanup "${file}"
   jq -n --argjson r "${RULES}" '{displayName: "Gcloud MCP: gateway OAuth client only (#495)", rules: $r}' >"${file}"
   if [[ "${deny_state}" == create ]]; then
     gcloud iam policies create "${POLICY_ID}" --attachment-point="${ATTACH}" --kind=denypolicies \

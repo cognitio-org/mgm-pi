@@ -52,6 +52,11 @@ EXTRA_FIELDS_JSON="${EXTRA_FIELDS_JSON:-}"
 [[ -n "${EXTRA_FIELDS_JSON}" ]] || EXTRA_FIELDS_JSON='{}'
 
 command -v jq >/dev/null || deploy_fail "jq is required"
+case "${ROUTER_URL}" in
+  https://*) ;;
+  http://127.0.0.1|http://127.0.0.1:*|http://localhost|http://localhost:*|http://\[::1\]|http://\[::1\]:*) ;;
+  *) deploy_fail "ROUTER_URL=${ROUTER_URL} must be https (or loopback): the master key goes to it" ;;
+esac
 jq -e 'type == "object"' <<<"${EXTRA_FIELDS_JSON}" >/dev/null || deploy_fail "EXTRA_FIELDS_JSON must be a JSON object"
 
 if [[ -z "${CLIENT_ID}" ]]; then
@@ -73,6 +78,9 @@ if [[ "${DRY_RUN}" == 1 ]]; then
 fi
 
 [[ "${CONFIRM}" == 1 ]] || deploy_fail "CONFIRM=1 is required: this reads the router master key and writes to the router's admin API"
+if [[ "${EXTRA_FIELDS_JSON}" == '{}' && "${NO_REFRESH_OK:-0}" != 1 ]]; then
+  deploy_fail "EXTRA_FIELDS_JSON is empty: Google issues no refresh token without the GA-1 (#491) authorize params (access_type=offline, prompt=consent), so grants would die after an hour, and adding them later needs FORCE_PURGE=1 (every user signs in again). Set EXTRA_FIELDS_JSON, or NO_REFRESH_OK=1 to register anyway."
+fi
 gcloud_exists secrets describe "${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PROJECT}" \
   || deploy_fail "secret ${MASTER_KEY_SECRET} not found in ${MASTER_KEY_PROJECT}; set MASTER_KEY_PROJECT"
 gcloud_exists secrets describe "${CLIENT_SECRET_NAME}" --project="${PROJECT}" \
@@ -91,7 +99,18 @@ api() {
   code="${out##*$'\n'}"
   out="${out%$'\n'*}"
   if (( code >= 400 )); then
-    echo "router $1 $2 -> HTTP ${code}: $(jq -c '.error // .detail // .' <<<"${out}" 2>/dev/null | head -c 300)" >&2
+    # Only message text, never the body: a 422 echoes the request (pydantic `input`), client secret
+    # included. Whatever is printed is also scrubbed of the two secrets.
+    local msg
+    msg="$(jq -r 'if (.detail | type) == "array" then [.detail[]? | .msg // empty] | join("; ")
+      elif (.error | type) == "object" then (.error.message // "")
+      elif (.error | type) == "string" then .error
+      elif (.detail | type) == "string" then .detail
+      else "" end' <<<"${out}" 2>/dev/null | head -c 300 || true)"
+    [[ -n "${msg}" ]] || msg="(no message)"
+    [[ -z "${MASTER:-}" ]] || msg="${msg//"${MASTER}"/[redacted]}"
+    [[ -z "${CLIENT_SECRET:-}" ]] || msg="${msg//"${CLIENT_SECRET}"/[redacted]}"
+    echo "router $1 $2 -> HTTP ${code}: ${msg}" >&2
     return 1
   fi
   printf '%s' "${out}"
@@ -107,6 +126,7 @@ show() {
 list="$(api GET /v1/mcp/server)"
 existing="$(jq -c --arg id "${SERVER_ID}" '(if type == "array" then . else (.servers // .data // []) end)
   | map(select(.server_id == $id or .alias == $id))[0] // empty' <<<"${list}")"
+existing_id="$(jq -r '.server_id // empty' <<<"${existing:-null}")"
 
 if [[ -n "${existing}" && "${FORCE_PURGE}" != 1 ]]; then
   echo "~ ${SERVER_ID} is already registered:"
@@ -120,10 +140,10 @@ CLIENT_SECRET="$(gcloud secrets versions access latest --secret="${CLIENT_SECRET
 
 # The secret reaches jq as a file (process substitution), the body reaches curl on stdin.
 build() {
-  jq -nc --arg id "${SERVER_ID}" --arg url "${MCP_URL}" --arg au "${AUTHORIZATION_URL}" --arg tu "${TOKEN_URL}" \
+  jq -nc --arg id "${SERVER_ID}" --arg rid "${ROW_ID:-${SERVER_ID}}" --arg url "${MCP_URL}" --arg au "${AUTHORIZATION_URL}" --arg tu "${TOKEN_URL}" \
     --arg cid "${CLIENT_ID}" --arg scope "${SCOPE}" --argjson extra "${EXTRA_FIELDS_JSON}" \
     --rawfile secret <(printf '%s' "${CLIENT_SECRET}") '{
-      server_id: $id, server_name: $id, alias: $id,
+      server_id: $rid, server_name: $id, alias: $id,
       description: "Google Cloud CLI (gcloud, bq) on Google'"'"'s side, as the signed-in user. Operators only.",
       transport: "http", url: $url,
       auth_type: "oauth2", oauth2_flow: "authorization_code",
@@ -135,6 +155,8 @@ build() {
 
 if [[ -n "${existing}" ]]; then
   echo "! ${SERVER_ID} exists and FORCE_PURGE=1: updating it purges every user's stored grant."
+  [[ -n "${existing_id}" ]] || deploy_fail "the existing row has no server_id"
+  ROW_ID="${existing_id}"
   build | api PUT /v1/mcp/server - >/dev/null
 else
   echo "+ register ${SERVER_ID}"

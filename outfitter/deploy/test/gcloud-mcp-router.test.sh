@@ -43,6 +43,10 @@ const srv = http.createServer((req, res) => {
     if (req.headers.authorization !== "Bearer sk-master-TESTONLY") return send(401, { error: "bad key" });
     fs.appendFileSync(log, `${req.method} ${req.url} ${body}\n`);
     if (req.url !== "/v1/mcp/server") return send(404, {});
+    if (req.method !== "GET" && fs.existsSync(process.env.FAIL_FILE)) {
+      // FastAPI/pydantic 422: the detail echoes the request body as `input`.
+      return send(422, { detail: [{ type: "value_error", loc: ["body", "url"], msg: "bad url", input: JSON.parse(body) }] });
+    }
     if (req.method === "GET") return send(200, server ? [{ ...server, credentials: { redacted: true } }] : []);
     if (req.method === "POST" || req.method === "PUT") { server = JSON.parse(body); return send(req.method === "POST" ? 200 : 202, server); }
     send(405, {});
@@ -50,7 +54,7 @@ const srv = http.createServer((req, res) => {
 });
 srv.listen(0, "127.0.0.1", () => { fs.writeFileSync(process.env.PORT_FILE, String(srv.address().port)); });
 JS
-export ROUTER_LOG="${WORK}/router.log" PORT_FILE="${WORK}/port"
+export ROUTER_LOG="${WORK}/router.log" PORT_FILE="${WORK}/port" FAIL_FILE="${WORK}/fail422"
 : >"${ROUTER_LOG}"
 node "${WORK}/router.mjs" & ROUTER_PID=$!
 trap 'kill ${ROUTER_PID} 2>/dev/null; rm -rf "${WORK}"' EXIT
@@ -77,7 +81,24 @@ grep -q "CONFIRM=1 is required" "${WORK}/out" || fail "wrong refusal"
 [[ ! -s "${STATE}/gcloud-calls" ]] || fail "read a secret without CONFIRM=1"
 [[ ! -s "${ROUTER_LOG}" ]] || fail "called the router without CONFIRM=1"
 
+# Without the GA-1 authorize params CONFIRM=1 refuses (no refresh token), before reading any secret.
+CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "registered without EXTRA_FIELDS_JSON or NO_REFRESH_OK=1"
+grep -q "no refresh token" "${WORK}/out" || fail "wrong refusal without EXTRA_FIELDS_JSON"
+[[ ! -s "${STATE}/gcloud-calls" ]] || fail "read a secret before the refresh check"
+
+# A plain-http router that isn't loopback is refused.
+ROUTER_URL=http://router.example.com CONFIRM=1 NO_REFRESH_OK=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-https ROUTER_URL"
+grep -q "must be https" "${WORK}/out" || fail "wrong refusal for http"
+
+# A 422 that echoes the request (incl. the client secret) must not leak it.
+touch "${FAIL_FILE}"
+CONFIRM=1 NO_REFRESH_OK=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "422 didn't fail the run"
+grep -q "HTTP 422: bad url" "${WORK}/out" || { cat "${WORK}/out"; fail "422 message missing"; }
+! grep -qE 'sk-master|GOCSPX' "${WORK}/out" || { cat "${WORK}/out"; fail "a secret leaked through the 422 error"; }
+rm -f "${FAIL_FILE}"; : >"${ROUTER_LOG}"
+
 # First run registers.
+export NO_REFRESH_OK=1
 CONFIRM=1 run
 [[ "$(posts)" == 1 ]] || fail "expected one POST"
 body="$(grep '^POST ' "${ROUTER_LOG}" | sed 's/^POST [^ ]* //')"

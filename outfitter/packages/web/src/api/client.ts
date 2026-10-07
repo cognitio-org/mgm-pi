@@ -984,7 +984,8 @@ export const api = {
     return request("/api/github/repos", { method: "POST", body: JSON.stringify(input) });
   },
 
-  /** Branch, open pull requests, and line counts for a Floppy whose repository the App can see. */
+  /** Branch, open pull requests, and line counts for a Floppy whose repository the App can see.
+   * `fresh` is honoured only for the owner or a sysop, and at most every few seconds. */
   githubStatus(sessionId: string, fresh = false): Promise<GithubSessionStatus> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/github-status${fresh ? "?fresh=1" : ""}`);
   },
@@ -1018,7 +1019,8 @@ export const api = {
     });
   },
 
-  /** #500: merge the base branch into the session branch on GitHub. A conflict is a result. */
+  /** #500: merge the base branch into the session branch on GitHub. A conflict is a result; 409
+   * `protected-branch` when the session branch is its base or the repository's default branch. */
   syncSession(sessionId: string, idempotencyKey?: string): Promise<SyncSessionResult> {
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/sync`, {
       method: "POST",

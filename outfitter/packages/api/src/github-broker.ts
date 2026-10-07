@@ -383,29 +383,57 @@ export class GithubBroker {
   // merge it (only as the agent could), plus sync with base and re-run failed checks. Same gates
   // (openSession), same credential, same helpers. Writes go out "on behalf of" the signed-in person.
   //
-  // Idempotency: an optional key per write, remembered in this process for SESSION_WRITE_TTL_MS
-  // (a session has no run to persist it on). Each write is also safe to repeat on GitHub's side: a
+  // Idempotency: an optional key per write. A success is remembered in this process for
+  // SESSION_WRITE_TTL_MS, and concurrent requests share one in flight; a failure is not remembered.
+  // (A session has no run to persist keys on.) Each write is also safe to repeat on GitHub's side: a
   // second create finds the open pull request (409), a merge is pinned to a sha, a second sync
   // finds nothing behind, a second re-run re-runs what is still failed.
 
   private readonly sessionWrites = new Map<string, { at: number; result: SessionGithubResult<any> }>();
   private readonly sessionInflight = new Map<string, Promise<SessionGithubResult<any>>>();
+  /** Keyed by prStateKey (session, branch and base), so a moved branch never reads another's state. */
   private readonly prStates = new Map<string, { at: number; ttl: number; value: SessionPrStatus }>();
+  /** One GitHub read per key at a time: concurrent status polls share it. */
+  private readonly prReads = new Map<string, Promise<SessionPrStatus>>();
 
-  /** Forget the cached pull request state of a session, so the next status read asks GitHub. */
+  /** Forget the cached pull request state of a session (any branch), so the next read asks GitHub. */
   forgetSessionPr(sessionId: string): void {
-    this.prStates.delete(sessionId);
+    const prefix = `${sessionId}\0`;
+    for (const key of [...this.prStates.keys()]) if (key.startsWith(prefix)) this.prStates.delete(key);
+    // A read already in flight started before the write: later callers don't join it, and its
+    // answer isn't cached.
+    for (const key of [...this.prReads.keys()]) if (key.startsWith(prefix)) this.prReads.delete(key);
+    this.prEpochs.set(sessionId, (this.prEpochs.get(sessionId) ?? 0) + 1);
   }
 
+  private readonly prEpochs = new Map<string, number>();
+
   /** The session branch's open pull request with its checks, review and mergeability, plus whether
-   * Merge may be offered. Cached per session (shorter while checks run). Never throws. */
+   * Merge may be offered. Cached per session, branch and base (shorter while checks run); concurrent
+   * reads share one request. `fresh` (callers pass it only for someone who may manage the session)
+   * skips the cache, but never re-reads within PR_STATE_MIN_AGE_MS. Never throws. */
   async sessionPrStatus(session: Session, opts: { fresh?: boolean } = {}): Promise<SessionPrStatus> {
     const guru = await this.guruOf(session);
     const mergeAllowed = mergeAllowedFor(session, guru);
     if (!session.repo) return { mergeAllowed, pr: null };
-    const hit = this.prStates.get(session.id);
+    const key = prStateKey(session);
+    const hit = this.prStates.get(key);
+    const age = hit ? Date.now() - hit.at : Infinity;
     // mergeAllowed is the tape's live setting, never the cached one.
-    if (!opts.fresh && hit && Date.now() - hit.at < hit.ttl) return { ...hit.value, mergeAllowed };
+    if (hit && (age < PR_STATE_MIN_AGE_MS || (!opts.fresh && age < hit.ttl))) return { ...hit.value, mergeAllowed };
+    let read = this.prReads.get(key);
+    if (!read) {
+      const started: Promise<SessionPrStatus> = this.readPrStatus(session, guru, mergeAllowed, key).finally(() => {
+        if (this.prReads.get(key) === started) this.prReads.delete(key);
+      });
+      read = started;
+      this.prReads.set(key, read);
+    }
+    return { ...(await read), mergeAllowed };
+  }
+
+  private async readPrStatus(session: Session, guru: Guru | null, mergeAllowed: boolean, key: string): Promise<SessionPrStatus> {
+    const epoch = this.prEpochs.get(session.id) ?? 0;
     let value: SessionPrStatus;
     let ttl = PR_STATE_TTL_MS;
     try {
@@ -427,8 +455,9 @@ export class GithubBroker {
       value = { mergeAllowed, pr: null, prError: "github request failed" };
       ttl = PR_STATE_BUSY_TTL_MS;
     }
+    if ((this.prEpochs.get(session.id) ?? 0) !== epoch) return value;
     if (this.prStates.size >= SESSION_WRITE_MAX) this.prStates.delete(this.prStates.keys().next().value!);
-    this.prStates.set(session.id, { at: Date.now(), ttl, value });
+    this.prStates.set(key, { at: Date.now(), ttl, value });
     return value;
   }
 
@@ -519,6 +548,15 @@ export class GithubBroker {
     return this.sessionWrite(session, actor, "github_pr.sync", idempotencyKey, async (ctx) => {
       const base = baseBranch(undefined, ctx.session.baseBranch);
       if (typeof base !== "string") return sessionFail(400, base.error);
+      // Sync writes to the session branch. Never when that branch is the base itself or the
+      // repository's default branch: a merge commit there is a write to a shared branch.
+      const protectedError = `The session branch ${ctx.branch} is the repository's default branch or its base; Outfitter won't sync into it.`;
+      if (ctx.branch === base) return sessionFail(409, protectedError, "protected-branch");
+      const repo = await this.call(ctx, "GET /repos/{owner}/{repo}", { owner: ctx.owner, repo: ctx.repo });
+      if (!repo.ok) return sessionFail(routeStatus(repo.status), repo.error);
+      const defaultBranch = typeof repo.data?.default_branch === "string" ? repo.data.default_branch : "";
+      if (!defaultBranch) return sessionFail(502, "Could not read the repository's default branch.");
+      if (ctx.branch === defaultBranch) return sessionFail(409, protectedError, "protected-branch");
       const compared = await this.compareBranch(ctx, base);
       if (!compared.ok) return compared;
       const upToDate: SessionSyncResult = { status: "up-to-date", via: null, base, branchMoved: false };
@@ -578,21 +616,13 @@ export class GithubBroker {
     idempotencyKey?: unknown,
   ): Promise<SessionGithubResult<SessionRerunResult>> {
     return this.sessionWrite<SessionRerunResult>(session, actor, "github_pr.rerun", idempotencyKey, async (ctx) => {
-      const open = await this.openPull(ctx);
-      if (!open.ok) return sessionFail(routeStatus(open.status), open.error);
-      let sha = typeof open.pr?.head?.sha === "string" ? open.pr.head.sha : "";
-      if (!sha) {
-        const branch = await this.call(ctx, "GET /repos/{owner}/{repo}/branches/{branch}", { owner: ctx.owner, repo: ctx.repo, branch: ctx.branch });
-        if (!branch.ok) {
-          return branch.status === 404
-            ? sessionFail(409, "The branch isn't on GitHub yet.", "no-branch")
-            : sessionFail(routeStatus(branch.status), branch.error);
-        }
-        sha = typeof branch.data?.commit?.sha === "string" ? branch.data.commit.sha : "";
-      }
-      sha = sha.toLowerCase();
-      if (!/^[0-9a-f]{40}$/.test(sha)) return sessionFail(502, "Could not read the branch head.");
-      const runs = await this.call(ctx, "GET /repos/{owner}/{repo}/actions/runs", { owner: ctx.owner, repo: ctx.repo, head_sha: sha, per_page: 50 });
+      const head = await this.sessionHead(ctx);
+      if (!head.ok) return head;
+      const sha = head.sha;
+      // Only this branch's runs: another branch at the same commit has runs of its own.
+      const runs = await this.call(ctx, "GET /repos/{owner}/{repo}/actions/runs", {
+        owner: ctx.owner, repo: ctx.repo, branch: ctx.branch, head_sha: sha, per_page: 50,
+      });
       if (!runs.ok) {
         return sessionFail(
           routeStatus(runs.status),
@@ -601,7 +631,12 @@ export class GithubBroker {
       }
       const listed: any[] = Array.isArray(runs.data?.workflow_runs) ? runs.data.workflow_runs : [];
       const failed = listed.filter(
-        (run) => run?.status === "completed" && FAILED_RUN.has(String(run?.conclusion ?? "").toLowerCase()) && Number.isSafeInteger(run?.id),
+        (run) =>
+          run?.head_branch === ctx.branch &&
+          String(run?.head_sha ?? "").toLowerCase() === sha &&
+          run?.status === "completed" &&
+          FAILED_RUN.has(String(run?.conclusion ?? "").toLowerCase()) &&
+          Number.isSafeInteger(run?.id),
       );
       if (!failed.length) return { ok: true, data: { status: "nothing-to-rerun" as const, sha, rerun: [] } };
       const cred = this.secrets.rerunGithubToken ? await this.secrets.rerunGithubToken(ctx.session) : { token: ctx.token };
@@ -644,6 +679,13 @@ export class GithubBroker {
       const run = await this.call(ctx, "GET /repos/{owner}/{repo}/check-runs/{check_run_id}", { owner: ctx.owner, repo: ctx.repo, check_run_id: Number(checkId) });
       if (!run.ok) return sessionFail(routeStatus(run.status), run.error);
       const detailsUrl = webUrlOrNull(run.data?.html_url ?? run.data?.details_url);
+      // Only a check on the session's current head: a check id from elsewhere in the repository
+      // (another branch, an older commit) is not this session's to read.
+      const head = await this.sessionHead(ctx);
+      if (!head.ok) return head.status === 409 ? sessionFail(404, "This check isn't on the session's branch.", "no-log") : head;
+      if (String(run.data?.head_sha ?? "").toLowerCase() !== head.sha) {
+        return sessionFail(404, "This check isn't on the session's branch.", "no-log");
+      }
       if (run.data?.app?.slug !== "github-actions") {
         return sessionFail(404, "This check isn't a GitHub Actions job, so its log can't be read here. Open it on GitHub.", "no-log", { detailsUrl });
       }
@@ -677,6 +719,25 @@ export class GithubBroker {
     } catch {
       return null;
     }
+  }
+
+  /** The session's current head: its open pull request's head, else the branch's tip. */
+  private async sessionHead(ctx: Ctx): Promise<{ ok: true; sha: string } | { ok: false; status: number; error: string; code?: string }> {
+    const open = await this.openPull(ctx);
+    if (!open.ok) return sessionFail(routeStatus(open.status), open.error);
+    let sha = typeof open.pr?.head?.sha === "string" ? open.pr.head.sha : "";
+    if (!sha) {
+      const branch = await this.call(ctx, "GET /repos/{owner}/{repo}/branches/{branch}", { owner: ctx.owner, repo: ctx.repo, branch: ctx.branch });
+      if (!branch.ok) {
+        return branch.status === 404
+          ? sessionFail(409, "The branch isn't on GitHub yet.", "no-branch")
+          : sessionFail(routeStatus(branch.status), branch.error);
+      }
+      sha = typeof branch.data?.commit?.sha === "string" ? branch.data.commit.sha : "";
+    }
+    sha = sha.toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(sha)) return sessionFail(502, "Could not read the branch head.");
+    return { ok: true, sha };
   }
 
   /** The open pull request whose head is the session branch, or null. */
@@ -779,8 +840,10 @@ export class GithubBroker {
     this.sessionInflight.set(memo, p);
     try {
       const result = await p;
-      // A transient failure may be retried with the same key; anything else is the answer.
-      if (result.ok || (result.status < 500 && result.status !== 429)) {
+      // Only a success is the answer for this key. Any failure (a missing permission an owner may grant
+      // a minute later, a conflict since resolved) may be retried with the same key; concurrent
+      // requests still share the one in flight.
+      if (result.ok) {
         if (this.sessionWrites.size >= SESSION_WRITE_MAX) this.pruneSessionWrites();
         this.sessionWrites.set(memo, { at: Date.now(), result: structuredClone(result) });
       }
@@ -805,7 +868,7 @@ export class GithubBroker {
     } catch {
       result = sessionFail(502, "github request failed");
     }
-    this.prStates.delete(session.id);
+    this.forgetSessionPr(session.id);
     this.logSessionWrite(session, actor, op, result, false);
     return result;
   }
@@ -1632,6 +1695,12 @@ const SESSION_WRITE_MAX = 1_000;
 const PR_STATE_TTL_MS = 30_000;
 /** While checks run (or GitHub is still computing mergeable), the UI wants fresher answers. */
 const PR_STATE_BUSY_TTL_MS = 10_000;
+/** Not even `fresh` re-reads GitHub sooner than this, per session, branch and base. */
+const PR_STATE_MIN_AGE_MS = 5_000;
+
+function prStateKey(session: Session): string {
+  return `${session.id}\0${session.branch ?? ""}\0${session.baseBranch ?? ""}`;
+}
 const LOG_TAIL_LINES = 80;
 const LOG_TAIL_CHARS = 8_000;
 const FAILED_RUN = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);

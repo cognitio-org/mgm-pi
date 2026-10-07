@@ -8,7 +8,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { SessionActor } from "../github-broker.ts";
 import type { RouteContext } from "./context.ts";
-import { getManageableSessionOr404, getSessionOr404 } from "./sessions.ts";
+import { canManageSession, getManageableSessionOr404, getSessionOr404 } from "./sessions.ts";
 
 export async function registerGithubRoutes(app: FastifyInstance, ctx: RouteContext): Promise<void> {
   // 200 even when the App is not set up, so the page can explain why the list is empty.
@@ -44,11 +44,12 @@ export async function registerGithubRoutes(app: FastifyInstance, ctx: RouteConte
   // the Floppy page then hides the live facts and keeps the ordinary repository chip.
   // #500: plus `pr` (the branch's open pull request with checks, review and mergeability, read
   // through the broker) and `mergeAllowed`. `prError` says why `pr` couldn't be read.
-  // `?fresh=1` skips the broker's short cache.
+  // `?fresh=1` skips the broker's short cache, only for someone who may manage the session (it
+  // spends the installation's rate budget), and never more often than every few seconds.
   app.get("/api/sessions/:id/github-status", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
-    const fresh = (req.query as { fresh?: string } | undefined)?.fresh === "1";
+    const fresh = (req.query as { fresh?: string } | undefined)?.fresh === "1" && canManageSession(session, req.identity);
     const [status, pr] = await Promise.all([
       ctx.githubCatalog.sessionStatus(session),
       ctx.github.sessionPrStatus(session, { fresh }),

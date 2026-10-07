@@ -39,7 +39,8 @@ interface World {
   merges: 201 | 204 | 409;
   mergeStatus: 200 | 405;
   rerunStatus: 201 | 403;
-  workflowRuns: { id: number; name: string; status: string; conclusion: string | null }[];
+  workflowRuns: { id: number; name: string; status: string; conclusion: string | null; head_branch?: string; head_sha?: string }[];
+  defaultBranch: string;
 }
 
 function world(overrides: Partial<World> = {}): World {
@@ -53,6 +54,7 @@ function world(overrides: Partial<World> = {}): World {
     mergeStatus: 200,
     rerunStatus: 201,
     workflowRuns: [],
+    defaultBranch: "main",
     ...overrides,
   };
 }
@@ -113,14 +115,17 @@ function fakeGithub(w: World, calls: Call[]): GithubTransport {
         return response(201, { sha: "d".repeat(40) });
       }
       if (route === "GET /repos/{owner}/{repo}/branches/{branch}") return response(200, { commit: { sha: HEAD } });
-      if (route === "GET /repos/{owner}/{repo}/actions/runs") return response(200, { workflow_runs: w.workflowRuns });
+      if (route === "GET /repos/{owner}/{repo}/actions/runs") {
+        return response(200, { workflow_runs: w.workflowRuns.map((run) => ({ head_branch: "feature", head_sha: HEAD, ...run })) });
+      }
+      if (route === "GET /repos/{owner}/{repo}") return response(200, { full_name: `${params.owner}/${params.repo}`, default_branch: w.defaultBranch });
       if (route === "POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs") {
         if (w.rerunStatus === 403) return response(403, { message: "Resource not accessible by integration" });
         return response(201, {});
       }
       if (route === "GET /repos/{owner}/{repo}/check-runs/{check_run_id}") {
         const id = Number(params.check_run_id);
-        return response(200, { id, name: "test", conclusion: "failure", html_url: `https://github.com/acme/widgets/actions/runs/5/job/${id}`, app: { slug: id === 999 ? "circleci" : "github-actions" } });
+        return response(200, { id, name: "test", conclusion: "failure", html_url: `https://github.com/acme/widgets/actions/runs/5/job/${id}`, head_sha: id === 998 ? "e".repeat(40) : HEAD, app: { slug: id === 999 ? "circleci" : "github-actions" } });
       }
       if (route === "GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs") {
         const lines = Array.from({ length: 120 }, (_, i) => `2026-10-07T10:02:${String(i % 60).padStart(2, "0")}.1234567Z line ${i}`);
@@ -510,5 +515,114 @@ describe("#500 session pull request routes", () => {
     } finally {
       await close(app);
     }
+  });
+});
+
+// ---- review fixes on 08016c15 ----
+
+const pullLists = (calls: Call[]) => calls.filter((c) => c.route === "GET /repos/{owner}/{repo}/pulls").length;
+
+describe("#500 review fixes", () => {
+  test("log: a check that isn't on the session's current head is 404 no-log, and its log is never fetched", async () => {
+    const { broker, session, calls } = await brokerWith({ world: { openPr: true } });
+    const other = await broker.sessionCheckLog(session, "998");
+    assert.equal(other.ok, false);
+    if (!other.ok) {
+      assert.equal(other.status, 404);
+      assert.equal(other.code, "no-log");
+    }
+    assert.equal(calls.some((c) => c.route.endsWith("/logs")), false);
+    // Without a pull request the branch tip is the head; a check there is still readable.
+    const plain = await brokerWith();
+    assert.equal((await plain.broker.sessionCheckLog(plain.session, "101")).ok, true);
+    assert.equal((await plain.broker.sessionCheckLog(plain.session, "998")).ok, false);
+  });
+
+  test("status: concurrent reads share one GitHub read; fresh never re-reads within 5 s", async (t) => {
+    const { broker, session, calls } = await brokerWith({ world: { openPr: true } });
+    const all = await Promise.all([broker.sessionPrStatus(session), broker.sessionPrStatus(session), broker.sessionPrStatus(session, { fresh: true })]);
+    assert.equal(pullLists(calls), 1, "one read for three concurrent callers");
+    assert.ok(all.every((s) => s.pr?.number === 7));
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    await broker.sessionPrStatus(session, { fresh: true });
+    assert.equal(pullLists(calls), 1, "fresh right after a read is still the cached answer");
+    t.mock.timers.tick(6_000);
+    await broker.sessionPrStatus(session, { fresh: true });
+    assert.equal(pullLists(calls), 2, "fresh after 5 s reads again");
+    await broker.sessionPrStatus(session);
+    assert.equal(pullLists(calls), 2);
+  });
+
+  test("status: the cache is per branch and base, so a moved branch doesn't read the old one's state", async () => {
+    const { broker, session, calls } = await brokerWith({ world: { openPr: true } });
+    await broker.sessionPrStatus(session);
+    await broker.sessionPrStatus({ ...session, branch: "other" });
+    await broker.sessionPrStatus({ ...session, baseBranch: "develop" });
+    assert.equal(pullLists(calls), 3);
+    const heads = calls.filter((c) => c.route === "GET /repos/{owner}/{repo}/pulls").map((c) => c.params.head);
+    assert.deepEqual(heads, ["acme:feature", "acme:other", "acme:feature"]);
+  });
+
+  test("github-status?fresh=1 is honoured only for someone who may manage the session", async (t) => {
+    const { app, calls } = await routeApp({ dev: false, world: { openPr: true } });
+    try {
+      const other = await bearerFor(app.store, "someone@example.com");
+      const owner = await bearerFor(app.store, "owner@example.com");
+      const get = (headers: Record<string, string>, fresh: boolean) =>
+        app.fastify.inject({ method: "GET", url: `/api/sessions/s1/github-status${fresh ? "?fresh=1" : ""}`, headers });
+      assert.equal((await get(other, false)).statusCode, 200);
+      assert.equal(pullLists(calls), 1);
+      t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+      t.mock.timers.tick(6_000);
+      assert.equal((await get(other, true)).statusCode, 200);
+      assert.equal(pullLists(calls), 1, "a non-manager's fresh=1 is the cached answer");
+      assert.equal((await get(owner, true)).json().pr.number, 7);
+      assert.equal(pullLists(calls), 2, "the owner's fresh=1 reads GitHub");
+      await get(owner, true);
+      assert.equal(pullLists(calls), 2, "but not again within 5 s");
+    } finally {
+      await close(app);
+    }
+  });
+
+  test("sync refuses the base branch and the repository's default branch (409 protected-branch), writing nothing", async () => {
+    const onBase = await brokerWith({ world: { behindBy: 2 }, session: { branch: "main", baseBranch: "main" } });
+    const one = await onBase.broker.syncSession(onBase.session, OWNER);
+    assert.equal(one.ok === false && one.status === 409 && one.code, "protected-branch");
+    const onDefault = await brokerWith({ world: { behindBy: 2, defaultBranch: "develop" }, session: { branch: "develop", baseBranch: "release" } });
+    const two = await onDefault.broker.syncSession(onDefault.session, OWNER);
+    assert.equal(two.ok === false && two.status === 409 && two.code, "protected-branch");
+    for (const b of [onBase, onDefault]) assert.equal(writes(b.calls).length, 0);
+  });
+
+  test("re-run picks only the session branch's runs, never another branch's at the same commit", async () => {
+    const red = await brokerWith({
+      world: {
+        openPr: true,
+        workflowRuns: [
+          { id: 5, name: "CI", status: "completed", conclusion: "failure" },
+          { id: 8, name: "CI (main)", status: "completed", conclusion: "failure", head_branch: "main" },
+          { id: 9, name: "CI (old)", status: "completed", conclusion: "failure", head_sha: "f".repeat(40) },
+        ],
+      },
+    });
+    const rerun = await red.broker.rerunSessionChecks(red.session, OWNER);
+    assert.deepEqual(rerun, { ok: true, data: { status: "rerun", sha: HEAD, rerun: [{ id: 5, name: "CI" }] } });
+    const list = red.calls.find((c) => c.route === "GET /repos/{owner}/{repo}/actions/runs")!;
+    assert.equal(list.params.branch, "feature");
+    assert.deepEqual(red.calls.filter((c) => c.route.includes("rerun-failed-jobs")).map((c) => c.params.run_id), [5]);
+  });
+
+  test("a failure isn't remembered for its key: once the permission is granted, the same key re-runs", async () => {
+    const red = await brokerWith({ world: { openPr: true, rerunStatus: 403, workflowRuns: [{ id: 5, name: "CI", status: "completed", conclusion: "failure" }] } });
+    const refused = await red.broker.rerunSessionChecks(red.session, OWNER, "click-1");
+    assert.equal(refused.ok === false && refused.code, "actions-permission");
+    red.w.rerunStatus = 201;
+    const granted = await red.broker.rerunSessionChecks(red.session, OWNER, "click-1");
+    assert.equal(granted.ok, true);
+    // A success is remembered: the same key again doesn't re-run twice.
+    const replay = await red.broker.rerunSessionChecks(red.session, OWNER, "click-1");
+    assert.deepEqual(replay, granted);
+    assert.equal(red.calls.filter((c) => c.route.includes("rerun-failed-jobs")).length, 2);
   });
 });

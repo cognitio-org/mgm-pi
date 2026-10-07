@@ -1,6 +1,6 @@
 // #498: the Knight Rider scanner (docs/design/sessions-redesign-demo.html note 14): a 5px strip of
 // pixel segments across the transcript/composer seam while a turn runs. The head eases back and
-// forth with a glow and a fading trail; under reduced motion the whole strip pulses gently instead.
+// forth with a glow and a fading trail; under reduced motion the strip is drawn once, lit and still.
 //
 // The geometry and the frame are pure functions of the width and the clock, so they're testable;
 // KnightRiderScanner.tsx only paints them.
@@ -51,10 +51,8 @@ export function scannerFrame(count: number, t: number): ScannerFrame {
   return { head, dir, trail };
 }
 
-/** Reduced motion: every segment breathes together, between about 0.1 and 0.8. */
-export function pulseAlpha(t: number): number {
-  return 0.45 + 0.35 * Math.sin(t / 400);
-}
+/** Reduced motion: every segment lit at this strength, and nothing moves. */
+export const STILL_ALPHA = 0.6;
 
 /** Paints one frame. `color` is the strip's resolved colour (the canvas's CSS `color`). */
 export function drawScanner(ctx: CanvasRenderingContext2D, width: number, height: number, t: number, color: string, reduced: boolean): void {
@@ -64,7 +62,7 @@ export function drawScanner(ctx: CanvasRenderingContext2D, width: number, height
   ctx.globalAlpha = BASE_ALPHA;
   for (let i = 0; i < count; i++) ctx.fillRect(offset + i * step, 0, SEGMENT_PX, height);
   if (reduced) {
-    ctx.globalAlpha = pulseAlpha(t);
+    ctx.globalAlpha = STILL_ALPHA;
     for (let i = 0; i < count; i++) ctx.fillRect(offset + i * step, 0, SEGMENT_PX, height);
     ctx.globalAlpha = 1;
     return;

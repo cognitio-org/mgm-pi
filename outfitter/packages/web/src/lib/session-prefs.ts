@@ -32,9 +32,11 @@ export function saveScannerColour(colour: ScannerColour): void {
   write(SCANNER_KEY, colour);
 }
 
-/** The right-hand Details pane. Closed until opened once. */
-export function loadPaneOpen(): boolean {
-  return read(PANE_KEY) === "open";
+/** The right-hand Details pane, as the person last left it; null until they've toggled it (the
+ * page then opens it on a wide desktop only). */
+export function loadPaneOpen(): boolean | null {
+  const value = read(PANE_KEY);
+  return value === "open" ? true : value === "closed" ? false : null;
 }
 
 export function savePaneOpen(open: boolean): void {

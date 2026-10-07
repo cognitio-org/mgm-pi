@@ -11,7 +11,7 @@ import { FleetPage } from "./pages/FleetPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
 import { vocabulary } from "./lib/vocabulary.ts";
-import { AppNavContext, NAV_ITEMS } from "./lib/nav.ts";
+import { AppNavContext, AppVersionContext, NAV_ITEMS } from "./lib/nav.ts";
 import { lazyRoute } from "./lib/chunk-reload.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Working } from "./components/Working.tsx";
@@ -133,6 +133,7 @@ export function App() {
 
   return (
     <AppNavContext.Provider value={items}>
+    <AppVersionContext.Provider value={versionText}>
     <div className={`app-shell${isSession ? " is-session" : ""}`}>
       {/* On the desk (/), the desk's own GEOS-style menu bar (DeskPage.tsx) replaces this header
        * on desktop widths -- having both stacked ~160px of chrome duplicating the same nav was
@@ -254,6 +255,7 @@ export function App() {
         </ErrorBoundary>
       </main>
     </div>
+    </AppVersionContext.Provider>
     </AppNavContext.Provider>
   );
 }

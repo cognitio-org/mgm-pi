@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 /** A button that opens a small menu under it (#498: the floppy's ⋯ menu, the Disk Box's page
  * links). Closes on a click outside, on Esc (focus back on the button), and after an item runs.
- * Items are plain buttons or links with role="menuitem"; arrow keys move between them. */
+ * Items are plain buttons or links with role="menuitem"; arrow keys move between them. Tab, or
+ * focus leaving the menu, closes it. */
 export function PopMenu({
   label,
   icon,
@@ -33,11 +34,18 @@ export function PopMenu({
       setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
+      // Only while focus is in this menu (or on its button): keys elsewhere are someone else's.
+      if (!(document.activeElement instanceof Node && wrap?.contains(document.activeElement))) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         setOpen(false);
         buttonRef.current?.focus();
+        return;
+      }
+      if (event.key === "Tab") {
+        // Tab leaves the menu, as it would a native one.
+        setOpen(false);
         return;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -48,12 +56,21 @@ export function PopMenu({
       const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
       items[next]?.focus();
     }
+    // Focus moving out of the menu (a click elsewhere, a screen reader jump) closes it.
+    function onFocusOut(event: FocusEvent) {
+      const next = event.relatedTarget;
+      if (next instanceof Node && wrap?.contains(next)) return;
+      if (next === null) return; // focus went nowhere (a click on empty space): the pointer handler decides
+      setOpen(false);
+    }
+    wrap?.addEventListener("focusout", onFocusOut);
     document.addEventListener("pointerdown", onPointer);
     // Capture, so Esc closes the menu before the page's own Esc (Break) sees it.
     document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey, true);
+      wrap?.removeEventListener("focusout", onFocusOut);
     };
   }, [open]);
 

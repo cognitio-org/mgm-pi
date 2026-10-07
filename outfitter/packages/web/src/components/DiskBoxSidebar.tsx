@@ -26,6 +26,7 @@ export function DiskBoxSidebar({
   currentId,
   needsYou,
   refreshKey,
+  archiveKey,
   onHide,
 }: {
   currentId: string;
@@ -33,6 +34,8 @@ export function DiskBoxSidebar({
   needsYou: boolean;
   /** Changes when the open floppy's state does, so its row catches up without waiting a poll. */
   refreshKey: string;
+  /** Changes when the Archive's count might have: another floppy, or this one archived or restored. */
+  archiveKey: string;
   onHide: () => void;
 }) {
   const navigate = useNavigate();
@@ -44,18 +47,22 @@ export function DiskBoxSidebar({
   const [newOpen, setNewOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
+  // One poll for the sidebar's life; a change on the open floppy asks for one extra read, it doesn't
+  // restart the clock.
+  const loadRef = useRef<() => void>(() => {});
   useEffect(() => {
     let cancelled = false;
-    const load = () =>
+    const load = () => {
       api
         .sessions()
         .then((rows) => !cancelled && setSessions(rows))
         .catch(() => !cancelled && setSessions((cur) => cur ?? []));
+    };
+    loadRef.current = load;
     // A hidden tab skips the poll, and catches up as soon as it's looked at again.
     const poll = () => {
-      if (document.visibilityState !== "hidden") void load();
+      if (document.visibilityState !== "hidden") load();
     };
-    void load();
     const timer = setInterval(poll, DISK_BOX_POLL_MS);
     document.addEventListener("visibilitychange", poll);
     return () => {
@@ -63,8 +70,14 @@ export function DiskBoxSidebar({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", poll);
     };
+  }, []);
+
+  useEffect(() => {
+    loadRef.current();
   }, [refreshKey]);
 
+  // The Archive is only a count here. The api has no count route, so this reads the archived list,
+  // but only when this floppy (or whether it's archived) changes, never on the poll.
   useEffect(() => {
     let cancelled = false;
     api
@@ -74,12 +87,14 @@ export function DiskBoxSidebar({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [archiveKey]);
 
   // ⌘K / Ctrl+K: jump to the search box from anywhere on the page.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+      // Not under a dialog or the easter egg: ⌘K there would pull focus out from behind it.
+      if (document.querySelector("[aria-modal='true'], #outfitter-easter-egg-root")) return;
       event.preventDefault();
       searchRef.current?.focus();
       searchRef.current?.select();

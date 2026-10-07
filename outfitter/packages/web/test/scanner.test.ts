@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PERIOD_MS, pulseAlpha, scannerFrame, scannerLayout } from "../src/lib/scanner.ts";
+import { PERIOD_MS, STILL_ALPHA, drawScanner, scannerFrame, scannerLayout } from "../src/lib/scanner.ts";
 import { formatElapsed, formatTokens, toolVerb, turnOutputTokens, turnStartedAt } from "../src/lib/live-status.ts";
 import type { PiEntry } from "../src/api/client.ts";
 
@@ -31,11 +31,24 @@ describe("scanner geometry", () => {
     expect(scannerFrame(50, 0).trail.every((s) => s.index >= 0)).toBe(true);
   });
 
-  it("reduced motion pulses within a gentle range", () => {
-    for (let t = 0; t < 3000; t += 100) {
-      expect(pulseAlpha(t)).toBeGreaterThanOrEqual(0.1);
-      expect(pulseAlpha(t)).toBeLessThanOrEqual(0.8);
-    }
+  it("reduced motion draws the same still strip at any time", () => {
+    const calls: string[] = [];
+    const fake = (log: string[]) =>
+      ({
+        set fillStyle(_v: string) {},
+        set globalAlpha(v: number) {
+          log.push(`a${v}`);
+        },
+        clearRect() {},
+        fillRect(x: number) {
+          log.push(`r${x}`);
+        },
+      }) as unknown as CanvasRenderingContext2D;
+    const later: string[] = [];
+    drawScanner(fake(calls), 80, 5, 0, "red", true);
+    drawScanner(fake(later), 80, 5, 1234, "red", true);
+    expect(calls).toEqual(later);
+    expect(calls).toContain(`a${STILL_ALPHA}`);
   });
 });
 

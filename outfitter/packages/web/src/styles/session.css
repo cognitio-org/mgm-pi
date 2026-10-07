@@ -359,6 +359,12 @@
   font-weight: 600;
 }
 
+.menu-scroll {
+  display: grid;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
 .menu-item small {
   font: 11px var(--font-mono);
   opacity: 0.8;
@@ -504,6 +510,7 @@
 /* ---------- transcript pieces ---------- */
 
 .flow-user {
+  position: relative;
   align-self: flex-end;
   max-width: min(85%, 52rem);
   padding: 9px 12px;
@@ -1366,6 +1373,29 @@
 .session-sheet .menu-item {
   min-height: 44px;
   font-size: 15px;
+}
+
+.sheet-foot {
+  display: grid;
+  gap: 10px;
+}
+
+.sheet-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.sheet-pages a {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.sheet-toggles {
+  display: flex;
+  gap: 8px;
 }
 
 .session-sheet .session-details {

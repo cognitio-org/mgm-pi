@@ -31,6 +31,8 @@ function Item({
   );
 }
 
+export const DRIVE_FIRST = "The Drive has to be running first: Start Drive is in the ⋯ menu.";
+
 /** "Open in VS Code" from the menu: the same IDE the Details tab's chip drives (IdeProvider). */
 function VsCodeItem({ close }: { close: () => void }) {
   const c = useIde();
@@ -54,7 +56,7 @@ function VsCodeItem({ close }: { close: () => void }) {
     <Item
       glyph="⌨"
       disabled={!c.openable || c.busy !== null}
-      title={c.openable ? "Start VS Code in the browser on this Drive" : "The Drive has to be running first."}
+      title={c.openable ? "Start VS Code in the browser on this Drive" : DRIVE_FIRST}
       onClick={() => {
         close();
         void c.open();
@@ -81,6 +83,8 @@ export function SessionMenu({
   canSwitchModel,
   onStop,
   canStop,
+  onStart,
+  canStart,
   canManage,
   archived,
   shelving,
@@ -100,6 +104,9 @@ export function SessionMenu({
   canSwitchModel: boolean;
   onStop: () => void;
   canStop: boolean;
+  /** Start Drive: wake the floppy without a prompt, for VS Code or previews. */
+  onStart: () => void;
+  canStart: boolean;
   canManage: boolean;
   archived: boolean;
   shelving: boolean;
@@ -130,21 +137,29 @@ export function SessionMenu({
           <Item glyph="⧉" title="Open this Floppy in a new window" onClick={run(() => chrome.place("window", floppyTitle))}>
             New window
           </Item>
-          {chrome.split &&
-            splitTargets
-              .filter((row) => row.id !== sessionId)
-              .slice(0, 6)
-              .map((row) => (
-                <Item key={row.id} glyph="◫" title="Split this Floppy beside another" onClick={run(() => chrome.splitWith(row.id))}>
-                  Split with {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
-                </Item>
-              ))}
+          {chrome.split && splitTargets.some((row) => row.id !== sessionId) && (
+            // Every other floppy, in a group that scrolls on its own when there are many.
+            <div className="menu-scroll" role="group" aria-label="Split with">
+              {splitTargets
+                .filter((row) => row.id !== sessionId)
+                .map((row) => (
+                  <Item key={row.id} glyph="◫" title="Split this Floppy beside another" onClick={run(() => chrome.splitWith(row.id))}>
+                    Split with {row.name ?? `Floppy ${row.id.slice(0, 8)}`}
+                  </Item>
+                ))}
+            </div>
+          )}
         </>
       )}
       <Item glyph="⚙" disabled={!canSwitchModel} title={archived ? "Restore the floppy to switch its model" : "Switch model"} onClick={run(onSwitchModel)}>
         Switch model…
       </Item>
       <hr />
+      {canStart && (
+        <Item glyph={transport.wake.glyph} title="Start this floppy's Drive without sending anything, for VS Code or previews" onClick={run(onStart)}>
+          Start Drive
+        </Item>
+      )}
       <Item glyph={transport.stop.glyph} disabled={!canStop} title="Stop this floppy's run" onClick={run(onStop)}>
         Stop Drive
       </Item>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Working } from "./Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 
@@ -40,19 +40,17 @@ export const OUTFITTER_SOURCE = "outfitter";
  * the next one (the model can time a harmless question just before a real approval). */
 export const ARM_DELAY_MS = 1000;
 
-/** Where a keypress belongs to something else: typing in a field (other than the card's own), or a
- * menu or modal that's open. */
-function keyIsElsewhere(event: KeyboardEvent, card: HTMLElement | null): boolean {
-  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return true;
-  if (document.querySelector("[aria-modal='true'], [role='menu']")) return true;
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return false;
-  if (card?.contains(target)) return target.tagName === "BUTTON";
-  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(target.tagName);
+/** Someone is in the middle of typing elsewhere (a draft in the composer): don't pull focus away. */
+function typingElsewhere(): boolean {
+  const el = document.activeElement;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value.trim() !== "";
+  return el instanceof HTMLElement && el.isContentEditable;
 }
 
 /** #498: the question docks above the composer as a card (docs/design/sessions-redesign-demo.html
  * note 9), with keys for the common answer: Enter for the primary button, Esc to deny or cancel.
+ * The keys only answer while focus is inside the card, so a keypress meant for the page never
+ * approves anything; when the card arms it takes focus, unless the person is mid-draft elsewhere.
  * Keys wait for the same arm delay as the buttons. */
 export function UiRequestPanel({ request, onRespond }: Props) {
   const [inputValue, setInputValue] = useState("");
@@ -75,23 +73,24 @@ export function UiRequestPanel({ request, onRespond }: Props) {
       ? { enter: () => respond(inputValue) }
       : {};
 
+  // Once armed, bring focus to the card (its text field, for an input question).
   useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (busy) return;
-      if (event.key !== "Enter" && event.key !== "Escape") return;
-      const card = cardRef.current;
-      // The card's own text field takes Enter as Submit; anywhere else typing wins.
-      const inOwnField = event.target instanceof HTMLInputElement && card?.contains(event.target);
-      if (!inOwnField && keyIsElsewhere(event, card)) return;
-      const answer = event.key === "Enter" ? keyAnswers.current.enter : keyAnswers.current.escape;
-      if (!answer) return;
-      event.preventDefault();
-      event.stopPropagation();
-      void answer();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy]);
+    if (!armed || typingElsewhere()) return;
+    const card = cardRef.current;
+    (card?.querySelector<HTMLElement>("input") ?? card)?.focus();
+  }, [armed, request.id]);
+
+  function onCardKey(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (busy || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
+    if (event.key !== "Enter" && event.key !== "Escape") return;
+    // Enter on one of the card's buttons is that button's own click.
+    if (event.key === "Enter" && event.target instanceof HTMLButtonElement) return;
+    const answer = event.key === "Enter" ? keyAnswers.current.enter : keyAnswers.current.escape;
+    if (!answer) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void answer();
+  }
 
   async function respond(value: unknown) {
     setSending(true);
@@ -104,7 +103,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isSelect(request)) {
     return (
-      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+      <div className="ui-request" ref={cardRef} tabIndex={-1} onKeyDown={onCardKey} role="group" aria-label="Question from the agent">
         <div className="ui-request-head">
           <span className="lamp lamp-needsYou" aria-hidden="true" />
           Needs you
@@ -123,7 +122,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isConfirm(request) && request.source === OUTFITTER_SOURCE) {
     return (
-      <div className="ui-request ui-request-outfitter" role="alertdialog" aria-label="Outfitter approval" ref={cardRef}>
+      <div className="ui-request ui-request-outfitter" role="alertdialog" aria-label="Outfitter approval" ref={cardRef} tabIndex={-1} onKeyDown={onCardKey}>
         <div className="ui-request-head">
           <span className="lamp lamp-needsYou" aria-hidden="true" />
           <small className="ui-request-source">Outfitter asks you (not the agent)</small>
@@ -145,7 +144,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isConfirm(request)) {
     return (
-      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+      <div className="ui-request" ref={cardRef} tabIndex={-1} onKeyDown={onCardKey} role="group" aria-label="Question from the agent">
         <div className="ui-request-head">
           <span className="lamp lamp-needsYou" aria-hidden="true" />
           Needs you
@@ -167,7 +166,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isInput(request)) {
     return (
-      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+      <div className="ui-request" ref={cardRef} tabIndex={-1} onKeyDown={onCardKey} role="group" aria-label="Question from the agent">
         <div className="ui-request-head">
           <span className="lamp lamp-needsYou" aria-hidden="true" />
           Needs you
@@ -190,7 +189,7 @@ export function UiRequestPanel({ request, onRespond }: Props) {
   }
 
   return (
-    <div className="ui-request" ref={cardRef}>
+    <div className="ui-request" ref={cardRef} tabIndex={-1} onKeyDown={onCardKey}>
       <strong>{request.method}</strong> (unsupported prompt type)
       <pre>{JSON.stringify(request, null, 2)}</pre>
     </div>

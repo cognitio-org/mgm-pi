@@ -28,3 +28,6 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** The links this person sees. Defaults to everyone's (no Control Panel). */
 export const AppNavContext = createContext<NavItem[]>(NAV_ITEMS.filter((item) => !item.operatorOnly));
+
+/** The running Outfitter version's label ("2026.10.01.1"), for chrome that stands in for the app bar. */
+export const AppVersionContext = createContext<string | null>(null);

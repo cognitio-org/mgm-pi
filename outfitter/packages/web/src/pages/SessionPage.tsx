@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState, type UIEvent } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useContext, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
-import { PHONE_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
+import { PHONE_QUERY, WIDE_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
+import { canBreakTurn, escBreaks } from "../lib/break-keys.ts";
+import { AppNavContext, AppVersionContext } from "../lib/nav.ts";
 import { entriesToViews } from "../lib/entry-view.ts";
-import { buildFlow, lastVsCodeToolId, liveThinkingId, runningTool, thinkingSeconds } from "../lib/flow.ts";
-import { STREAMED_THOUGHT_ID } from "../lib/beats.ts";
+import { STREAMED_THOUGHT_ID, buildFlow, lastVsCodeToolId, liveThinkingId, runningTool, thinkingSeconds } from "../lib/flow.ts";
 import { isThoughtBubbleEnabled, setThoughtBubbleEnabled } from "../lib/thought-bubble.ts";
 import { groupThinkingBlocks } from "../lib/thinking.ts";
 import { deriveSessionHeader } from "../lib/session-header.ts";
@@ -48,6 +49,9 @@ import { KnightRiderScanner } from "../components/KnightRiderScanner.tsx";
 import { PopMenu } from "../components/PopMenu.tsx";
 import { SessionDetails } from "../components/SessionDetails.tsx";
 import { SessionMenu } from "../components/SessionMenu.tsx";
+import { SessionSheet } from "../components/SessionSheet.tsx";
+import { SoundToggle } from "../components/SoundToggle.tsx";
+import { ThemeToggle } from "../components/ThemeToggle.tsx";
 import { BackIcon, ContextRing, MoreIcon, PaneIcon, SideIcon } from "../components/SessionIcons.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { floppyActions, vocabulary } from "../lib/vocabulary.ts";
@@ -58,7 +62,7 @@ import { useChromeCompanion } from "../hooks/useChromeCompanion.ts";
 import { teleportCommand } from "../lib/webmcp.ts";
 import { previewAccessByEntry, previewAccessFor } from "../lib/html-preview-access.ts";
 
-type PendingAction = "abort" | "stop" | null;
+type PendingAction = "abort" | "stop" | "wake" | null;
 
 /** How long a just-finished BREAK/LOAD ERROR outcome stays on the status line before it reverts to
  * READY. -- long enough to read, short enough that it doesn't linger past its relevance. */
@@ -70,12 +74,6 @@ const TOAST_MS = 2000;
 /** The right pane's tabs. #502 adds Changes beside Details. */
 const PANE_TABS = [{ id: "details", label: "Details" }] as const;
 type PaneTab = (typeof PANE_TABS)[number]["id"];
-
-/** A keypress that belongs to something else on the page: a menu, a dialog, or a card that's open. */
-function escBelongsElsewhere(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented) return true;
-  return Boolean(document.querySelector("[aria-modal='true'], [role='menu'], .rail-card"));
-}
 
 /**
  * A floppy's page (#498, docs/design/sessions-redesign-demo.html): the Disk Box down the left, the
@@ -131,7 +129,13 @@ export function SessionPage() {
   const [splitTargets, setSplitTargets] = useState<{ id: string; name?: string }[]>([]);
   // #498: the layout's own choices, remembered on this browser.
   const [diskBoxOpen, setDiskBoxOpen] = useState(() => loadDiskBoxOpen());
-  const [paneOpen, setPaneOpen] = useState(() => loadPaneOpen());
+  // #498 review: open by default on a wide desktop, until the person toggles it once.
+  const wide = useMediaQuery(WIDE_QUERY);
+  const [paneChoice, setPaneChoice] = useState<boolean | null>(() => loadPaneOpen());
+  const paneOpen = paneChoice ?? wide;
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const navItems = useContext(AppNavContext);
+  const versionText = useContext(AppVersionContext);
   const [paneTab, setPaneTab] = useState<PaneTab>("details");
   const [scannerColour, setScannerColour] = useState<ScannerColour>(() => loadScannerColour());
   // The phone's bottom sheet, held as the session it was opened on, like the model switcher.
@@ -215,8 +219,7 @@ export function SessionPage() {
   });
   const ticking =
     activity.phase === "sending" || activity.phase === "waking" || activity.phase === "working" || activity.phase === "quiet";
-  // A turn the person can break: a live run that is working on something.
-  const turnRunning = ticking && activity.canAbort;
+  const canBreak = canBreakTurn({ canAbort: activity.canAbort, pendingQuestion: pendingUiRequest != null, runState, phase: activity.phase });
 
   useEffect(() => {
     if (!ticking) return;
@@ -279,10 +282,24 @@ export function SessionPage() {
   // idle/stopped/failed means pi is not inside a tool. A newer user message settles the
   // previous turn even when the next run is already "running" again.
   const runSettled = runState === "idle" || runState === "stopped" || runState === "failed";
-  const flow = buildFlow(groupThinkingBlocks(entriesToViews(entries, { runSettled })), {
-    runSettled,
-    seconds: thinkingSeconds(entries),
-  });
+  // Memoised on the transcript itself: the page re-renders every second while a turn runs, and with
+  // every streamed thought token, and none of that should re-group or re-diff the transcript.
+  const flow = useMemo(
+    () =>
+      buildFlow(groupThinkingBlocks(entriesToViews(entries, { runSettled })), {
+        runSettled,
+        seconds: thinkingSeconds(entries),
+      }),
+    [entries, runSettled],
+  );
+  const previewAccess = useMemo(
+    () => previewAccessByEntry(entries, session?.htmlPreviewAccessByRun, previewAccessFor(session?.allowExternalHtmlResources)),
+    [entries, session?.htmlPreviewAccessByRun, session?.allowExternalHtmlResources],
+  );
+  const header = useMemo(() => {
+    const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
+    return deriveSessionHeader(entries, (id) => windowById.get(id));
+  }, [entries, models]);
   // #285. The streamed text is the open message, which is not in the transcript yet, so it wins
   // over a persisted thought from earlier in the turn. Once that message is stored the stream
   // clears, and the newest stored thought stays open while later tool calls from the same reply run.
@@ -411,6 +428,7 @@ export function SessionPage() {
       await reload();
       if (action === "abort") flashOutcome("break");
     } catch (err) {
+      if (action === "wake") flashOutcome("loadError");
       setApiError(toApiErrorState(err, `Failed to ${action}`));
     } finally {
       setPendingAction(null);
@@ -432,14 +450,15 @@ export function SessionPage() {
 
   const handleAbort = () => runAction("abort", () => api.abort(sessionId));
   const handleStop = () => runAction("stop", () => api.stop(sessionId));
+  // Start Drive (the ⋯ menu): a Drive without a prompt, for VS Code or previews.
+  const handleWake = () => runAction("wake", () => api.wake(sessionId));
 
-  // Esc breaks the running turn, unless a menu, dialog or card is open (their own Esc closes them)
-  // or a question is waiting (its card takes Esc as Deny/Cancel).
+  // Esc breaks the running turn when nothing else wants it (lib/break-keys.ts).
   const abortRef = useRef<(() => void) | null>(null);
-  abortRef.current = turnRunning && !pendingUiRequest && pendingAction === null ? handleAbort : null;
+  abortRef.current = canBreak && pendingAction === null ? handleAbort : null;
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape" || escBelongsElsewhere(event)) return;
+      if (!escBreaks(event)) return;
       if (!abortRef.current) return;
       event.preventDefault();
       abortRef.current();
@@ -447,20 +466,6 @@ export function SessionPage() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-
-  // The phone sheet closes on Esc and when the page grows past phone width.
-  useEffect(() => {
-    if (!sheetOpen) return;
-    document.querySelector<HTMLElement>(".session-sheet [role='menuitem']:not(:disabled)")?.focus();
-    function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setSheetFor(null);
-    }
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [sheetOpen]);
 
   async function handleUiResponse(requestId: string, value: unknown) {
     await api.uiResponse(sessionId, requestId, value);
@@ -489,10 +494,8 @@ export function SessionPage() {
   }
 
   function togglePane() {
-    setPaneOpen((open) => {
-      savePaneOpen(!open);
-      return !open;
-    });
+    savePaneOpen(!paneOpen);
+    setPaneChoice(!paneOpen);
   }
 
   function setDiskBox(open: boolean) {
@@ -503,14 +506,7 @@ export function SessionPage() {
   if (notFound) return <NotFoundError subject="This floppy" />;
 
   const archived = Boolean(session?.archivedAt);
-  const previewAccess = previewAccessByEntry(
-    entries,
-    session?.htmlPreviewAccessByRun,
-    previewAccessFor(session?.allowExternalHtmlResources),
-  );
   const cost = costEstimate ?? session?.cost;
-  const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
-  const header = deriveSessionHeader(entries, (id) => windowById.get(id));
   const percent = header.context?.percent;
   const oomMessage = typeof percent === "number" ? contextMeterMessage(percent) : null;
   // Bug 7 (docs/reports/cloud-fixes.md): a pi RPC command agentd's run rejected. Also the api's own
@@ -626,6 +622,8 @@ export function SessionPage() {
       canSwitchModel={canSwitchModel}
       onStop={handleStop}
       canStop={activity.canStop}
+      onStart={handleWake}
+      canStart={activity.canWake && !archived}
       canManage={Boolean(session?.canManage)}
       archived={archived}
       shelving={shelving !== null}
@@ -639,7 +637,7 @@ export function SessionPage() {
 
   const placeholder = archived
     ? "This floppy is archived"
-    : turnRunning
+    : ticking && activity.canAbort
       ? "Add a follow-up. It sends when this turn ends"
       : runState === "idle"
         ? `Message ${floppyTitle}`
@@ -678,6 +676,7 @@ export function SessionPage() {
             currentId={sessionId}
             needsYou={pendingUiRequest != null}
             refreshKey={`${sessionId}|${runState ?? ""}|${session?.name ?? ""}|${session?.archivedAt ?? ""}`}
+            archiveKey={`${sessionId}|${session?.archivedAt ?? ""}`}
             onHide={() => setDiskBox(false)}
           />
         )}
@@ -721,6 +720,7 @@ export function SessionPage() {
             )}
             {phone ? (
               <button
+                ref={moreRef}
                 type="button"
                 className="icon-btn"
                 aria-label="More actions and details"
@@ -773,7 +773,7 @@ export function SessionPage() {
                   {endLine}
                 </div>
               </div>
-              <div className="scanner-seam">{turnRunning && !pendingUiRequest && <KnightRiderScanner />}</div>
+              <div className="scanner-seam">{ticking && !pendingUiRequest && <KnightRiderScanner />}</div>
               <div className="session-dock">
                 {ticking && !statusError && !pendingUiRequest && (
                   <div className="live-status" role="status">
@@ -785,7 +785,7 @@ export function SessionPage() {
                       {startedAt !== undefined ? formatElapsed(now - startedAt) : null}
                       {outTokens > 0 ? ` · ↓ ${formatTokens(outTokens)} tokens` : null}
                     </span>
-                    {turnRunning && <span className="live-hint">esc to break</span>}
+                    {canBreak && <span className="live-hint">esc to break</span>}
                   </div>
                 )}
                 {statusError && (
@@ -869,7 +869,7 @@ export function SessionPage() {
                   disabled={activity.composerDisabled || archived}
                   sending={activity.phase === "sending"}
                   placeholderOverride={placeholder}
-                  busy={turnRunning}
+                  busy={canBreak}
                   onBreak={handleAbort}
                   breaking={pendingAction === "abort"}
                   modelChip={
@@ -930,16 +930,24 @@ export function SessionPage() {
         </div>
 
         {sheetOpen && (
-          <>
-            <div className="sheet-scrim" onClick={() => setSheetFor(null)} />
-            <div className="session-sheet" role="dialog" aria-modal="true" aria-label="Floppy actions and details">
-              <div className="sheet-grip" aria-hidden="true" />
-              <div className="sheet-menu" role="menu" aria-label="Floppy actions">
-                {menu(() => setSheetFor(null))}
+          <SessionSheet onClose={() => setSheetFor(null)} returnFocus={moreRef} menu={menu(() => setSheetFor(null))}>
+            {details(true)}
+            {/* On a phone the app bar is gone too: its links and toggles live at the sheet's foot. */}
+            <section className="details-sec sheet-foot" aria-label="Outfitter">
+              <nav className="sheet-pages" aria-label="Pages">
+                {navItems.map((item) => (
+                  <NavLink key={item.to} to={item.to} end={item.end} title={item.hint}>
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+              <div className="sheet-toggles">
+                <SoundToggle />
+                <ThemeToggle />
               </div>
-              {details(true)}
-            </div>
-          </>
+              {versionText && <p className="details-empty">Outfitter {versionText}</p>}
+            </section>
+          </SessionSheet>
         )}
 
         {modelOpen && session && (

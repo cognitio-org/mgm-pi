@@ -1,6 +1,5 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { entryIdOf, type FlowItem, type FlowTool } from "../lib/flow.ts";
-import { railThinkingText } from "../lib/beats.ts";
 import type { ThinkingBlock } from "../lib/thinking.ts";
 import { thinkingWordLabel } from "../lib/thinking.ts";
 import { lookupLabel, toolArgument, toolDiff, toolKind, toolSummary, type ToolDiff } from "../lib/tool-rows.ts";
@@ -42,7 +41,7 @@ export function UserBlock({ id, text, images, queued, children }: { id?: string;
   );
 }
 
-function Prose({ text }: { text: string }) {
+const Prose = memo(function Prose({ text }: { text: string }) {
   return (
     <div className="flow-ai">
       <span className="flow-bullet" aria-hidden="true" />
@@ -52,10 +51,10 @@ function Prose({ text }: { text: string }) {
       </div>
     </div>
   );
-}
+});
 
 function thoughtText(blocks: ThinkingBlock[]): string {
-  return railThinkingText({ kind: "thinking", id: "", blocks });
+  return blocks.map((block) => block.text).join("\n\n");
 }
 
 /** A thought, folded to one line. While it's still being written (and the thought-bubble
@@ -141,10 +140,31 @@ function DiffBlock({ diff }: { diff: ToolDiff }) {
   );
 }
 
-export function ToolRow({ tool, vscodeLive }: { tool: FlowTool; vscodeLive?: boolean }) {
+type ToolRowProps = { tool: FlowTool; vscodeLive?: boolean };
+
+/** buildFlow makes new item objects whenever an entry lands, but a row's own fields (and its
+ * arguments, which are the stored entry's own object) stay the same. */
+export function sameToolRow(a: ToolRowProps, b: ToolRowProps): boolean {
+  const x = a.tool;
+  const y = b.tool;
+  return (
+    a.vscodeLive === b.vscodeLive &&
+    x.id === y.id &&
+    x.toolName === y.toolName &&
+    x.input === y.input &&
+    x.output === y.output &&
+    x.isError === y.isError &&
+    x.running === y.running &&
+    x.interrupted === y.interrupted
+  );
+}
+
+/** Memoised: a running turn re-renders the page every second, and a long transcript's rows (and
+ * their diffs) must not be rebuilt each time. */
+export const ToolRow = memo(function ToolRow({ tool, vscodeLive }: ToolRowProps) {
   const [open, setOpen] = useState(false);
   const kind = toolKind(tool.toolName);
-  const diff = tool.interrupted ? null : toolDiff(tool.toolName, tool.input);
+  const diff = useMemo(() => (tool.interrupted ? null : toolDiff(tool.toolName, tool.input)), [tool.interrupted, tool.toolName, tool.input]);
   const summary = toolSummary(tool, diff);
   const arg = toolArgument(tool.toolName, tool.input);
   const state = tool.running ? "is-running" : tool.isError || tool.interrupted ? "is-error" : "is-ok";
@@ -185,9 +205,9 @@ export function ToolRow({ tool, vscodeLive }: { tool: FlowTool; vscodeLive?: boo
       ) : null}
     </div>
   );
-}
+}, sameToolRow);
 
-function LookupsRow({ tools }: { tools: FlowTool[] }) {
+const LookupsRow = memo(function LookupsRow({ tools }: { tools: FlowTool[] }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={`flow-tool is-ok flow-lookups${open ? " is-open" : ""}`}>
@@ -207,7 +227,7 @@ function LookupsRow({ tools }: { tools: FlowTool[] }) {
       ) : null}
     </div>
   );
-}
+});
 
 export function TranscriptFlow({
   items,

@@ -23,6 +23,8 @@ import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { env, inSandbox } from "../_shared/env.ts";
+import { applyLaptopMcpGate } from "../_shared/mcp-gate.ts";
+import { getRouterKey } from "../_shared/outfitter-session.ts";
 import {
   type Backend, type ModelMeta, type LmStudioMeta, type LocalModelFact, backends, parseEnvText, parseModelInfo, lmStudioMeta, parseSpendHeaders, rootUrl, normalizeBaseUrl,
   sessionEstimate, money, footerStatus, budgetRows, renderPanel, cleanKey, keyCheckUrl, authFailureText, busServe, keepListed, curateOpenRouter,
@@ -256,6 +258,12 @@ export default async function (pi: ExtensionAPI) {
     }));
   }
   await registerAll();
+  // GA-3 (#493): gcloud ships disabled; switch it on for a device whose router key lists it.
+  if (!inSandbox()) {
+    let admitted: string[] | undefined;
+    try { admitted = getRouterKey()?.mcpServers; } catch {}
+    applyLaptopMcpGate(process.env.PI_CODING_AGENT_DIR, admitted);
+  }
   const byId = (id: string) => defs.find((d) => d.id === id);
 
   // ---------- /setup: first-run wizard, writes .env and re-registers providers live ----------

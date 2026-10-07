@@ -48,7 +48,7 @@ import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-though
 import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
 import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
-import { GCLOUD_MCP_SERVER, gcloudRun } from "./central/gcloud-mcp.ts";
+import { GCLOUD_MCP_SERVER, gcloudRun, mcpEnableFor } from "./central/gcloud-mcp.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 /** #285: how often the open thought is written onto the run. The poller already lags by its
@@ -1341,18 +1341,17 @@ export class AgentLink {
     // GA-2/GA-3 (#492, #493): the tape has `adminTools: operator` and the owner is an operator. It
     // admits the run key to the router's gcloud MCP server and switches the Drive's copy on.
     const gcloud = gcloudRun(guru, session.ownerEmail, this.config.operators, a2aSession);
-    const litellmKey = this.runKeys
-      ? (
-          await this.runKeys.keyForRun({
-            run,
-            session,
-            specSent: specSent ? "yes" : run.startup ? "no" : "unknown",
-            sharedKey: secrets.litellmKey,
-            a2a: a2aSession,
-            gcloud,
-          })
-        ).key
-      : secrets.litellmKey;
+    const keyChoice = this.runKeys
+      ? await this.runKeys.keyForRun({
+          run,
+          session,
+          specSent: specSent ? "yes" : run.startup ? "no" : "unknown",
+          sharedKey: secrets.litellmKey,
+          a2a: a2aSession,
+          gcloud,
+        })
+      : undefined;
+    const litellmKey = keyChoice ? keyChoice.key : secrets.litellmKey;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
       keepCurrentGithubToken,
@@ -1414,8 +1413,9 @@ export class AgentLink {
           }
         : {}),
       ...(settings ? { settings } : {}),
-      // Only with a run key to enforce it on the router: without one the shared key has no grant.
-      ...(gcloud && this.runKeys?.enabled ? { mcp: { enable: [GCLOUD_MCP_SERVER] } } : {}),
+      // Only when this spec carries the run's own key (gcloud-mcp.ts mcpEnableFor): a fallback to the
+      // shared key, or a spec that sends no key, has no router grant to enforce it.
+      ...(mcpEnableFor(gcloud, keyChoice) ? { mcp: { enable: [GCLOUD_MCP_SERVER] } } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.

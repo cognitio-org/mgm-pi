@@ -212,7 +212,7 @@ MCP servers (`object_permission.mcp_servers`); apply with `./apply-teams.sh`.
 |---|---|---|
 | `ce_knowledge_base`, `headroom` | LiteLLM gateway `…/mcp/` with `x-mcp-servers` | the agent key; LiteLLM holds the upstream bearer token |
 | `sentry` | LiteLLM gateway `…/sentry/mcp` | OAuth through the gateway to the signed-in Sentry account; `/mcp-auth sentry` once on a laptop. The `x-litellm-api-key` header is `Bearer ${KERNAL_ROUTER_KEY}`, filled in by the process. The gateway keeps that token for the person's user id, so a Drive run key uses it with no browser. Every router key may call it |
-| `gcloud` | LiteLLM gateway `…/gcloud/mcp` | Google's remote gcloud, OAuth through the gateway as the signed-in person (`/mcp-auth gcloud`). Sysop operators only: the router admits it to operator device keys and to run keys of `adminTools: operator` tapes with an operator owner; the Drive image ships it `disabled` and agentd enables it per run. Lazy, so non-operators never connect. Usage rules: `skills/gcloud-mcp` |
+| `gcloud` | LiteLLM gateway `…/gcloud/mcp` | Google's remote gcloud, OAuth through the gateway as the signed-in person (`/mcp-auth gcloud`). Sysop operators only: the router admits it to operator device keys and to run keys of `adminTools: operator` tapes with an operator owner; the Drive image ships it `disabled` and agentd enables it per run. Shipped `disabled` with `approveTools`; connect enables it when the device key lists it. Usage rules: `skills/gcloud-mcp` |
 | `google_admin` | direct to the Cloud Run MCP | OAuth 2.1 (Google sign-in, PKCE, dynamic registration); run `/mcp-auth google_admin` once, tokens live in the macOS keychain |
 | `augment_admin` | direct to `l.augment-code.support/mcp` | same, `/mcp-auth augment_admin` |
 

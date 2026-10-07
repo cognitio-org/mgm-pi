@@ -446,6 +446,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         deviceId: args.deviceId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
         maxBudget,
         budgetDuration,
       },
@@ -480,6 +481,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         runId: args.runId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
         maxBudget,
         ...(args.budgetDuration ? { budgetDuration: args.budgetDuration } : {}),
       },
@@ -650,8 +652,16 @@ export async function mintDeviceRouterKey(
   limits: DeviceKeyLimits,
 ): Promise<NonNullable<DeviceDelivery["routerKey"]>> {
   await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
-  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers: deviceKeyMcpServers(device.ownerEmail, config.operators) });
-  return { key: minted.key, baseUrl: config.litellmBaseUrl, alias: minted.alias, ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}) };
+  const mcpServers = deviceKeyMcpServers(device.ownerEmail, config.operators);
+  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers });
+  return {
+    key: minted.key,
+    baseUrl: config.litellmBaseUrl,
+    alias: minted.alias,
+    ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}),
+    // Which MCP servers the router admits this key to, so Kernal can switch on the gated ones (GA-3).
+    ...(mcpServers ? { mcpServers } : {}),
+  };
 }
 
 /** Registers CA-5's device hooks: mint at login (DeviceDelivery.routerKey) with the fleet's limits

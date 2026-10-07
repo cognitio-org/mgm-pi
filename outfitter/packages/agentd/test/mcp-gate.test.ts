@@ -1,7 +1,7 @@
 // #493: the image ships `gcloud` disabled; agentd enables it only when run.spec.mcp lists it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyMcpGate } from "../src/mcp-gate.js";
@@ -65,4 +65,25 @@ test("a missing or broken mcp.json never throws", async () => {
   await writeFile(join(bad, "mcp.json"), "{nope");
   assert.equal(await applyMcpGate(bad, ["gcloud"], (l) => logs.push(l)), undefined);
   assert.equal(logs.length, 2);
+});
+
+test("approveTools and every other field of the entry survive; no temp file is left", async () => {
+  const dir = await dirWith({ mcpServers: { gcloud: { url: "https://router.test/gcloud/mcp", auth: false, approveTools: true, disabled: true } } });
+  await applyMcpGate(dir, ["gcloud"]);
+  assert.deepEqual((await servers(dir)).gcloud, { url: "https://router.test/gcloud/mcp", auth: false, approveTools: true });
+  assert.deepEqual(await readdir(dir), ["mcp.json"]);
+});
+
+test("a write that fails is logged as an ERROR and leaves the file as it was", async () => {
+  if (process.getuid?.() === 0) return; // root ignores the mode; nothing to prove here
+  const dir = await dirWith(IMAGE);
+  await chmod(dir, 0o555);
+  const logs: string[] = [];
+  try {
+    assert.equal(await applyMcpGate(dir, ["gcloud"], (l) => logs.push(l)), undefined);
+    assert.match(logs[0] ?? "", /^ERROR mcp: could not apply/);
+  } finally {
+    await chmod(dir, 0o755);
+  }
+  assert.equal((await servers(dir)).gcloud!.disabled, true);
 });

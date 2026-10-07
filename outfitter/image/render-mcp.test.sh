@@ -16,7 +16,7 @@ cat > "$tmp/src.json" <<'JSON'
   "mcpServers": {
     "litellm": { "url": "https://litellm.example/mcp/", "headers": { "x-litellm-api-key": "Bearer ${LITELLM_AGENT_KEY}" } },
     "sentry": { "url": "https://router.example/sentry/mcp", "auth": "oauth", "headers": { "x-litellm-api-key": "![ -n \"$KERNAL_ROUTER_KEY\" ] || exit 1; printf 'Bearer %s' \"$KERNAL_ROUTER_KEY\"" }, "oauth": { "clientName": "kernal" } },
-    "gcloud": { "url": "https://router.example/gcloud/mcp", "auth": "oauth", "lifecycle": "lazy", "headers": { "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}" }, "oauth": { "clientName": "kernal" } },
+    "gcloud": { "url": "https://router.example/gcloud/mcp", "auth": "oauth", "lifecycle": "lazy", "approveTools": true, "headers": { "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}" }, "oauth": { "clientName": "kernal" } },
     "header_oauth": { "url": "https://other.example/mcp", "auth": "oauth", "headers": { "Authorization": "Bearer static" } },
     "google_admin": { "url": "https://g.example/mcp", "auth": "oauth", "oauth": { "clientName": "kernal agent" } },
     "augment_admin": { "url": "https://a.example/mcp", "auth": "oauth", "directTools": false },
@@ -37,6 +37,7 @@ node -e '
   assert.ok(c.mcpServers.sentry.headers["x-litellm-api-key"].includes("KERNAL_ROUTER_KEY"), "router key header kept");
   assert.strictEqual(c.mcpServers.gcloud.auth, false, "gcloud is header auth too");
   assert.strictEqual(c.mcpServers.gcloud.disabled, true, "gcloud ships off; agentd enables it for an operator run");
+  assert.strictEqual(c.mcpServers.gcloud.approveTools, true, "approval stays on in the image");
   assert.strictEqual(c.mcpServers.sentry.disabled, undefined, "other gateway servers stay on");
   assert.deepStrictEqual(c.settings, { toolPrefix: "short" });
 ' "$tmp/dest.json"
@@ -51,6 +52,7 @@ node -e '
   if (bad.length) { console.error("client OAuth left in: " + bad); process.exit(1); }
   if (!c.mcpServers.gcloud || c.mcpServers.gcloud.disabled !== true) { console.error("gcloud must be kept and disabled in the image"); process.exit(1); }
   if (c.mcpServers.sentry && c.mcpServers.sentry.disabled) { console.error("sentry must stay enabled"); process.exit(1); }
+  if (c.mcpServers.gcloud.approveTools !== true) { console.error("gcloud must keep approveTools"); process.exit(1); }
   if (!c.mcpServers.litellm) { console.error("litellm MCP server was dropped"); process.exit(1); }
   for (const [name, def] of Object.entries(src.mcpServers || {})) {
     const header = def && def.headers && def.headers["x-litellm-api-key"];

@@ -288,6 +288,24 @@ describe("run.spec over the agent socket", () => {
     }
   });
 
+  test("GA-2: a failed mint that falls back to the shared key does not switch gcloud on in the Drive", async () => {
+    const { app: a, fake } = await app({ env: { OUTFITTER_OPERATORS: OWNER } });
+    try {
+      await seedGuru(a.store, { id: "tape-x", adminTools: "operator" });
+      fake.failNext("/key/generate", 500);
+      const { session, runId, runToken } = await makeRunningSession(a, { guruId: "tape-x", ownerEmail: OWNER });
+      const agent = await openAgentSocket(a, runId);
+      sendHello(agent, runId, session.id, runToken);
+      const spec = await agent.nextMessage();
+      assert.equal(spec.secrets.litellmKey, SHARED, "fell back");
+      assert.equal(spec.mcp, undefined);
+      agent.send({ t: "bye", reason: "idle" });
+      await agent.nextClose();
+    } finally {
+      await close(a);
+    }
+  });
+
   test("a session without an owner, and an app without minting, keep the shared key", async () => {
     const { app: a, fake } = await app();
     try {

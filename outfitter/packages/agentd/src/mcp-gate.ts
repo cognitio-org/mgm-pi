@@ -9,10 +9,11 @@
 // boundary is the run key, which the router admits to `gcloud` only for such a run (GA-2). A server
 // switched on for a run whose key lacks the grant is hidden by the router, never another user's token.
 
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, chown, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** The servers run.spec.mcp may switch on. Anything else in the list is ignored. */
+/** The servers run.spec.mcp may switch on. Anything else in the list is ignored. Must match the api's
+ * central/gcloud-mcp.ts, kernal's _shared/mcp-gate.ts and image/render-mcp.sh (api test compares). */
 export const GATED_MCP_SERVERS: readonly string[] = ["gcloud"];
 
 export interface McpGateResult {
@@ -57,11 +58,24 @@ export async function applyMcpGate(
       }
     }
     if (!changed) return undefined;
-    await writeFile(path, JSON.stringify(config, null, 2) + "\n");
+    // Atomic: a reader (pi starting) never sees half a file. The temp file takes the old file's owner
+    // so pi, running as another user, can still edit it after the rename.
+    const tmp = `${path}.${process.pid}.tmp`;
+    try {
+      await writeFile(tmp, JSON.stringify(config, null, 2) + "\n");
+      const old = await stat(path);
+      await chown(tmp, old.uid, old.gid).catch(() => {});
+      await chmod(tmp, old.mode & 0o777);
+      await rename(tmp, path);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
     onLog(`mcp: gated servers on: ${result.enabled.join(",") || "none"}; off: ${result.disabled.join(",") || "none"}`);
     return result;
   } catch (err) {
-    onLog(`mcp: could not apply the operator gate to ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    // A failed write is loud: the image default is "off", so an operator run silently lacks gcloud.
+    onLog(`ERROR mcp: could not apply the operator gate to ${path}: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }
 }

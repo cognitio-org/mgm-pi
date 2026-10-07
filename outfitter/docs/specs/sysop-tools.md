@@ -53,16 +53,37 @@ Decisions (confirmed with the owner):
   list is "scoped" on the router; naming the servers every key uses keeps an operator's access to them
   if the router ever restricts open servers to a key's scope.
 - **Existing keys don't change.** A device key gets `gcloud` at its next login or re-mint, a run key
-  at the next run; removing an operator takes effect the same way (device keys last 90 days: revoke the
-  device to cut access sooner). The router still checks the caller's own grant, so a key never reaches
-  another user's token.
-- **Drives:** the image's `mcp.json` ships `gcloud` with `disabled: true` (`render-mcp.sh`). The api
-  sends `run.spec.mcp.enable: ["gcloud"]` only for such an operator run, and agentd (`mcp-gate.ts`)
-  flips the flag before pi starts. That file is a tidy-up (pi can edit it); the run key is the
+  at the next run. The router still checks the caller's own grant, so a key never reaches another
+  user's token.
+- **Order matters: register `gcloud` on the router first.** `/key/generate` silently drops an
+  `mcp_servers` name it can't resolve (router `object_permission_utils.py`), so a key minted before the
+  server exists never gets it. Register it (`gcloud-mcp-router.sh`, PR #505) BEFORE the Outfitter
+  release; any operator key minted earlier needs a re-mint (`/config` reload, or `kernal login` again).
+- **Router requirements (checked by the owner, not by Outfitter):** `gcloud` is `allow_all_keys: false`,
+  is granted to no team or access group, and is not in `default_key_generate_params`. A user with the
+  `proxy_admin` role and a key with no list sees the whole registry (`admin_view_unscoped`), so keep
+  proxy admins to people who are operators anyway.
+- **Removing an operator:** the key record stores the list it was minted with (`RouterKey.mcpServers`),
+  and the tick (`/api/hooks/tick`, next to `sweepRouterKeys`) deletes every live device key with
+  `gcloud` whose owner is no longer in `OUTFITTER_OPERATORS` (`reconcileOperatorKeys`). Access ends at
+  the next tick, not after 90 days. The device then holds a dead key until it re-mints (`/config`
+  reload or `kernal login`). Run keys end with their run (24 h at most). With an empty operator list
+  nothing is revoked.
+- **Drives:** the image's `mcp.json` ships `gcloud` with `disabled: true` and `approveTools: true`
+  (`render-mcp.sh`). The api sends `run.spec.mcp.enable: ["gcloud"]` only for such an operator run whose
+  spec carries the run's own key (not after a fall-back to the shared key), and agentd (`mcp-gate.ts`,
+  atomic write) flips `disabled` before pi starts. `approveTools: true` makes pi-mcp-adapter ask before
+  every call; without the approval extension (#507) a TUI gets its own dialog and a Drive or `-p` run is
+  denied (`approval_required_headless`), so a missing extension fails closed. That file is a tidy-up (pi can edit it); the run key is the
   boundary. An older api or agentd leaves the server off.
-- **Laptop:** `kernal/.pi/mcp.json` has `gcloud` (`lazy`, OAuth through the router) for everyone.
-  Kernal doesn't know operator status, and a lazy server costs nothing until used; the router hides it
-  from non-operator keys. Usage rules for the agent are in the `gcloud-mcp` skill.
+- **Laptop:** `kernal/.pi/mcp.json` ships `gcloud` (OAuth through the router) `disabled: true` with
+  `approveTools: true`. pi-mcp-adapter connects every enabled server at start-up, so an enabled entry
+  would show non-operators "Failed to connect to gcloud". Laptops can't ask `/api/me` (a Dongle is never
+  an operator there); instead the device's router key delivery carries `mcpServers` (login and
+  `/api/device/router-key`), Kernal stores it with the key, and connect (`_shared/mcp-gate.ts`) flips
+  `disabled` at start-up, so a change shows from the next start. Skipped in a source checkout (the file
+  is tracked; `/mcp enable gcloud` there). Claude-subscription children never get gcloud
+  (`EXCLUDED_MCP`), nor any `disabled` server. Usage rules are in the `gcloud-mcp` skill.
 
 ## Changes since the plan (PR5: skill, Sysop tape, UI)
 - **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).

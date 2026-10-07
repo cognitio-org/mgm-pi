@@ -21,6 +21,8 @@
       "url": "https://router.kernal.one/gcloud/mcp",
       "auth": "oauth",
       "lifecycle": "lazy",
+      "disabled": true,
+      "approveTools": true,
       "headers": {
         "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
       },

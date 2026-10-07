@@ -4,7 +4,17 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { BASE_MCP_SERVERS, GCLOUD_MCP_SERVER, deviceKeyMcpServers, gcloudRun, runKeyMcpServers } from "../src/central/gcloud-mcp.ts";
+import { readFileSync } from "node:fs";
+import {
+  BASE_MCP_SERVERS,
+  GATED_MCP_SERVERS,
+  GCLOUD_MCP_SERVER,
+  deviceKeyMcpServers,
+  gcloudRun,
+  mcpEnableFor,
+  reconcileOperatorKeys,
+  runKeyMcpServers,
+} from "../src/central/gcloud-mcp.ts";
 import { createLitellmKeys, mintDeviceRouterKey, routerKeyLimits } from "../src/central/litellm-keys.ts";
 import { RunKeys } from "../src/central/run-keys.ts";
 import { defaultFleetSettings } from "../src/fleet-settings.ts";
@@ -85,5 +95,72 @@ describe("run keys", () => {
 
   test("any other run's key carries no MCP list", async () => {
     for (const flag of [false, undefined]) assert.ok(!("object_permission" in (await mint(flag))));
+  });
+});
+
+describe("mcpEnableFor", () => {
+  test("only an operator run whose spec carries the run's own non-empty key", () => {
+    assert.equal(mcpEnableFor(true, { key: "sk-run", source: "run" }), true);
+    assert.equal(mcpEnableFor(true, { key: "sk-shared", source: "shared" }), false, "fell back to the shared key");
+    assert.equal(mcpEnableFor(true, { key: "", source: "run" }), false, "a reconnect spec sends no key");
+    assert.equal(mcpEnableFor(true, undefined), false, "minting is off");
+    assert.equal(mcpEnableFor(false, { key: "sk-run", source: "run" }), false);
+  });
+});
+
+describe("the key record and reconcileOperatorKeys", () => {
+  async function setup() {
+    const fake = new FakeLitellm();
+    const store = new MemoryStore();
+    const keys = createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
+    return { fake, store, keys };
+  }
+  async function mintFor(keys: Awaited<ReturnType<typeof setup>>["keys"], id: string, email: string, operators: string[]) {
+    const d = { id: `dev_${id}`, userId: `u_${id}`, ownerEmail: email, name: id };
+    return mintDeviceRouterKey(keys, d, { litellmBaseUrl: CONFIG.litellmBaseUrl, operators }, routerKeyLimits(defaultFleetSettings()).device);
+  }
+
+  test("the record stores the list, and the delivery tells the device (Kernal switches gcloud on from it)", async () => {
+    const { store, keys } = await setup();
+    const delivered = await mintFor(keys, "aaaabbbbccccdddd", OPERATOR, OPERATORS);
+    assert.deepEqual(delivered.mcpServers, WITH_GCLOUD);
+    assert.deepEqual((await store.routerKeys.findByAlias("kernal-device-dev_aaaabbbbccccdddd"))?.mcpServers, WITH_GCLOUD);
+    const plain = await mintFor(keys, "eeeeffff00001111", PERSON, OPERATORS);
+    assert.ok(!("mcpServers" in plain));
+    assert.equal((await store.routerKeys.findByAlias("kernal-device-dev_eeeeffff00001111"))?.mcpServers, undefined);
+  });
+
+  test("a former operator's device key is deleted; a current operator's and a plain key are left", async () => {
+    const { fake, store, keys } = await setup();
+    await mintFor(keys, "aaaabbbbccccdddd", OPERATOR, OPERATORS);
+    await mintFor(keys, "1111222233334444", "former@example.com", ["former@example.com"]);
+    await mintFor(keys, "eeeeffff00001111", PERSON, OPERATORS);
+    const result = await reconcileOperatorKeys(keys, store, OPERATORS);
+    assert.deepEqual(result, { revoked: 1, failed: 0 });
+    assert.ok((await store.routerKeys.findByAlias("kernal-device-dev_1111222233334444"))?.deletedAt);
+    assert.equal((await store.routerKeys.findByAlias("kernal-device-dev_aaaabbbbccccdddd"))?.deletedAt, undefined);
+    assert.equal((await store.routerKeys.findByAlias("kernal-device-dev_eeeeffff00001111"))?.deletedAt, undefined);
+    assert.equal(fake.callsTo("/key/delete").length, 1);
+    assert.deepEqual(await reconcileOperatorKeys(keys, store, OPERATORS), { revoked: 0, failed: 0 }, "idempotent");
+  });
+
+  test("with no operator list at all nothing is revoked, and without minting it is a no-op", async () => {
+    const { store, keys } = await setup();
+    await mintFor(keys, "aaaabbbbccccdddd", OPERATOR, OPERATORS);
+    assert.equal(await reconcileOperatorKeys(keys, store, []), undefined);
+    assert.equal(await reconcileOperatorKeys(undefined, store, OPERATORS), undefined);
+    assert.equal((await store.routerKeys.findByAlias("kernal-device-dev_aaaabbbbccccdddd"))?.deletedAt, undefined);
+  });
+});
+
+describe("the gated server list is the same everywhere", () => {
+  const root = new URL("../../../../", import.meta.url).pathname;
+  const names = (text: string, re: RegExp) => JSON.parse(`[${(text.match(re) ?? [])[1] ?? "?"}]`.replace(/'/g, '"'));
+  test("api, agentd, kernal and render-mcp.sh agree", () => {
+    const want = [...GATED_MCP_SERVERS];
+    const read = (p: string) => readFileSync(`${root}${p}`, "utf8");
+    assert.deepEqual(names(read("outfitter/packages/agentd/src/mcp-gate.ts"), /GATED_MCP_SERVERS: readonly string\[\] = \[([^\]]*)\]/), want);
+    assert.deepEqual(names(read("kernal/.pi/extensions/_shared/mcp-gate.ts"), /GATED_MCP_SERVERS: readonly string\[\] = \[([^\]]*)\]/), want);
+    assert.deepEqual(names(read("outfitter/image/render-mcp.sh"), /const GATED = \[([^\]]*)\]/), want);
   });
 });

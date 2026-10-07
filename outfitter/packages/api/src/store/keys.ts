@@ -24,6 +24,9 @@ export interface RouterKey {
   /** LiteLLM's id for the key (`token` in /key/generate's answer), the hash it deletes by. */
   litellmTokenId?: string;
   models?: string[];
+  /** The MCP servers the key was minted with in `object_permission.mcp_servers` (GA-2); absent for a
+   * key with no list. What reconcileOperatorKeys reads to revoke a former operator's gcloud access. */
+  mcpServers?: string[];
   maxBudget?: number;
   budgetDuration?: string;
   createdAt: string;
@@ -43,6 +46,8 @@ export interface RouterKeysCollection {
   /** The live (not deleted) key of a device, if any. */
   findActiveForDevice(deviceId: string): Promise<RouterKey | null>;
   listActiveForUser(userId: string): Promise<RouterKey[]>;
+  /** Live device keys minted with `server` in their MCP list, at most `limit`. */
+  listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]>;
   /** Keys whose delete is still owed: deleteFailedAt set, or kind "run" past expiresAt. */
   listPendingDelete(limit: number): Promise<RouterKey[]>;
   /** Merges `patch`; a field set to undefined is removed (deleteFailedAt once a retry worked). */
@@ -109,6 +114,12 @@ export class MemoryRouterKeys implements RouterKeysCollection {
   }
   async listActiveForUser(userId: string): Promise<RouterKey[]> {
     return [...this.keys.values()].filter((k) => k.userId === userId && !k.deletedAt).map((k) => ({ ...k }));
+  }
+  async listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]> {
+    return [...this.keys.values()]
+      .filter((k) => k.kind === "device" && !k.deletedAt && k.mcpServers?.includes(server))
+      .slice(0, limit)
+      .map((k) => ({ ...k }));
   }
   async listPendingDelete(limit: number): Promise<RouterKey[]> {
     const now = new Date().toISOString();
@@ -238,6 +249,10 @@ export class MongoRouterKeys implements RouterKeysCollection {
   }
   async listActiveForUser(userId: string): Promise<RouterKey[]> {
     const rows = await this.col.find({ userId, deletedAt: { $exists: false } }).toArray();
+    return rows.map((r) => routerKeyFromDoc(r)!);
+  }
+  async listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]> {
+    const rows = await this.col.find({ kind: "device", mcpServers: server, deletedAt: { $exists: false } }).limit(limit).toArray();
     return rows.map((r) => routerKeyFromDoc(r)!);
   }
   async listPendingDelete(limit: number): Promise<RouterKey[]> {

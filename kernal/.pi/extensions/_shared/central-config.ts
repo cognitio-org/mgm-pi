@@ -1119,7 +1119,7 @@ export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?:
     if (!res?.ok) return false;
     const k = ((await res.json()) as { routerKey?: Record<string, unknown> }).routerKey;
     if (!k || typeof k.key !== "string" || typeof k.baseUrl !== "string" || typeof k.alias !== "string") return false;
-    d.session.setRouterKey({ key: k.key, baseUrl: k.baseUrl, alias: k.alias, ...(typeof k.expiresAt === "string" ? { expiresAt: k.expiresAt } : {}) }, { api: account.api, email: account.email });
+    d.session.setRouterKey({ key: k.key, baseUrl: k.baseUrl, alias: k.alias, ...(typeof k.expiresAt === "string" ? { expiresAt: k.expiresAt } : {}), ...(Array.isArray(k.mcpServers) ? { mcpServers: k.mcpServers.filter((n): n is string => typeof n === "string") } : {}) }, { api: account.api, email: account.email });
     // The server deleted the old key: the new one replaces it in what this process resolved, so
     // connect's next registerAll (kernal-config asks for one) uses it. Only the key changes; the
     // rest of a fresh answer still waits for the next start or /config reload (spec §10).

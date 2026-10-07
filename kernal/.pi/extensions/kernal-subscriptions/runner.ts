@@ -18,8 +18,9 @@ import { loadSubscriptionSecret, type SecretLookup } from "./client.ts";
 import { localVendorLogin } from "./local-login.ts";
 import { isVendor, type SubscriptionMode, type SubscriptionVendor } from "./vendors.ts";
 
-/** Router MCP and the two OAuth admin servers. They are not handed to Claude. */
-export const EXCLUDED_MCP = new Set(["litellm", "google_admin", "augment_admin"]);
+/** Router MCP, the two OAuth admin servers and gcloud. They are not handed to Claude. gcloud runs as
+ * the person through the router with Kernal's approval gate; a Claude child has neither. */
+export const EXCLUDED_MCP = new Set(["litellm", "google_admin", "augment_admin", "gcloud"]);
 
 export type SubscriptionRunResult =
   | { kind: "ok"; vendor: SubscriptionVendor; text: string }
@@ -93,7 +94,8 @@ export function claudeMcpServers(servers: Record<string, unknown> | undefined): 
   if (!servers) return out;
   for (const [name, cfg] of Object.entries(servers)) {
     if (EXCLUDED_MCP.has(name) || !cfg || typeof cfg !== "object") continue;
-    const c = cfg as { url?: unknown; command?: unknown };
+    const c = cfg as { url?: unknown; command?: unknown; disabled?: unknown };
+    if (c.disabled === true) continue;
     const url = typeof c.url === "string" && c.url.trim() !== "";
     const command = typeof c.command === "string" && c.command.trim() !== "";
     if (url || command) out[name] = cfg;

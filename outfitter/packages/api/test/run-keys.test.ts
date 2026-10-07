@@ -3,7 +3,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildTestApp, type TestApp } from "./helpers.ts";
+import { buildTestApp, seedGuru, type TestApp } from "./helpers.ts";
 import { openAgentSocket, makeRunningSession, sendHello } from "./agent-socket.ts";
 import { FakeLitellm } from "./fake-litellm.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -253,6 +253,54 @@ describe("run.spec over the agent socket", () => {
       assert.equal((await agent.nextClose()).code, 1000);
       await waitFor(async () => Boolean((await store.routerKeys.findByAlias(`outfitter-run-${runId}`))?.deletedAt));
       assert.equal(fake.keys.size, 0);
+    } finally {
+      await close(a);
+    }
+  });
+
+  test("GA-2/GA-3: gcloud reaches the run key and run.spec only for an operator tape with an operator owner", async () => {
+    const cases: Array<{ name: string; adminTools: "operator" | "manage"; owner: string; gcloud: boolean }> = [
+      { name: "operator tape, operator owner", adminTools: "operator", owner: OWNER, gcloud: true },
+      { name: "operator tape, other owner", adminTools: "operator", owner: "other@example.com", gcloud: false },
+      { name: "manage tape, operator owner", adminTools: "manage", owner: OWNER, gcloud: false },
+    ];
+    for (const c of cases) {
+      const { app: a, fake } = await app({ env: { OUTFITTER_OPERATORS: OWNER } });
+      try {
+        await seedGuru(a.store, { id: "tape-x", adminTools: c.adminTools });
+        const { session, runId, runToken } = await makeRunningSession(a, { guruId: "tape-x", ownerEmail: c.owner });
+        const agent = await openAgentSocket(a, runId);
+        sendHello(agent, runId, session.id, runToken);
+        const spec = await agent.nextMessage();
+        const [gen] = fake.callsTo("/key/generate");
+        if (c.gcloud) {
+          assert.deepEqual(spec.mcp, { enable: ["gcloud"] }, c.name);
+          assert.ok((gen!.body.object_permission as { mcp_servers: string[] }).mcp_servers.includes("gcloud"), c.name);
+        } else {
+          assert.equal(spec.mcp, undefined, c.name);
+          assert.ok(!("object_permission" in gen!.body), c.name);
+        }
+        agent.send({ t: "bye", reason: "idle" });
+        await agent.nextClose();
+      } finally {
+        await close(a);
+      }
+    }
+  });
+
+  test("GA-2: a failed mint that falls back to the shared key does not switch gcloud on in the Drive", async () => {
+    const { app: a, fake } = await app({ env: { OUTFITTER_OPERATORS: OWNER } });
+    try {
+      await seedGuru(a.store, { id: "tape-x", adminTools: "operator" });
+      fake.failNext("/key/generate", 500);
+      const { session, runId, runToken } = await makeRunningSession(a, { guruId: "tape-x", ownerEmail: OWNER });
+      const agent = await openAgentSocket(a, runId);
+      sendHello(agent, runId, session.id, runToken);
+      const spec = await agent.nextMessage();
+      assert.equal(spec.secrets.litellmKey, SHARED, "fell back");
+      assert.equal(spec.mcp, undefined);
+      agent.send({ t: "bye", reason: "idle" });
+      await agent.nextClose();
     } finally {
       await close(a);
     }

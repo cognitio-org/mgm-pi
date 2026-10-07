@@ -21,6 +21,7 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { deviceKeyMcpServers } from "./gcloud-mcp.ts";
 import { LOCAL_HOST_ACCESS_GROUP } from "../local-hosts/contract.ts";
 import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
@@ -47,6 +48,9 @@ export interface KeyLimits {
   maxBudget?: number;
   budgetDuration?: string;
   rpmLimit?: number;
+  /** The MCP servers the router admits this key to (`object_permission.mcp_servers`); absent means
+   * the key carries no list and sees only the servers open to every key (GA-2, gcloud-mcp.ts). */
+  mcpServers?: string[];
 }
 
 export interface SpendRow {
@@ -432,6 +436,7 @@ class HttpLitellmKeys implements LitellmKeys {
         budget_duration: budgetDuration,
         rpm_limit: args.rpmLimit ?? DEVICE_KEY_RPM_LIMIT,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { object_permission: { mcp_servers: args.mcpServers } } : {}),
         metadata: { outfitter: "device", deviceId: args.deviceId, deviceName: args.deviceName },
       },
       {
@@ -441,6 +446,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         deviceId: args.deviceId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
         maxBudget,
         budgetDuration,
       },
@@ -465,6 +471,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ...(args.budgetDuration ? { budget_duration: args.budgetDuration } : {}),
         ...(args.rpmLimit ? { rpm_limit: args.rpmLimit } : {}),
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { object_permission: { mcp_servers: args.mcpServers } } : {}),
         metadata: { outfitter: "run", runId: args.runId, sessionId: args.sessionId },
       },
       {
@@ -474,6 +481,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         runId: args.runId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
         maxBudget,
         ...(args.budgetDuration ? { budgetDuration: args.budgetDuration } : {}),
       },
@@ -640,12 +648,20 @@ export function createLitellmKeys(
 export async function mintDeviceRouterKey(
   keys: LitellmKeys,
   device: Pick<LifecycleDevice, "id" | "userId" | "ownerEmail" | "name">,
-  config: Pick<Config, "litellmBaseUrl">,
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[] },
   limits: DeviceKeyLimits,
 ): Promise<NonNullable<DeviceDelivery["routerKey"]>> {
   await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
-  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits });
-  return { key: minted.key, baseUrl: config.litellmBaseUrl, alias: minted.alias, ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}) };
+  const mcpServers = deviceKeyMcpServers(device.ownerEmail, config.operators);
+  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers });
+  return {
+    key: minted.key,
+    baseUrl: config.litellmBaseUrl,
+    alias: minted.alias,
+    ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}),
+    // Which MCP servers the router admits this key to, so Kernal can switch on the gated ones (GA-3).
+    ...(mcpServers ? { mcpServers } : {}),
+  };
 }
 
 /** Registers CA-5's device hooks: mint at login (DeviceDelivery.routerKey) with the fleet's limits
@@ -653,7 +669,7 @@ export async function mintDeviceRouterKey(
 export function registerLitellmDeviceHooks(
   lifecycle: DeviceLifecycle,
   keys: LitellmKeys | undefined,
-  config: Pick<Config, "litellmBaseUrl">,
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[] },
   limits: RouterKeyLimitsSource,
 ): void {
   if (!keys) return;

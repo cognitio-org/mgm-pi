@@ -57,6 +57,7 @@ import type {
 } from "./protocol.js";
 import { adminCapabilities } from "./protocol.js";
 import { applyRunSettings } from "./settings.js";
+import { applyMcpGate } from "./mcp-gate.js";
 import { initSentry, withSentrySpan, captureException, flushSentry, agentTraceSignals } from "./sentry.js";
 import { AgentTracer } from "./agent-trace.js";
 
@@ -130,6 +131,8 @@ export interface RunControllerDeps {
   link: LinkPort;
   gitOps: GitOps;
   workspace: string;
+  /** The agent dir whose mcp.json holds the gated MCP servers (#493); default PI_CODING_AGENT_DIR. */
+  agentDir?: string;
   piBin: string;
   agentdVersion: string;
   piVersion: string;
@@ -881,6 +884,8 @@ export class RunController {
     // doesn't get the admin tools; the API refuses an op the tape lacks either way.
     // E9 §3.3: OUTFITTER_MEMORY_RECALL=1 turns on recall before each prompt (Kernal's
     // outfitter-agentengine, over this socket) for a `memory: auto` tape; a `tool` tape has the tool alone.
+    // #493: operator-only MCP servers (gcloud) are on for this run only when the api listed them.
+    await applyMcpGate(this.deps.agentDir ?? process.env.PI_CODING_AGENT_DIR, this.spec.mcp?.enable, this.onLog);
     secretEnv.OUTFITTER_ADMIN_SOCKET = "";
     secretEnv.OUTFITTER_ADMIN_CAPS = "";
     secretEnv.OUTFITTER_MEMORY_RECALL = "";

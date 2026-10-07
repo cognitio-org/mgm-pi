@@ -19,6 +19,22 @@ test("every skill loads with pi's own loader, with a short description", () => {
   for (const s of result.skills) assert.ok(s.description.length <= 300, `${s.name}: ${s.description.length} chars is paid on every turn`);
 });
 
+test("GA-3 (#493): the gcloud skill carries the server's usage rules", () => {
+  const text = readFileSync(`${root}skills/gcloud-mcp/SKILL.md`, "utf8");
+  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha"]) {
+    assert.ok(text.includes(rule), `missing: ${rule}`);
+  }
+});
+
+test("GA-3 (#493): mcp.json routes gcloud through the router like sentry, lazily", () => {
+  const { mcpServers } = JSON.parse(readFileSync(`${root}.pi/mcp.json`, "utf8"));
+  const { sentry, gcloud } = mcpServers;
+  assert.equal(gcloud.url, "https://router.kernal.one/gcloud/mcp");
+  assert.equal(gcloud.auth, "oauth");
+  assert.deepEqual(gcloud.headers, sentry.headers);
+  assert.equal(gcloud.lifecycle, "lazy", "non-operators never connect at start-up; the router hides the server from them");
+});
+
 test("the release bundle and the image copy kernal/skills", () => {
   assert.match(readFileSync(`${root}scripts/package.sh`, "utf8"), /cp -R "\$ROOT\/skills" "\$STAGE\/skills"/);
   assert.match(readFileSync(`${root}../outfitter/image/Dockerfile`, "utf8"), /COPY kernal\/skills\/ \.\/skills\//);

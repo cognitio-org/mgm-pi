@@ -45,7 +45,7 @@ export interface SessionSecrets {
   accessExpiresAt: string;
   refreshToken: string;
   /** CA-5: this device's router key, delivered once at login. */
-  routerKey?: { key: string; baseUrl: string; alias: string; expiresAt?: string };
+  routerKey?: { key: string; baseUrl: string; alias: string; expiresAt?: string; /** The MCP servers the router admits this key to (GA-2); absent from an older Outfitter. */ mcpServers?: string[] };
 }
 
 export type LoginState = { signedIn: false } | { signedIn: true; account: SessionAccount };

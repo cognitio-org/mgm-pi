@@ -28,12 +28,21 @@ test("package.sh reapplies the explicit re-auth patch after npm ci", () => {
   const apply = script.indexOf("pi-mcp-adapter-force-reauth.patch");
   assert.ok(ci > 0 && apply > ci, "the patch must run after npm ci replaces node_modules");
   assert.match(script, /"\$ROOT\/scripts\/apply-adapter-patch\.sh" "\$STAGE\/\.pi\/npm\/node_modules" "\$ROOT\/scripts\/patches\/pi-mcp-adapter-force-reauth\.patch"/);
+  // The build then checks the staged adapter itself, for every marker the patch adds.
+  for (const marker of ["skipStaleClient(): void", "authProvider.skipStaleClient()", "forceReauthorization: true,"]) {
+    assert.ok(script.includes(`grep -q '${marker}'`), `package.sh verifies "${marker}"`);
+  }
 });
 
 // The release build's own patch step, run for real with the system `patch` (BSD on a Mac, GNU in
 // CI). kernal 0.3.9 shipped unpatched because a reverse dry run with GNU --batch "succeeded" on an
 // unpatched tree; only running it catches that.
-test("apply-adapter-patch.sh applies once, then skips, and refuses a partly patched tree", { skip: !existsSync(adapterPath) }, () => {
+test("apply-adapter-patch.sh applies once, then skips, and refuses a partly patched tree", () => {
+  // CI installs the lockfile, so a missing adapter there is a broken install, not a reason to skip.
+  if (!existsSync(adapterPath)) {
+    assert.ok(!process.env.CI, `pi-mcp-adapter is missing from ${modules}`);
+    return;
+  }
   const files = ["mcp-auth-flow.ts", "mcp-oauth-provider.ts", "commands.ts"];
   const dir = mkdtempSync(join(tmpdir(), "adapter-patch-"));
   const pkg = join(dir, "pi-mcp-adapter");
@@ -51,9 +60,15 @@ test("apply-adapter-patch.sh applies once, then skips, and refuses a partly patc
     assert.match(patched[2], /forceReauthorization: true,/);
     assert.match(apply(), /^already applied: /m);
     assert.deepEqual(files.map((f) => readFileSync(join(pkg, f), "utf8")), patched, "a second run changes nothing");
-    // Half the fix: one file back to the published version.
+    // Half the fix, file level: one file back to the published version.
     writeFileSync(join(pkg, "commands.ts"), pristine[2]);
     assert.throws(apply, (error: { status?: number }) => error.status === 1);
+    // Half the fix, hunk level: every file patched, but one inner hunk of the provider reverted.
+    writeFileSync(join(pkg, "commands.ts"), patched[2]);
+    const reverted = patched[1].replace(/\n  skipStaleClient\(\): void \{[\s\S]*?\n  \}\n/, "\n");
+    assert.notEqual(reverted, patched[1], "the inner hunk was found");
+    writeFileSync(join(pkg, "mcp-oauth-provider.ts"), reverted);
+    assert.throws(apply, (error: { status?: number; stderr?: string }) => error.status === 1 && /neither applies/.test(error.stderr ?? ""));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

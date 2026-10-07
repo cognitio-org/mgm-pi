@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import { isA2ASession, type SecretsBroker } from "./secrets.ts";
 import { isA2ABranch } from "./branch-policy.ts";
-import type { GithubIdempotencyRecord, GithubWriteProgress, Session, Store } from "./store/types.ts";
+import type { GithubIdempotencyRecord, GithubWriteProgress, Guru, Session, Store } from "./store/types.ts";
 import { parseSessionRepo } from "./session-repo.ts";
 
 const PENDING_MARK = "idempotency pending";
@@ -71,7 +71,13 @@ export interface RateLimit {
 
 export type GithubOpResult =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: string; progress?: GithubWriteProgress };
+  | {
+      ok: false;
+      error: string;
+      progress?: GithubWriteProgress;
+      /** GitHub's HTTP status, for the web routes (#500). Never sent on the socket or stored. */
+      status?: number;
+    };
 
 export interface GithubResponse {
   status: number;
@@ -93,7 +99,7 @@ export interface GithubRequest {
 
 type CallResult =
   | { ok: true; data: any }
-  | { ok: false; error: string };
+  | { ok: false; error: string; status?: number; message?: string };
 
 interface Ctx {
   runId: string;
@@ -266,17 +272,31 @@ export class GithubBroker {
     const session = run ? await this.store.sessions.findById(run.sessionId) : null;
     const guru = session ? await this.store.gurus.findById(session.guruId) : null;
     if (!run || !session || !guru) return this.settle(runId, op, key, write, { ok: false, error: "not found" });
-    if (!session.repo) {
-      return this.settle(runId, op, key, write, { ok: false, error: "this session has no repository" });
-    }
+    const opened = await this.openSession(session, guru, { runId, op, key, write, resume });
+    if (!opened.ok) return this.settle(runId, op, key, write, { ok: false, error: opened.error });
+    const result = await this.execute(opened.ctx, args);
+    return this.settle(runId, op, key, write, result);
+  }
+
+  /**
+   * The policy and the credential every GitHub call for a session goes through: the agent's
+   * github.request ops (run()) and the web UI's session routes (#500) alike. Refuses before any
+   * token is minted; otherwise returns a Ctx on the broker's own installation token (or the
+   * session's PAT). `footerEmail` names who the writes are on behalf of (default: the owner).
+   */
+  private async openSession(
+    session: Session,
+    guru: Guru | null,
+    opts: { runId: string; op: string; key?: string; write: boolean; resume?: GithubWriteProgress; footerEmail?: string },
+  ): Promise<{ ok: true; ctx: Ctx } | { ok: false; status: number; error: string }> {
+    const { op } = opts;
+    if (!session.repo) return { ok: false, status: 400, error: "this session has no repository" };
     const parsed = parseSessionRepo(session.repo);
-    if (!parsed) {
-      return this.settle(runId, op, key, write, { ok: false, error: "this session's repository is not a github.com repository" });
-    }
+    if (!parsed) return { ok: false, status: 400, error: "this session's repository is not a github.com repository" };
     // E9 §8: an A2A task's session never merges, whatever its tape says now (the tape may have
     // been edited after the task started; the task start already refuses mergeFromCloud tapes).
-    if (op === "github_pr.merge" && (guru.mergeFromCloud !== true || isA2ASession(session))) {
-      return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
+    if (op === "github_pr.merge" && !mergeAllowedFor(session, guru)) {
+      return { ok: false, status: 403, error: "not permitted" };
     }
     // E9 §8: a remote caller acts only on its own branch. Reads, and opening this branch's pull
     // request, are all an A2A session's agent may do; edits, reviews and comments on other pull
@@ -284,51 +304,38 @@ export class GithubBroker {
     // And only when that branch is an `outfitter/a2a-*` one: fail closed on a session whose branch
     // was moved (agentlink.ts refuses such a session's run as well).
     if (isA2ASession(session) && (!A2A_GITHUB_OPS.has(op) || !isA2ABranch(session.branch))) {
-      return this.settle(runId, op, key, write, { ok: false, error: "not permitted" });
+      return { ok: false, status: 403, error: "not permitted" };
     }
     // The broker mints its own installation token (issues, PRs, checks, actions). A stub that
     // only implements secretsForRun still works; that path is the drive token.
     const brokerCred = this.secrets.brokerGithubToken
       ? await this.secrets.brokerGithubToken(session)
       : undefined;
-    const runSecrets = brokerCred ? undefined : await this.secrets.secretsForRun(session, guru);
+    if (!brokerCred && !guru) return { ok: false, status: 404, error: "not found" };
+    const runSecrets = brokerCred ? undefined : await this.secrets.secretsForRun(session, guru!);
     const token = (brokerCred ? brokerCred.token : runSecrets!.githubToken).trim();
     const appFailure = brokerCred ? brokerCred.appFailure : runSecrets!.githubAppFailure;
     if (!token) {
       // #158: with the App configured, neither mint falls back to the shared PAT, so this
       // one request fails instead of being written as the PAT's user.
-      const error =
-        appFailure === "unavailable"
-          ? "the GitHub App could not get a token just now; try again shortly"
-          : appFailure === "not-installed"
-            ? "the Outfitter GitHub App's installation doesn't cover this repository"
-            : appFailure === "permissions-missing"
-              ? "the Outfitter GitHub App is missing a permission runs need; an owner has to grant it"
-              : appFailure === "rejected"
-                ? "GitHub refused the Outfitter GitHub App's token request; an operator has to check the App"
-                : appFailure === "misconfigured"
-                  ? "the Outfitter GitHub App is not set up correctly; an operator has to fix it"
-                  : "not permitted";
-      return this.settle(runId, op, key, write, { ok: false, error });
+      return { ok: false, status: appFailure === "unavailable" ? 503 : 403, error: tokenFailureMessage(appFailure) };
     }
-
     const ctx: Ctx = {
-      runId,
+      runId: opts.runId,
       op,
-      key,
-      write,
+      key: opts.key,
+      write: opts.write,
       session,
       owner: parsed.owner,
       repo: parsed.repo,
       branch: session.branch?.trim() || `outfitter/${session.id}`,
       token,
       transport: this.transportFor(token),
-      footer: await this.footerFor(session),
+      footer: opts.footerEmail !== undefined ? await this.footerForEmail(opts.footerEmail) : await this.footerFor(session),
       paced: false,
-      resume,
+      resume: opts.resume,
     };
-    const result = await this.execute(ctx, args);
-    return this.settle(runId, op, key, write, result);
+    return { ok: true, ctx };
   }
 
   /**
@@ -369,10 +376,460 @@ export class GithubBroker {
     }
   }
 
-  private async ownerLogin(session: Session): Promise<string> {
-    if (!session.ownerEmail) return "";
+  // ---- #500: the web UI's actions on the session's own pull request ----
+  //
+  // Whoever may manage the session (routes check canManageSession) gets, from the browser, what the
+  // agent already gets through github.request: create the branch's pull request, read its checks,
+  // merge it (only as the agent could), plus sync with base and re-run failed checks. Same gates
+  // (openSession), same credential, same helpers. Writes go out "on behalf of" the signed-in person.
+  //
+  // Idempotency: an optional key per write, remembered in this process for SESSION_WRITE_TTL_MS
+  // (a session has no run to persist it on). Each write is also safe to repeat on GitHub's side: a
+  // second create finds the open pull request (409), a merge is pinned to a sha, a second sync
+  // finds nothing behind, a second re-run re-runs what is still failed.
+
+  private readonly sessionWrites = new Map<string, { at: number; result: SessionGithubResult<any> }>();
+  private readonly sessionInflight = new Map<string, Promise<SessionGithubResult<any>>>();
+  private readonly prStates = new Map<string, { at: number; ttl: number; value: SessionPrStatus }>();
+
+  /** Forget the cached pull request state of a session, so the next status read asks GitHub. */
+  forgetSessionPr(sessionId: string): void {
+    this.prStates.delete(sessionId);
+  }
+
+  /** The session branch's open pull request with its checks, review and mergeability, plus whether
+   * Merge may be offered. Cached per session (shorter while checks run). Never throws. */
+  async sessionPrStatus(session: Session, opts: { fresh?: boolean } = {}): Promise<SessionPrStatus> {
+    const guru = await this.guruOf(session);
+    const mergeAllowed = mergeAllowedFor(session, guru);
+    if (!session.repo) return { mergeAllowed, pr: null };
+    const hit = this.prStates.get(session.id);
+    // mergeAllowed is the tape's live setting, never the cached one.
+    if (!opts.fresh && hit && Date.now() - hit.at < hit.ttl) return { ...hit.value, mergeAllowed };
+    let value: SessionPrStatus;
+    let ttl = PR_STATE_TTL_MS;
     try {
-      const user = await this.store.users.findByEmail(session.ownerEmail);
+      const opened = await this.openSession(session, guru, { runId: `session:${session.id}`, op: "github_pr.checks", write: false });
+      if (!opened.ok) {
+        value = { mergeAllowed, pr: null, prError: opened.error };
+        ttl = PR_STATE_BUSY_TTL_MS;
+      } else {
+        const read = await this.readSessionPull(opened.ctx);
+        if ("error" in read) {
+          value = { mergeAllowed, pr: null, prError: read.error };
+          ttl = PR_STATE_BUSY_TTL_MS;
+        } else {
+          value = { mergeAllowed, pr: read.pr };
+          if (read.pr && (read.pr.checkSummary.state === "pending" || read.pr.mergeable === null)) ttl = PR_STATE_BUSY_TTL_MS;
+        }
+      }
+    } catch {
+      value = { mergeAllowed, pr: null, prError: "github request failed" };
+      ttl = PR_STATE_BUSY_TTL_MS;
+    }
+    if (this.prStates.size >= SESSION_WRITE_MAX) this.prStates.delete(this.prStates.keys().next().value!);
+    this.prStates.set(session.id, { at: Date.now(), ttl, value });
+    return value;
+  }
+
+  /** POST /api/sessions/:id/pr: open the session branch's pull request against its base. The body
+   * defaults to the repository's pull request template (the first, if it has several). */
+  async createSessionPr(
+    session: Session,
+    actor: SessionActor,
+    input: { title?: unknown; body?: unknown; draft?: unknown },
+    idempotencyKey?: unknown,
+  ): Promise<SessionGithubResult<{ number: number | null; url: string; draft: boolean; base: string; template: string | null }>> {
+    const title = typeof input.title === "string" ? input.title.trim() : "";
+    if (!title) return sessionFail(400, "A title is required.");
+    if (title.length > 256) return sessionFail(400, "A title can be at most 256 characters.");
+    if (input.body !== undefined && input.body !== null && typeof input.body !== "string") return sessionFail(400, "body must be a string.");
+    if (input.draft !== undefined && typeof input.draft !== "boolean") return sessionFail(400, "draft must be true or false.");
+    const body = typeof input.body === "string" && input.body.trim() ? input.body : undefined;
+    const draft = input.draft === true;
+    return this.sessionWrite(session, actor, "github_pr.create", idempotencyKey, async (ctx) => {
+      const existing = await this.openPull(ctx);
+      if (!existing.ok) return sessionFail(routeStatus(existing.status), existing.error);
+      if (existing.pr) {
+        const url = String(existing.pr.html_url ?? "");
+        return sessionFail(409, "This branch already has an open pull request.", "pr-exists", { number: existing.pr.number, url });
+      }
+      const base = baseBranch(undefined, ctx.session.baseBranch);
+      if (typeof base !== "string") return sessionFail(400, base.error);
+      const compared = await this.compareBranch(ctx, base);
+      if (!compared.ok) return compared;
+      if (compared.aheadBy === 0) {
+        return sessionFail(409, `The branch has no commits ahead of ${base}, so there is nothing to open a pull request for.`, "no-commits");
+      }
+      const created = await this.createPr(ctx, { title, ...(body ? { body } : {}), ...(draft ? { draft: true } : {}) }, { firstTemplate: true });
+      if (!created.ok) {
+        if (created.status === 422 && /already exists/i.test(created.error)) {
+          return sessionFail(409, "This branch already has an open pull request.", "pr-exists");
+        }
+        return sessionFail(routeStatus(created.status), created.error);
+      }
+      const url = String(created.data.url ?? "");
+      const number = /\/pull\/(\d+)$/.exec(url)?.[1];
+      const template = typeof created.data.template === "string" ? created.data.template : null;
+      return { ok: true, data: { number: number ? Number(number) : null, url, draft, base, template } };
+    });
+  }
+
+  /** POST /api/sessions/:id/pr/merge: the broker's merge, pinned to the head the person saw. Only
+   * when the tape has mergeFromCloud, and never for an A2A task's session. */
+  async mergeSessionPr(
+    session: Session,
+    actor: SessionActor,
+    input: { sha?: unknown; method?: unknown },
+    idempotencyKey?: unknown,
+  ): Promise<SessionGithubResult<{ number: number; method: string; sha: string; merged: true; detail: string }>> {
+    const sha = typeof input.sha === "string" ? input.sha.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{40}$/.test(sha)) return sessionFail(400, "sha must be the full 40-character head commit you saw.");
+    const method = input.method === undefined || input.method === null ? "squash" : input.method;
+    if (method !== "squash" && method !== "merge" && method !== "rebase") return sessionFail(400, "method must be squash, merge or rebase.");
+    const guru = await this.guruOf(session);
+    if (!mergeAllowedFor(session, guru)) {
+      return sessionFail(
+        403,
+        isA2ASession(session)
+          ? "An A2A task's session is never merged from Outfitter."
+          : "This floppy's tape doesn't allow merging from the cloud (mergeFromCloud is off).",
+        "merge-not-allowed",
+      );
+    }
+    return this.sessionWrite(session, actor, "github_pr.merge", idempotencyKey, async (ctx) => {
+      const open = await this.openPull(ctx);
+      if (!open.ok) return sessionFail(routeStatus(open.status), open.error);
+      if (!open.pr) return sessionFail(409, "This branch has no open pull request to merge.", "no-pr");
+      const number = Number(open.pr.number);
+      const merged = await this.mergePr(ctx, { number, method, sha });
+      if (!merged.ok) {
+        if (merged.status === 409 && /head moved/i.test(merged.error)) return sessionFail(409, merged.error, "head-moved");
+        if (merged.status === 405) return sessionFail(409, merged.error, "not-mergeable");
+        return sessionFail(routeStatus(merged.status), merged.error);
+      }
+      return { ok: true, data: { number, method, sha, merged: true, detail: String(merged.data.detail ?? "merged") } };
+    });
+  }
+
+  /** POST /api/sessions/:id/sync: bring the base branch into the session branch on GitHub. With an
+   * open pull request, GitHub's update-branch (a merge commit, pinned to the head it saw);
+   * without one, the merges API. A conflict is a result, not an error. */
+  async syncSession(session: Session, actor: SessionActor, idempotencyKey?: unknown): Promise<SessionGithubResult<SessionSyncResult>> {
+    return this.sessionWrite(session, actor, "github_pr.sync", idempotencyKey, async (ctx) => {
+      const base = baseBranch(undefined, ctx.session.baseBranch);
+      if (typeof base !== "string") return sessionFail(400, base.error);
+      const compared = await this.compareBranch(ctx, base);
+      if (!compared.ok) return compared;
+      const upToDate: SessionSyncResult = { status: "up-to-date", via: null, base, branchMoved: false };
+      const conflict = (via: SessionSyncResult["via"]): SessionGithubResult<SessionSyncResult> => ({
+        ok: true,
+        data: { status: "conflict", via, base, branchMoved: false },
+      });
+      if (compared.behindBy === 0) return { ok: true, data: upToDate };
+      const open = await this.openPull(ctx);
+      if (!open.ok) return sessionFail(routeStatus(open.status), open.error);
+      if (open.pr) {
+        const head = typeof open.pr.head?.sha === "string" && /^[0-9a-f]{40}$/i.test(open.pr.head.sha) ? open.pr.head.sha.toLowerCase() : undefined;
+        if (open.pr.mergeable_state === "dirty") return conflict("update-branch");
+        const res = await this.call(ctx, "PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {
+          owner: ctx.owner,
+          repo: ctx.repo,
+          pull_number: Number(open.pr.number),
+          ...(head ? { expected_head_sha: head } : {}),
+        });
+        if (res.ok) {
+          return { ok: true, data: { status: "updated", via: "update-branch", base, branchMoved: true, agentNote: SYNC_AGENT_NOTE } };
+        }
+        const said = `${res.message ?? ""} ${res.error}`;
+        if (res.status === 422 && /conflict/i.test(said)) return conflict("update-branch");
+        if (res.status === 422 && /no new commits/i.test(said)) return { ok: true, data: upToDate };
+        if (res.status === 422 && /expected head sha|head sha/i.test(said)) {
+          return sessionFail(409, "The branch moved while syncing. Look again and retry.", "head-moved");
+        }
+        return sessionFail(routeStatus(res.status), res.error);
+      }
+      const footer = ctx.footer.trim();
+      const res = await this.call(ctx, "POST /repos/{owner}/{repo}/merges", {
+        owner: ctx.owner,
+        repo: ctx.repo,
+        base: ctx.branch,
+        head: base,
+        commit_message: `Merge ${base} into ${ctx.branch}${footer ? `\n\n${footer}` : ""}`,
+      });
+      if (res.ok) {
+        // 201 with the merge commit; 204 (no body) when there was nothing to merge.
+        const sha = typeof res.data?.sha === "string" ? res.data.sha.toLowerCase() : undefined;
+        if (!sha) return { ok: true, data: upToDate };
+        return { ok: true, data: { status: "updated", via: "merge", base, sha, branchMoved: true, agentNote: SYNC_AGENT_NOTE } };
+      }
+      if (res.status === 409) return conflict("merge");
+      if (res.status === 404) return sessionFail(409, `The branch or ${base} isn't on GitHub.`, "no-branch");
+      return sessionFail(routeStatus(res.status), res.error);
+    });
+  }
+
+  /** POST /api/sessions/:id/checks/rerun: re-run the failed jobs of every failed workflow run on the
+   * branch head. The write needs `actions: write`, minted on its own (RERUN_PERMISSIONS) so the
+   * broker's token is unchanged; until the App has it, this answers 403 with RERUN_PERMISSION_ERROR. */
+  async rerunSessionChecks(
+    session: Session,
+    actor: SessionActor,
+    idempotencyKey?: unknown,
+  ): Promise<SessionGithubResult<SessionRerunResult>> {
+    return this.sessionWrite<SessionRerunResult>(session, actor, "github_pr.rerun", idempotencyKey, async (ctx) => {
+      const open = await this.openPull(ctx);
+      if (!open.ok) return sessionFail(routeStatus(open.status), open.error);
+      let sha = typeof open.pr?.head?.sha === "string" ? open.pr.head.sha : "";
+      if (!sha) {
+        const branch = await this.call(ctx, "GET /repos/{owner}/{repo}/branches/{branch}", { owner: ctx.owner, repo: ctx.repo, branch: ctx.branch });
+        if (!branch.ok) {
+          return branch.status === 404
+            ? sessionFail(409, "The branch isn't on GitHub yet.", "no-branch")
+            : sessionFail(routeStatus(branch.status), branch.error);
+        }
+        sha = typeof branch.data?.commit?.sha === "string" ? branch.data.commit.sha : "";
+      }
+      sha = sha.toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(sha)) return sessionFail(502, "Could not read the branch head.");
+      const runs = await this.call(ctx, "GET /repos/{owner}/{repo}/actions/runs", { owner: ctx.owner, repo: ctx.repo, head_sha: sha, per_page: 50 });
+      if (!runs.ok) {
+        return sessionFail(
+          routeStatus(runs.status),
+          runs.status === 403 ? "Outfitter's GitHub App can't read this repository's Actions runs." : runs.error,
+        );
+      }
+      const listed: any[] = Array.isArray(runs.data?.workflow_runs) ? runs.data.workflow_runs : [];
+      const failed = listed.filter(
+        (run) => run?.status === "completed" && FAILED_RUN.has(String(run?.conclusion ?? "").toLowerCase()) && Number.isSafeInteger(run?.id),
+      );
+      if (!failed.length) return { ok: true, data: { status: "nothing-to-rerun" as const, sha, rerun: [] } };
+      const cred = this.secrets.rerunGithubToken ? await this.secrets.rerunGithubToken(ctx.session) : { token: ctx.token };
+      const token = cred.token.trim();
+      if (!token) {
+        const reason = "appFailure" in cred ? cred.appFailure : undefined;
+        if (reason === "permissions-missing") return sessionFail(403, RERUN_PERMISSION_ERROR, "actions-permission");
+        return sessionFail(reason === "unavailable" ? 503 : 403, tokenFailureMessage(reason));
+      }
+      const actx: Ctx = { ...ctx, token, transport: token === ctx.token ? ctx.transport : this.transportFor(token), paced: false };
+      const rerun: { id: number; name: string }[] = [];
+      for (const run of failed) {
+        const res = await this.call(actx, "POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs", {
+          owner: ctx.owner,
+          repo: ctx.repo,
+          run_id: run.id,
+        });
+        if (!res.ok) {
+          const done = rerun.length ? { rerun } : undefined;
+          if (res.status === 403) return sessionFail(403, RERUN_PERMISSION_ERROR, "actions-permission", done);
+          return sessionFail(routeStatus(res.status), res.error, done ? "partial" : undefined, done);
+        }
+        rerun.push({ id: Number(run.id), name: String(run.name ?? "workflow") });
+      }
+      return { ok: true, data: { status: "rerun" as const, sha, rerun } };
+    });
+  }
+
+  /** GET /api/sessions/:id/checks/:checkId/log: the tail of one GitHub Actions job's log, for Fix CI. */
+  async sessionCheckLog(
+    session: Session,
+    checkId: string,
+  ): Promise<SessionGithubResult<{ id: string; name: string; conclusion: string | null; detailsUrl: string | null; log: string; truncated: boolean }>> {
+    if (!/^\d{1,19}$/.test(checkId)) return sessionFail(400, "checkId must be a check run id.");
+    try {
+      const guru = await this.guruOf(session);
+      const opened = await this.openSession(session, guru, { runId: `session:${session.id}`, op: "github_pr.checks", write: false });
+      if (!opened.ok) return sessionFail(opened.status, opened.error);
+      const ctx = opened.ctx;
+      const run = await this.call(ctx, "GET /repos/{owner}/{repo}/check-runs/{check_run_id}", { owner: ctx.owner, repo: ctx.repo, check_run_id: Number(checkId) });
+      if (!run.ok) return sessionFail(routeStatus(run.status), run.error);
+      const detailsUrl = webUrlOrNull(run.data?.html_url ?? run.data?.details_url);
+      if (run.data?.app?.slug !== "github-actions") {
+        return sessionFail(404, "This check isn't a GitHub Actions job, so its log can't be read here. Open it on GitHub.", "no-log", { detailsUrl });
+      }
+      const log = await this.call(ctx, "GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs", { owner: ctx.owner, repo: ctx.repo, job_id: Number(checkId) });
+      if (!log.ok) {
+        return log.status === 404 || log.status === 410
+          ? sessionFail(404, "This job's log isn't available (it hasn't started, or it has expired).", "no-log", { detailsUrl })
+          : sessionFail(routeStatus(log.status), log.error);
+      }
+      const text = textOf(log.data);
+      if (text === undefined) return sessionFail(502, "GitHub returned a log Outfitter couldn't read.");
+      const tail = logTail(text);
+      return {
+        ok: true,
+        data: {
+          id: checkId,
+          name: String(run.data?.name ?? "check"),
+          conclusion: typeof run.data?.conclusion === "string" ? run.data.conclusion.toLowerCase() : null,
+          detailsUrl,
+          ...tail,
+        },
+      };
+    } catch {
+      return sessionFail(502, "github request failed");
+    }
+  }
+
+  private async guruOf(session: Session): Promise<Guru | null> {
+    try {
+      return await this.store.gurus.findById(session.guruId);
+    } catch {
+      return null;
+    }
+  }
+
+  /** The open pull request whose head is the session branch, or null. */
+  private async openPull(ctx: Ctx): Promise<{ ok: true; pr: any | null } | { ok: false; error: string; status?: number }> {
+    const res = await this.call(ctx, "GET /repos/{owner}/{repo}/pulls", {
+      owner: ctx.owner, repo: ctx.repo, head: `${ctx.owner}:${ctx.branch}`, state: "open", per_page: 1,
+    });
+    if (!res.ok) return res;
+    const first = Array.isArray(res.data) ? res.data[0] : undefined;
+    return { ok: true, pr: first && typeof first.number === "number" ? first : null };
+  }
+
+  /** How far the session branch is ahead of and behind `base`. A missing branch is a 409. */
+  private async compareBranch(
+    ctx: Ctx,
+    base: string,
+  ): Promise<{ ok: true; aheadBy: number; behindBy: number } | { ok: false; status: number; error: string; code?: string }> {
+    const res = await this.call(ctx, "GET /repos/{owner}/{repo}/compare/{basehead}", {
+      owner: ctx.owner, repo: ctx.repo, basehead: `${base}...${ctx.branch}`, per_page: 1,
+    });
+    if (!res.ok) {
+      if (res.status === 404) {
+        return sessionFail(409, `The branch ${ctx.branch} (or ${base}) isn't on GitHub yet; the agent has to push it first.`, "no-branch");
+      }
+      return sessionFail(routeStatus(res.status), res.error);
+    }
+    const aheadBy = Number(res.data?.ahead_by);
+    const behindBy = Number(res.data?.behind_by);
+    if (!Number.isFinite(aheadBy) || !Number.isFinite(behindBy)) return sessionFail(502, "GitHub's comparison had no counts.");
+    return { ok: true, aheadBy, behindBy };
+  }
+
+  private async readSessionPull(ctx: Ctx): Promise<{ pr: SessionPullState | null } | { error: string }> {
+    const listed = await this.openPull(ctx);
+    if (!listed.ok) return { error: listed.error };
+    if (!listed.pr) return { pr: null };
+    const number = Number(listed.pr.number);
+    // The list leaves out mergeable / mergeable_state; one pull request read has them.
+    const full = await this.call(ctx, "GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner: ctx.owner, repo: ctx.repo, pull_number: number });
+    const pr = full.ok && full.data && typeof full.data === "object" ? full.data : listed.pr;
+    const sha = typeof pr?.head?.sha === "string" && /^[0-9a-f]{40}$/i.test(pr.head.sha) ? pr.head.sha.toLowerCase() : null;
+    let checks: SessionCheck[] = [];
+    let counts: { passed: number; failed: number; pending: number; total: number } | undefined;
+    let checksError: string | undefined;
+    if (sha) {
+      this.rememberHead(ctx, number, sha);
+      const roll = await this.loadChecks(ctx, sha);
+      if ("error" in roll) checksError = roll.error;
+      else {
+        checks = roll.details;
+        counts = roll.checks;
+      }
+    }
+    const reviews = await this.call(ctx, "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+      owner: ctx.owner, repo: ctx.repo, pull_number: number, per_page: 100,
+    });
+    return {
+      pr: {
+        number,
+        url: String(pr?.html_url ?? ""),
+        title: String(pr?.title ?? ""),
+        draft: pr?.draft === true,
+        base: pr?.base?.ref ? String(pr.base.ref) : null,
+        headSha: sha,
+        checks,
+        checkSummary: summaryOf(counts),
+        ...(checksError ? { checksError } : {}),
+        review: reviewOf(pr, reviews.ok && Array.isArray(reviews.data) ? reviews.data : undefined),
+        mergeable: typeof pr?.mergeable === "boolean" ? pr.mergeable : null,
+        mergeableState: typeof pr?.mergeable_state === "string" ? pr.mergeable_state : null,
+      },
+    };
+  }
+
+  private async sessionWrite<T>(
+    session: Session,
+    actor: SessionActor,
+    op: string,
+    rawKey: unknown,
+    work: (ctx: Ctx) => Promise<SessionGithubResult<T>>,
+  ): Promise<SessionGithubResult<T>> {
+    let key: string | undefined;
+    if (rawKey !== undefined && rawKey !== null && rawKey !== "") {
+      key = idempotencyKey(rawKey);
+      if (!key) return sessionFail(400, "The idempotency key must be a string without \".\" or \"$\".");
+      if (key.length > MAX_KEY_LEN) return sessionFail(400, "The idempotency key is too long.");
+    }
+    const memo = key ? `${session.id}\0${actor.email.toLowerCase()}\0${op}\0${key}` : undefined;
+    if (memo) {
+      const prior = this.sessionWrites.get(memo);
+      if (prior && Date.now() - prior.at < SESSION_WRITE_TTL_MS) {
+        this.logSessionWrite(session, actor, op, prior.result, true);
+        return structuredClone(prior.result);
+      }
+      const flight = this.sessionInflight.get(memo);
+      if (flight) return flight as Promise<SessionGithubResult<T>>;
+    }
+    const p = this.runSessionWrite(session, actor, op, work);
+    if (!memo) return p;
+    this.sessionInflight.set(memo, p);
+    try {
+      const result = await p;
+      // A transient failure may be retried with the same key; anything else is the answer.
+      if (result.ok || (result.status < 500 && result.status !== 429)) {
+        if (this.sessionWrites.size >= SESSION_WRITE_MAX) this.pruneSessionWrites();
+        this.sessionWrites.set(memo, { at: Date.now(), result: structuredClone(result) });
+      }
+      return result;
+    } finally {
+      if (this.sessionInflight.get(memo) === p) this.sessionInflight.delete(memo);
+    }
+  }
+
+  private async runSessionWrite<T>(
+    session: Session,
+    actor: SessionActor,
+    op: string,
+    work: (ctx: Ctx) => Promise<SessionGithubResult<T>>,
+  ): Promise<SessionGithubResult<T>> {
+    let result: SessionGithubResult<T>;
+    try {
+      const guru = await this.guruOf(session);
+      // write: false: these writes keep no run checkpoint (there is no run); see sessionWrite.
+      const opened = await this.openSession(session, guru, { runId: `session:${session.id}`, op, write: false, footerEmail: actor.email });
+      result = opened.ok ? await work(opened.ctx) : sessionFail(opened.status, opened.error);
+    } catch {
+      result = sessionFail(502, "github request failed");
+    }
+    this.prStates.delete(session.id);
+    this.logSessionWrite(session, actor, op, result, false);
+    return result;
+  }
+
+  private logSessionWrite(session: Session, actor: SessionActor, op: string, result: SessionGithubResult<unknown>, replay: boolean): void {
+    const who = actor.email.replace(/[\r\n\s]/g, "").slice(0, 200);
+    const outcome = result.ok ? "ok" : `err ${result.status}${result.code ? ` ${result.code}` : ""}`;
+    console.log(`[github] session ${session.id} ${op} by ${who} ${outcome}${replay ? " replay" : ""}`);
+  }
+
+  private pruneSessionWrites(): void {
+    const cutoff = Date.now() - SESSION_WRITE_TTL_MS;
+    for (const [memo, entry] of this.sessionWrites) if (entry.at < cutoff) this.sessionWrites.delete(memo);
+    while (this.sessionWrites.size >= SESSION_WRITE_MAX) this.sessionWrites.delete(this.sessionWrites.keys().next().value!);
+  }
+
+  private async ownerLogin(session: Session): Promise<string> {
+    return this.loginFor(session.ownerEmail);
+  }
+
+  private async loginFor(email: string | undefined): Promise<string> {
+    if (!email) return "";
+    try {
+      const user = await this.store.users.findByEmail(email);
       const login = user?.githubLogin?.replace(/^@/, "").trim() ?? "";
       return /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(login) ? login : "";
     } catch {
@@ -381,7 +838,11 @@ export class GithubBroker {
   }
 
   private async footerFor(session: Session): Promise<string> {
-    const login = await this.ownerLogin(session);
+    return this.footerForEmail(session.ownerEmail);
+  }
+
+  private async footerForEmail(email: string | undefined): Promise<string> {
+    const login = await this.loginFor(email);
     return login ? `Outfitter, on behalf of @${login}` : "";
   }
 
@@ -420,7 +881,7 @@ export class GithubBroker {
   }
 
   private async remember(runId: string, key: string, result: GithubOpResult): Promise<void> {
-    const stored = structuredClone(result);
+    const stored: GithubOpResult = structuredClone(result.ok ? result : { ok: false, error: result.error, ...(result.progress ? { progress: result.progress } : {}) });
     this.noteMemory(runId, key, stored);
     try {
       await this.store.runs.finishGithubIdempotency(runId, key, stored);
@@ -472,10 +933,10 @@ export class GithubBroker {
       this.budgets.set(this.tokenKey(ctx.token), rl);
       ctx.rateLimit = rl;
     }
-    if (isRateLimit(res)) return { ok: false, error: "rate limit exceeded" };
-    if (res.status === 401 || res.status === 403) return { ok: false, error: "not permitted" };
-    if (res.status === 404) return { ok: false, error: "not found" };
-    if (res.status < 200 || res.status >= 300) return { ok: false, error: publicHttpError(res) };
+    if (isRateLimit(res)) return { ok: false, error: "rate limit exceeded", status: 429 };
+    if (res.status === 401 || res.status === 403) return { ok: false, error: "not permitted", status: 403, message: messageOf(res.data) };
+    if (res.status === 404) return { ok: false, error: "not found", status: 404 };
+    if (res.status < 200 || res.status >= 300) return { ok: false, error: publicHttpError(res), status: res.status, message: messageOf(res.data) };
     return { ok: true, data: res.data };
   }
 
@@ -607,7 +1068,7 @@ export class GithubBroker {
   private async loadChecks(
     ctx: Ctx,
     sha: string,
-  ): Promise<{ checks?: { passed: number; failed: number; pending: number; total: number }; jobs: { name: string; state: string; url: string }[] } | { error: string }> {
+  ): Promise<ReturnType<typeof collectChecks> | { error: string }> {
     const runs = await this.call(ctx, "GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
       owner: ctx.owner, repo: ctx.repo, ref: sha, per_page: 100,
     });
@@ -644,7 +1105,7 @@ export class GithubBroker {
     return this.data(ctx, { pullRequests: rows.map((row) => normalizePull(row, undefined, undefined, [], false)) });
   }
 
-  private async createPr(ctx: Ctx, args: Record<string, unknown>): Promise<GithubOpResult> {
+  private async createPr(ctx: Ctx, args: Record<string, unknown>, opts: { firstTemplate?: boolean } = {}): Promise<GithubOpResult> {
     const title = typeof args.title === "string" ? args.title.trim() : "";
     if (!title) return { ok: false, error: "A title is required." };
     const base = baseBranch(args.base, ctx.session.baseBranch);
@@ -655,7 +1116,7 @@ export class GithubBroker {
     if (explicit === undefined) {
       const templates = await this.loadTemplates(ctx);
       const wanted = typeof args.template === "string" ? args.template.trim() : "";
-      if (templates.length > 1 && !wanted) {
+      if (templates.length > 1 && !wanted && !opts.firstTemplate) {
         return { ok: false, error: "This repository has more than one pull request template. Pass template with one of:\n" + templates.map((t) => t.path).join("\n") };
       }
       if (wanted) {
@@ -688,7 +1149,7 @@ export class GithubBroker {
       body,
       ...(args.draft === true ? { draft: true } : {}),
     });
-    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.ok) return { ok: false, error: res.error, status: res.status };
     return this.data(ctx, { url: String(res.data?.html_url ?? ""), template: templatePath, closes });
   }
 
@@ -825,11 +1286,11 @@ export class GithubBroker {
     if (!live.ok) return { ok: false, error: live.error };
     const head = String(live.data?.head?.sha ?? "").toLowerCase();
     if (!head) return { ok: false, error: "Could not read the pull request head." };
-    if (head !== pin) return { ok: false, error: `The pull request head moved from ${pin} to ${head}. Look again before merging.` };
+    if (head !== pin) return { ok: false, status: 409, error: `The pull request head moved from ${pin} to ${head}. Look again before merging.` };
     const res = await this.call(ctx, "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", {
       owner: ctx.owner, repo: ctx.repo, pull_number: number, merge_method: method, sha: pin,
     });
-    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.ok) return { ok: false, error: res.error, status: res.status };
     this.heads.delete(this.headKey(ctx, number));
     return this.data(ctx, { number, method, sha: pin, detail: clip(String(res.data?.message ?? "merged"), 500) });
   }
@@ -1082,6 +1543,159 @@ export class GithubBroker {
     if (res.data.encoding !== "base64" || typeof res.data.content !== "string") return undefined;
     return Buffer.from(res.data.content.replace(/\n/g, ""), "base64").toString("utf8");
   }
+}
+
+/** Whether the session's pull request may be merged from Outfitter at all: the tape allows merging
+ * from the cloud, and the session is not an A2A task's (E9 §8: those never merge). */
+export function mergeAllowedFor(session: Session, guru: Pick<Guru, "mergeFromCloud"> | null | undefined): boolean {
+  return guru?.mergeFromCloud === true && !isA2ASession(session);
+}
+
+function tokenFailureMessage(appFailure: string | undefined): string {
+  return appFailure === "unavailable"
+    ? "the GitHub App could not get a token just now; try again shortly"
+    : appFailure === "not-installed"
+      ? "the Outfitter GitHub App's installation doesn't cover this repository"
+      : appFailure === "permissions-missing"
+        ? "the Outfitter GitHub App is missing a permission runs need; an owner has to grant it"
+        : appFailure === "rejected"
+          ? "GitHub refused the Outfitter GitHub App's token request; an operator has to check the App"
+          : appFailure === "misconfigured"
+            ? "the Outfitter GitHub App is not set up correctly; an operator has to fix it"
+            : "not permitted";
+}
+
+/** #500: what the web routes return. `status` is the HTTP status; `code` a stable reason the UI can
+ * branch on (pr-exists, no-commits, merge-not-allowed, head-moved, actions-permission, ...). */
+export type SessionGithubResult<T = Record<string, unknown>> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string; code?: string; data?: Record<string, unknown> };
+
+/** Who a web route acts for: the signed-in person (the session's owner or a sysop). */
+export interface SessionActor {
+  email: string;
+}
+
+export type SessionReview = "approved" | "changes_requested" | "review_required" | "none";
+
+/** #500: the session branch's open pull request as the web UI shows it. */
+export interface SessionPullState {
+  number: number;
+  url: string;
+  title: string;
+  draft: boolean;
+  base: string | null;
+  headSha: string | null;
+  checks: SessionCheck[];
+  checkSummary: { passed: number; failed: number; pending: number; total: number; state: "pass" | "fail" | "pending" | "none" };
+  /** Why the checks couldn't be read (e.g. "not permitted" without checks:read); checks is then []. */
+  checksError?: string;
+  review: SessionReview;
+  /** GitHub's `mergeable`: null while GitHub is still working it out. */
+  mergeable: boolean | null;
+  /** GitHub's `mergeable_state` (clean, dirty, blocked, behind, unstable, draft, unknown, ...). */
+  mergeableState: string | null;
+}
+
+export interface SessionPrStatus {
+  /** The tape has mergeFromCloud and the session isn't an A2A task's. The UI shows Merge only then. */
+  mergeAllowed: boolean;
+  /** The open pull request whose head is the session branch, or null when there is none. */
+  pr: SessionPullState | null;
+  /** Why `pr` couldn't be read (no token, a rate limit, ...), when it couldn't. */
+  prError?: string;
+}
+
+/** #500: sync's result. `branchMoved`: the branch on GitHub got a new commit the Drive's checkout
+ * doesn't have; the UI should tell the agent to pull (see `agentNote`) before it pushes again. */
+export interface SessionSyncResult {
+  status: "updated" | "up-to-date" | "conflict";
+  via: "update-branch" | "merge" | null;
+  base: string;
+  sha?: string;
+  branchMoved: boolean;
+  agentNote?: string;
+}
+
+export interface SessionRerunResult {
+  status: "rerun" | "nothing-to-rerun";
+  sha: string;
+  /** The workflow runs whose failed jobs were re-run. */
+  rerun: { id: number; name: string }[];
+}
+
+export const SYNC_AGENT_NOTE =
+  "The base branch was merged into this branch on GitHub. Run `git pull` on the branch before you change anything else, or your next push will be rejected.";
+
+const SESSION_WRITE_TTL_MS = 15 * 60_000;
+const SESSION_WRITE_MAX = 1_000;
+const PR_STATE_TTL_MS = 30_000;
+/** While checks run (or GitHub is still computing mergeable), the UI wants fresher answers. */
+const PR_STATE_BUSY_TTL_MS = 10_000;
+const LOG_TAIL_LINES = 80;
+const LOG_TAIL_CHARS = 8_000;
+const FAILED_RUN = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
+export const RERUN_PERMISSION_ERROR = "Outfitter's GitHub App needs the Actions: write permission to re-run checks.";
+
+function sessionFail(
+  status: number,
+  error: string,
+  code?: string,
+  data?: Record<string, unknown>,
+): { ok: false; status: number; error: string; code?: string; data?: Record<string, unknown> } {
+  return { ok: false, status, error, ...(code ? { code } : {}), ...(data ? { data } : {}) };
+}
+
+/** A broker failure as an HTTP status for the browser. GitHub's own 5xx is a 502 here. */
+function routeStatus(status: number | undefined): number {
+  if (status === undefined) return 502;
+  if (status === 401 || status === 403) return 403;
+  if (status === 404 || status === 409 || status === 422 || status === 429 || status === 400) return status;
+  if (status === 405) return 409;
+  return 502;
+}
+
+function reviewOf(pr: any, reviews: any[] | undefined): SessionReview {
+  const decided = reviews ? reviewFrom(reviews) : undefined;
+  if (decided === "APPROVED") return "approved";
+  if (decided === "CHANGES_REQUESTED") return "changes_requested";
+  const users = Array.isArray(pr?.requested_reviewers) ? pr.requested_reviewers.length : 0;
+  const teams = Array.isArray(pr?.requested_teams) ? pr.requested_teams.length : 0;
+  return users + teams > 0 ? "review_required" : "none";
+}
+
+function summaryOf(checks: { passed: number; failed: number; pending: number; total: number } | undefined): SessionPullState["checkSummary"] {
+  if (!checks || checks.total === 0) return { passed: 0, failed: 0, pending: 0, total: 0, state: "none" };
+  const state = checks.failed > 0 ? "fail" : checks.pending > 0 ? "pending" : "pass";
+  return { ...checks, state };
+}
+
+/** The last lines of a GitHub Actions job log, without the per-line timestamps and colour codes. */
+export function logTail(raw: string): { log: string; truncated: boolean } {
+  const lines = raw
+    .replace(/\r\n?/g, "\n")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
+    .split("\n")
+    .map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, ""));
+  while (lines.length && !lines[lines.length - 1]!.trim()) lines.pop();
+  const kept = lines.slice(-LOG_TAIL_LINES);
+  let truncated = kept.length < lines.length;
+  let text = kept.join("\n");
+  if (text.length > LOG_TAIL_CHARS) {
+    text = text.slice(text.length - LOG_TAIL_CHARS);
+    const cut = text.indexOf("\n");
+    if (cut >= 0) text = text.slice(cut + 1);
+    truncated = true;
+  }
+  return { log: text, truncated };
+}
+
+function textOf(data: unknown): string | undefined {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  return undefined;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -1340,6 +1954,41 @@ interface CheckNode {
   url: string;
   time?: number;
   index: number;
+  detail: SessionCheck;
+}
+
+/** #500: one check on the session's pull request head, for the web UI's checks list. */
+export interface SessionCheck {
+  /** A check run's numeric id (the log route takes it), or `status:<context>` for a commit status. */
+  id: string;
+  name: string;
+  kind: "check-run" | "status";
+  /** GitHub's check-run status (queued, in_progress, completed, ...), or `pending` / `completed` for a status. */
+  status: string;
+  /** GitHub's conclusion (success, failure, ...), lower case; null while it runs. */
+  conclusion: string | null;
+  /** pass / fail / running / skipped, the UI's four lamps. */
+  state: "pass" | "fail" | "running" | "skipped";
+  startedAt: string | null;
+  completedAt: string | null;
+  detailsUrl: string | null;
+  /** A GitHub Actions job: GET /api/sessions/:id/checks/:checkId/log can read its log. */
+  hasLog: boolean;
+}
+
+function checkState(upper: string): SessionCheck["state"] {
+  if (upper === "SUCCESS") return "pass";
+  if (upper === "NEUTRAL" || upper === "SKIPPED") return "skipped";
+  if (FAILED_CHECK.has(upper)) return "fail";
+  return "running";
+}
+
+function isoOrNull(raw: unknown): string | null {
+  return typeof raw === "string" && Number.isFinite(Date.parse(raw)) ? raw : null;
+}
+
+function webUrlOrNull(raw: unknown): string | null {
+  return typeof raw === "string" && /^https:\/\/[^\s]+$/.test(raw) ? raw : null;
 }
 
 function stamp(raw: unknown): number | undefined {
@@ -1348,25 +1997,60 @@ function stamp(raw: unknown): number | undefined {
   return Number.isFinite(time) ? time : undefined;
 }
 
-function collectChecks(checkRuns: any[], statuses: any[]): { checks?: { passed: number; failed: number; pending: number; total: number }; jobs: { name: string; state: string; url: string }[] } {
+function collectChecks(checkRuns: any[], statuses: any[]): {
+  checks?: { passed: number; failed: number; pending: number; total: number };
+  jobs: { name: string; state: string; url: string }[];
+  details: SessionCheck[];
+} {
   const nodes: CheckNode[] = [];
   let index = 0;
   for (const run of checkRuns) {
+    const name = String(run?.name ?? "check");
+    const state = String(run?.conclusion ?? run?.status ?? "").toUpperCase();
+    const url = String(run?.html_url ?? run?.details_url ?? "");
+    const id = typeof run?.id === "number" && Number.isSafeInteger(run.id) ? String(run.id) : `run:${index}`;
     nodes.push({
-      name: String(run?.name ?? "check"),
-      state: String(run?.conclusion ?? run?.status ?? "").toUpperCase(),
-      url: String(run?.html_url ?? run?.details_url ?? ""),
+      name,
+      state,
+      url,
       time: stamp(run?.completed_at ?? run?.started_at ?? run?.created_at),
       index: index++,
+      detail: {
+        id,
+        name,
+        kind: "check-run",
+        status: String(run?.status ?? "").toLowerCase() || "queued",
+        conclusion: typeof run?.conclusion === "string" && run.conclusion ? run.conclusion.toLowerCase() : null,
+        state: checkState(state),
+        startedAt: isoOrNull(run?.started_at),
+        completedAt: isoOrNull(run?.completed_at),
+        detailsUrl: webUrlOrNull(run?.html_url ?? run?.details_url),
+        hasLog: run?.app?.slug === "github-actions" && /^\d+$/.test(id),
+      },
     });
   }
   for (const status of statuses) {
+    const name = String(status?.context ?? "status");
+    const state = String(status?.state ?? "").toUpperCase();
+    const done = state !== "PENDING" && state !== "";
     nodes.push({
-      name: String(status?.context ?? "status"),
-      state: String(status?.state ?? "").toUpperCase(),
+      name,
+      state,
       url: String(status?.target_url ?? ""),
       time: stamp(status?.updated_at ?? status?.created_at),
       index: index++,
+      detail: {
+        id: `status:${name}`,
+        name,
+        kind: "status",
+        status: done ? "completed" : "pending",
+        conclusion: done ? state.toLowerCase() : null,
+        state: checkState(state),
+        startedAt: isoOrNull(status?.created_at),
+        completedAt: done ? isoOrNull(status?.updated_at) : null,
+        detailsUrl: webUrlOrNull(status?.target_url),
+        hasLog: false,
+      },
     });
   }
   const best = new Map<string, CheckNode>();
@@ -1380,7 +2064,7 @@ function collectChecks(checkRuns: any[], statuses: any[]): { checks?: { passed: 
     if (wins) best.set(key, node);
   }
   const latest = [...best.values()].sort((a, b) => a.index - b.index);
-  if (!latest.length) return { jobs: [] };
+  if (!latest.length) return { jobs: [], details: [] };
   let passed = 0, failed = 0, pending = 0;
   for (const node of latest) {
     if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(node.state)) passed++;
@@ -1390,6 +2074,7 @@ function collectChecks(checkRuns: any[], statuses: any[]): { checks?: { passed: 
   return {
     checks: { passed, failed, pending, total: latest.length },
     jobs: latest.map((node) => ({ name: node.name, state: node.state, url: node.url })),
+    details: latest.map((node) => node.detail),
   };
 }
 

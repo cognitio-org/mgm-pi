@@ -636,7 +636,7 @@ export function canManageSession(session: Session, identity: Identity | undefine
 }
 
 /** getSessionOr404, then 403 unless the caller may manage it (canManageSession). */
-async function getManageableSessionOr404(
+export async function getManageableSessionOr404(
   ctx: RouteContext,
   req: FastifyRequest,
   reply: { code: (n: number) => { send: (body: unknown) => unknown } },

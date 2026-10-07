@@ -7,6 +7,7 @@ import {
   GithubAppTokens,
   OPTIONAL_RUN_PERMISSIONS,
   REQUIRED_RUN_PERMISSIONS,
+  RERUN_PERMISSIONS,
   classifyTokenRequest422,
   githubAppJwt,
   isPermanentMintFailure,
@@ -581,4 +582,24 @@ test("#160: a cached installation token is not served once the app secrets are n
   assert.deepEqual(await tokens.mint("o/r"), { ok: false, reason: "not-configured" });
   blank = false;
   assert.equal(tokenOf(await tokens.mint("o/r")), "ghs_minted");
+});
+
+test("#500: the re-run mint is its own profile; without actions:write only it fails, and the broker's mint is untouched", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const fake = fakeGithub({ contents: "write", pull_requests: "write", metadata: "read", issues: "write", checks: "read", actions: "read" });
+  const tokens = tokensWith(fake);
+  assert.deepEqual(await tokens.mint("cognitio-org/spec-studio", RERUN_PERMISSIONS), {
+    ok: false,
+    reason: "permissions-missing",
+    missingPermissions: ["actions:write"],
+    installationAccount: "cognitio-org",
+  });
+  assert.deepEqual(fake.tokenRequests, [RERUN_PERMISSIONS], "one request, for exactly actions:write and metadata:read");
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio", BROKER_PERMISSIONS)), "ghs_reduced");
+  assert.deepEqual(fake.tokenRequests[1], BROKER_PERMISSIONS, "the broker still asks for its full set");
+  assert.equal(fake.tokenRequests.length, 2);
+  // Once an owner grants it, the re-run mint asks again and gets a token.
+  fake.granted = { ...fake.granted, actions: "write" };
+  assert.equal(tokenOf(await tokens.mint("cognitio-org/spec-studio", RERUN_PERMISSIONS)), "ghs_reduced");
+  assert.deepEqual(fake.tokenRequests[2], RERUN_PERMISSIONS);
 });

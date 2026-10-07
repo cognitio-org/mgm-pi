@@ -201,6 +201,46 @@ describe("api client", () => {
     expect(init.method).toBe("DELETE");
   });
 
+  it("#500: createSessionPr POSTs with an Idempotency-Key, and a 409 keeps its code and url", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ number: 9, url: "https://github.com/a/b/pull/9", draft: true, base: "main", template: null }, 201))
+      .mockResolvedValueOnce(jsonResponse({ error: "This branch already has an open pull request.", code: "pr-exists", number: 9, url: "https://github.com/a/b/pull/9" }, 409));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.createSessionPr("s 1", { title: "T", draft: true }, "click-1")).resolves.toMatchObject({ number: 9 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/sessions/s%201/pr");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ title: "T", draft: true });
+    expect(init.headers["Idempotency-Key"]).toBe("click-1");
+
+    const err = await api.createSessionPr("s1", { title: "T" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).code).toBe("pr-exists");
+    expect((err as ApiError).body?.url).toBe("https://github.com/a/b/pull/9");
+    expect(fetchMock.mock.calls[1][1].headers["Idempotency-Key"]).toMatch(/.+/);
+  });
+
+  it("#500: merge, sync, re-run and the check log hit their routes", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.mergeSessionPr("s1", { sha: "a".repeat(40) });
+    await api.syncSession("s1");
+    await api.rerunSessionChecks("s1");
+    await api.sessionCheckLog("s1", "101");
+    await api.githubStatus("s1", true);
+    expect(fetchMock.mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${url}`)).toEqual([
+      "POST /api/sessions/s1/pr/merge",
+      "POST /api/sessions/s1/sync",
+      "POST /api/sessions/s1/checks/rerun",
+      "GET /api/sessions/s1/checks/101/log",
+      "GET /api/sessions/s1/github-status?fresh=1",
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ sha: "a".repeat(40) });
+  });
+
   it("deleteGuru surfaces the API's 409 message (referenced by sessions)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "guru is referenced by 2 sessions" }, 409));
     vi.stubGlobal("fetch", fetchMock);

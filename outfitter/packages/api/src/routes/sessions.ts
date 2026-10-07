@@ -16,6 +16,7 @@ import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import { createSession, postUserMail } from "../session-create.ts";
 import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
+import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -222,7 +223,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
     const credential = recorded ?? configured;
     const appSlug = credential === "app" ? await githubAppSlug(ctx) : null;
     return {
-      ...session,
+      // #501: checkpoint without its snapshot/workspace URLs (checkpoint-wire.ts).
+      ...sessionForWire(session),
       canManage: canManageSession(session, req.identity),
       runState: run?.state,
       runStateReason: runStateReason(run),
@@ -241,6 +243,9 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       // out; their entries use allowExternalHtmlResources above.
       htmlPreviewAccessByRun: await htmlPreviewAccessByRun(ctx, session.id),
       heldMail,
+      // #501: the commit last known to be on GitHub and when it was pushed, so the page can say
+      // "Pushed 1m ago · sha" on load; `checkpoint` events keep it current. null before any landed.
+      lastPush: lastPush(session.checkpoint),
       // #172: a hold for a run failure (a GitHub credential problem) says what's wrong instead.
       ...(heldMail > 0 ? { mailNotice: mailHeldNotice(await ctx.store.mail.heldDetail(session.id)) } : {}),
       github: {
@@ -532,24 +537,24 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   app.post("/api/sessions/:id/archive", async (req, reply) => {
     const session = await getManageableSessionOr404(ctx, req, reply);
     if (!session) return;
-    if (session.archivedAt) return { session };
+    if (session.archivedAt) return { session: sessionForWire(session) };
     const now = new Date().toISOString();
     const archived = await ctx.store.sessions.setArchivedAt(session.id, now);
     const run = await ctx.store.runs.findActiveForSession(session.id);
     if (run) await stopRun(ctx, run);
     // E9 §4: release the Agent Engine sessions it opened (best effort; the tick retries).
     void ctx.aeSessions.closeSession(session.id).catch(() => {});
-    return { session: archived };
+    return { session: archived ? sessionForWire(archived) : archived };
   });
 
   // Mail that queued up while archived is delivered by the next /tick sweep, so a restore can start a drive.
   app.post("/api/sessions/:id/restore", async (req, reply) => {
     const session = await getManageableSessionOr404(ctx, req, reply);
     if (!session) return;
-    if (!session.archivedAt) return { session };
+    if (!session.archivedAt) return { session: sessionForWire(session) };
     const restored = await ctx.store.sessions.setArchivedAt(session.id, null);
     if (!restored) return reply.code(409).send({ error: "this floppy is being formatted" });
-    return { session: restored };
+    return { session: sessionForWire(restored) };
   });
 
   // #208: Format permanently erases an archived floppy: its transcript, runs, mail addressed to it,

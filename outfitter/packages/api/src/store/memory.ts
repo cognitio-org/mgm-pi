@@ -101,6 +101,15 @@ class MemorySessions implements SessionsCollection {
     return row ? clone(row) : null;
   }
 
+  async findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    return clone({
+      ...(row.checkpoint ? { checkpoint: row.checkpoint } : {}),
+      ...(row.ownerEmail !== undefined ? { ownerEmail: row.ownerEmail } : {}),
+    });
+  }
+
   async list(filter?: SessionListFilter): Promise<Session[]> {
     let out = [...this.rows.values()];
     if (filter?.status) out = out.filter((s) => s.status === filter.status);

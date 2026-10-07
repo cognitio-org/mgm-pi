@@ -62,6 +62,17 @@ export interface StartupSummary {
   segments: StartupSegment[];
 }
 
+/** #501: GET /api/sessions/:id's `lastPush` (packages/api/src/checkpoint-wire.ts). */
+export interface LastPush {
+  sha: string;
+  branch?: string;
+  /** ISO time a checkpoint last sent commits. Absent on rows from before it was recorded: show the
+   * sha without a time then. */
+  at?: string;
+  /** The latest checkpoint sent commits, rather than finding GitHub already at `sha`. */
+  pushed: boolean;
+}
+
 export interface SessionDetail {
   id: string;
   name?: string;
@@ -86,7 +97,20 @@ export interface SessionDetail {
   cost: number;
   archivedAt?: string;
   canManage?: boolean;
-  checkpoint?: { branch?: string; head?: string; snapshotUrl?: string; workspaceUrl?: string };
+  checkpoint?: {
+    branch?: string;
+    head?: string;
+    at?: string;
+    landed?: boolean;
+    landedAt?: string;
+    /** #501: the latest checkpoint sent commits. */
+    pushed?: boolean;
+    /** #501: when a checkpoint last sent commits. */
+    pushedAt?: string;
+  };
+  /** #501: the commit last known to be on GitHub; null before any checkpoint landed. Kept current
+   * by the stream's `checkpoint` events (useSessionStream's lastPush). */
+  lastPush?: LastPush | null;
   /** #132: whether the run's prompt allowed external CSS and JS; HTML previews start from it. */
   allowExternalHtmlResources?: boolean;
   /** #147: each run's own value, by run id. An entry's `outfitterRunId` picks from it; an entry

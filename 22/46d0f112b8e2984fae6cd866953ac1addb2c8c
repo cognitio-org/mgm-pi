@@ -1,0 +1,40 @@
+outfitter/packages/api/src/admin/gcloud-ops.ts
+  s_02bad6fff96068::t_51f6a8b49440a1 1-74
+kernal/.pi/extensions/gcloud-approval/classify.ts
+  s_02bad6fff96068::t_dcbced5560e034 1-26,28-54,60,63-105,107,114-141,145-148,152-153,158-161,163-165,167-188
+  s_02bad6fff96068::t_509d13c3eac10b 27,55-59,61-62,106,108-113,142-144,149-151,154-157,162,166
+kernal/.pi/extensions/gcloud-approval/hook.ts
+  s_02bad6fff96068::t_a9bb1f4d69270b 1-104
+outfitter/packages/api/src/server.ts
+  s_02bad6fff96068::t_01b1c3400c3aaf 44-45
+kernal/tests/gcloud-approval.test.ts
+  s_02bad6fff96068::t_d49915efba5643 1-179
+kernal/tests/gcloud-classify.test.ts
+  s_02bad6fff96068::t_edb0b88acee9c2 1-219
+outfitter/packages/api/src/admin/drive.ts
+  s_02bad6fff96068::t_01b1c3400c3aaf 27,36,152-174,204
+outfitter/docs/specs/sysop-tools.md
+  s_02bad6fff96068::t_bb92568194d344 45-55
+outfitter/packages/api/test/admin-gcloud.test.ts
+  s_02bad6fff96068::t_6ace9b7efd7676 1-117
+outfitter/packages/api/src/admin/ops.ts
+  s_02bad6fff96068::t_01b1c3400c3aaf 606-607
+kernal/.pi/extensions/gcloud-approval/index.ts
+  s_02bad6fff96068::t_4e0f05aa2aeb6e 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2246d0f112b8e2984fae6cd866953ac1addb2c8c",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

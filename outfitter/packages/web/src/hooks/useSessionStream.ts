@@ -26,9 +26,19 @@ export interface StreamState {
    * a thinking block has started and no words have arrived yet. Not an entry: the message
    * hasn't been stored. */
   liveThought: string | null;
-  /** #501: the commit last pushed to GitHub, from `checkpoint` events. Undefined until one arrives
-   * (GET /api/sessions/:id's `lastPush` has it on load). */
+  /** #501: the commit last pushed to GitHub: the page's GET /api/sessions/:id `lastPush` (the
+   * hook's `seedLastPush`), replaced by `checkpoint` events as they arrive (effectiveLastPush). */
   lastPush?: LastPush;
+}
+
+/** #501: what the page shows. A `checkpoint` event beats the detail fetch, unless the detail is
+ * strictly newer (a refetch after a stream that has gone quiet: the api's poller sends one event
+ * per change per session, so a second tab can miss one). Without either, undefined. */
+export function effectiveLastPush(streamed: LastPush | undefined, seeded: LastPush | null | undefined): LastPush | undefined {
+  if (!streamed) return seeded ?? undefined;
+  if (seeded?.at && streamed.at && seeded.at > streamed.at) return seeded;
+  if (seeded?.at && !streamed.at) return seeded;
+  return streamed;
 }
 
 export type { LastPush };
@@ -49,11 +59,11 @@ export interface CheckpointEvent {
  * nothing landed yet) leaves it as it is. Same rule as the api's lastPush(). */
 export function nextLastPush(current: LastPush | undefined, event: CheckpointEvent): LastPush | undefined {
   if (typeof event.head !== "string" || !event.head) return current;
-  const at = event.pushedAt ?? event.landedAt;
+  // pushedAt only: landedAt moves on every checkpoint that found nothing new to push.
   return {
     sha: event.head,
     ...(event.branch ? { branch: event.branch } : {}),
-    ...(at ? { at } : {}),
+    ...(event.pushedAt ? { at: event.pushedAt } : {}),
     pushed: event.pushed === true,
   };
 }
@@ -167,7 +177,7 @@ export function nextPendingOnStatus(current: RawUiRequest | null, state: string 
 
 /** Loads a session's entries, then keeps them (plus run state and pending UI requests) live via
  * GET /api/sessions/:id/stream (SSE: event: entry|event|status|spend|checkpoint -- protocol.md). */
-export function useSessionStream(sessionId: string): StreamState {
+export function useSessionStream(sessionId: string, seedLastPush?: LastPush | null): StreamState {
   const [entries, setEntries] = useState<PiEntry[]>([]);
   const [runState, setRunState] = useState<string | undefined>(undefined);
   const [runStateReason, setRunStateReason] = useState<string | undefined>(undefined);
@@ -297,5 +307,5 @@ export function useSessionStream(sessionId: string): StreamState {
     };
   }, [sessionId]);
 
-  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt, liveThought, lastPush };
+  return { entries, entriesLoaded: loaded, runState, runStateReason, statusDetail, pendingUiRequest, costEstimate, startup, agentSeenAt, piActiveAt, liveThought, lastPush: effectiveLastPush(lastPush, seedLastPush) };
 }

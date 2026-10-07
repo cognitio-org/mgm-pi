@@ -50,6 +50,11 @@ async function exercise(sessions: SessionsCollection): Promise<Record<string, un
   result.modelClearedHasField = cleared ? "modelOverride" in cleared : "missing";
   result.modelClearedUpdatedAt = cleared?.updatedAt;
   result.modelMissing = await sessions.setModelOverride("no-such-session", "litellm/x", "2026-10-05T00:00:00.000Z");
+  // #501: the poller's projected read.
+  await sessions.update("live", { ownerEmail: "ada@example.com", checkpoint: { head: "a".repeat(40), pushedAt: "2026-10-07T00:00:00.000Z" } });
+  result.streamFacts = await sessions.findStreamFacts("live");
+  result.streamFactsBare = await sessions.findStreamFacts("shelved");
+  result.streamFactsMissing = await sessions.findStreamFacts("no-such-session");
   return result;
 }
 
@@ -147,6 +152,9 @@ describe("MongoSessions archive filter against a real MongoDB", () => {
       modelClearedHasField: false,
       modelClearedUpdatedAt: "2026-10-05T00:01:00.000Z",
       modelMissing: null,
+      streamFacts: { checkpoint: { head: "a".repeat(40), pushedAt: "2026-10-07T00:00:00.000Z" }, ownerEmail: "ada@example.com" },
+      streamFactsBare: {},
+      streamFactsMissing: null,
     });
   });
 

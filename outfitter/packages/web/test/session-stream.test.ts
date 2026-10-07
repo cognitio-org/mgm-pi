@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  effectiveLastPush,
   livenessTimes,
   mergeEntries,
   nextLastPush,
@@ -25,11 +26,28 @@ describe("nextLastPush (#501)", () => {
     ).toEqual({ sha: head, branch: "outfitter/s1", at: "2026-10-07T10:00:00Z", pushed: true });
   });
 
-  it("falls back to landedAt, and keeps the last push for an event with no head", () => {
+  it("never uses landedAt as the push time, and keeps the last push for an event with no head", () => {
     const current = nextLastPush(undefined, { head, landedAt: "2026-10-07T10:05:00Z", pushed: false });
-    expect(current).toEqual({ sha: head, at: "2026-10-07T10:05:00Z", pushed: false });
+    expect(current).toEqual({ sha: head, pushed: false });
     expect(nextLastPush(current, { t: "checkpoint", landed: false })).toBe(current);
     expect(nextLastPush(undefined, { t: "checkpoint" })).toBeUndefined();
+  });
+});
+
+describe("effectiveLastPush (#501)", () => {
+  const seeded = { sha: "a".repeat(40), at: "2026-10-07T10:00:00Z", pushed: true };
+  const streamed = { sha: "b".repeat(40), at: "2026-10-07T10:05:00Z", pushed: true };
+  it("uses the detail's lastPush until an event arrives, then the event", () => {
+    expect(effectiveLastPush(undefined, seeded)).toBe(seeded);
+    expect(effectiveLastPush(undefined, null)).toBeUndefined();
+    expect(effectiveLastPush(streamed, seeded)).toBe(streamed);
+    expect(effectiveLastPush(streamed, undefined)).toBe(streamed);
+  });
+  it("lets a strictly newer detail win over a stale event", () => {
+    const newer = { sha: "c".repeat(40), at: "2026-10-07T10:09:00Z", pushed: true };
+    expect(effectiveLastPush(streamed, newer)).toBe(newer);
+    expect(effectiveLastPush({ sha: "d".repeat(40), pushed: false }, seeded)).toBe(seeded);
+    expect(effectiveLastPush(streamed, { ...seeded, at: streamed.at })).toBe(streamed);
   });
 });
 

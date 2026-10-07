@@ -120,6 +120,11 @@ class MongoSessions implements SessionsCollection {
     return stripId<Session>(await this.col.findOne({ _id: id }));
   }
 
+  async findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null> {
+    const row = await this.col.findOne({ _id: id }, { projection: { _id: 0, checkpoint: 1, ownerEmail: 1 } });
+    return row ? (row as Pick<Session, "checkpoint" | "ownerEmail">) : null;
+  }
+
   async list(filter?: SessionListFilter): Promise<Session[]> {
     const query: Record<string, unknown> = {};
     if (filter?.status) query.status = filter.status;

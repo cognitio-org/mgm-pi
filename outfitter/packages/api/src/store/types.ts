@@ -820,6 +820,8 @@ export interface SessionListFilter {
 export interface SessionsCollection {
   insert(session: Session): Promise<void>;
   findById(id: string): Promise<Session | null>;
+  /** #501: only what sse.ts's SsePoller reads every poll (checkpoint, ownerEmail), projected. */
+  findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null>;
   list(filter?: SessionListFilter): Promise<Session[]>;
   update(id: string, patch: Partial<Session>): Promise<Session | null>;
   /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it

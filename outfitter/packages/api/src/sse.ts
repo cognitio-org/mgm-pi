@@ -302,7 +302,8 @@ export class SsePoller {
     // #501: the session's checkpoint, as agentlink.ts stored it on the link role. Sent whenever it
     // changes (a push, or a checkpoint that found nothing new), including on the first poll, so a
     // page that just opened has the last push without waiting for the next one.
-    const session = this.store.sessions ? await this.store.sessions.findById(sessionId) : null;
+    // Projected (checkpoint, ownerEmail): this runs every poll for every watched session.
+    const session = this.store.sessions ? await this.store.sessions.findStreamFacts(sessionId) : null;
     if (session?.checkpoint) {
       const event = checkpointEvent(session.checkpoint);
       const key = JSON.stringify(event);

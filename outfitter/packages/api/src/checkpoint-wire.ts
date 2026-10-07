@@ -22,18 +22,33 @@ export interface CheckpointEvent {
   pushedAt?: string;
 }
 
-export function checkpointEvent(checkpoint: Checkpoint): CheckpointEvent {
-  const event: CheckpointEvent = { t: "checkpoint" };
+/** The checkpoint's git facts only: what any browser-facing copy of it carries. */
+export type PublicCheckpoint = Omit<CheckpointEvent, "t">;
+
+export function publicCheckpoint(checkpoint: Checkpoint): PublicCheckpoint {
+  const out: PublicCheckpoint = {};
   for (const key of ["branch", "head", "landed", "pushed", "at", "landedAt", "pushedAt"] as const) {
-    if (checkpoint[key] !== undefined) (event as unknown as Record<string, unknown>)[key] = checkpoint[key];
+    if (checkpoint[key] !== undefined) (out as Record<string, unknown>)[key] = checkpoint[key];
   }
-  return event;
+  return out;
+}
+
+export function checkpointEvent(checkpoint: Checkpoint): CheckpointEvent {
+  return { t: "checkpoint", ...publicCheckpoint(checkpoint) };
+}
+
+/** A session for a browser response: its checkpoint without snapshotUrl/workspaceUrl. Those are
+ * the api's to hand the next run (run.spec), never a viewer's. */
+export function sessionForWire<T extends { checkpoint?: Checkpoint }>(session: T): Omit<T, "checkpoint"> & { checkpoint?: PublicCheckpoint } {
+  const { checkpoint, ...rest } = session;
+  return checkpoint ? { ...rest, checkpoint: publicCheckpoint(checkpoint) } : rest;
 }
 
 export interface LastPush {
   sha: string;
   branch?: string;
-  /** When those commits were pushed: pushedAt, else (rows from before it) when the head landed. */
+  /** When a checkpoint last sent commits (pushedAt). Absent on rows from before it was recorded:
+   * landedAt is not a substitute, since every no-op re-land moves it. */
   at?: string;
   /** The latest checkpoint sent commits (false: it found GitHub already at `sha`, or didn't land). */
   pushed: boolean;
@@ -42,11 +57,10 @@ export interface LastPush {
 /** The commit last known to be on GitHub, or null before any has landed. */
 export function lastPush(checkpoint: Session["checkpoint"]): LastPush | null {
   if (!checkpoint?.head) return null;
-  const at = checkpoint.pushedAt ?? checkpoint.landedAt;
   return {
     sha: checkpoint.head,
     ...(checkpoint.branch ? { branch: checkpoint.branch } : {}),
-    ...(at ? { at } : {}),
+    ...(checkpoint.pushedAt ? { at: checkpoint.pushedAt } : {}),
     pushed: checkpoint.pushed === true,
   };
 }

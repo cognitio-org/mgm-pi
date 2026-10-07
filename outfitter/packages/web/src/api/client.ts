@@ -66,7 +66,8 @@ export interface StartupSummary {
 export interface LastPush {
   sha: string;
   branch?: string;
-  /** ISO time the commits were pushed (absent on rows from before it was recorded). */
+  /** ISO time a checkpoint last sent commits. Absent on rows from before it was recorded: show the
+   * sha without a time then. */
   at?: string;
   /** The latest checkpoint sent commits, rather than finding GitHub already at `sha`. */
   pushed: boolean;
@@ -99,8 +100,6 @@ export interface SessionDetail {
   checkpoint?: {
     branch?: string;
     head?: string;
-    snapshotUrl?: string;
-    workspaceUrl?: string;
     at?: string;
     landed?: boolean;
     landedAt?: string;

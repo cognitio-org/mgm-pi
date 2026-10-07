@@ -42,6 +42,39 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## gcloud MCP approval cards (GA-4, #494)
+- **Not an admin tool, but the same approval flow.** Google's remote gcloud MCP server (`gcloud`) is
+  reached through the router, so its calls never pass the API. Kernal's `gcloud-approval` extension
+  brokers pi-mcp-adapter's approval event for that server and asks first for any command
+  `classify.ts` doesn't call a plain read (default: ask).
+- **Drive:** `gcloud.run`, an `operator` op, raises the owner's `admin:<approvalId>` web card with the
+  project and command; the answer, including a decline or timeout, is an `adminAudit` row whose
+  `target` is `<tool> <project> :: <command>`.
+- **Laptop:** a TUI confirm, then `gcloud.note` records the decision. It is an `auditNote` op (the one
+  laptop-callable op outside memory and web approvals): a side-effect-free write that needs a listed
+  operator, is limited to 60 per hour per user, and is stored as a self-reported row (`approved: false`,
+  `detail: "self-reported: ..."`), because a laptop's agent can send it too. No TUI (`kernal -p`): denied.
+- **Fail-closed layering.** The hook claims every call to the gcloud server and to either command tool
+  on any server name, answering reads `allow_once`. The server entry should also carry
+  `approveTools: true`, so an absent or broken hook falls back to the adapter's own dialog or a
+  headless refusal; Kernal warns at session start when a gcloud-looking server lacks it.
+- **Audit meaning.** On a `gcloud.run` row, `ok` means the owner approved (or the refusal that was
+  audited), not that the command ran or succeeded: the call goes agent -> router -> Google afterwards.
+- **Aborts.** When the model's call is cancelled while a card waits, Kernal calls `gcloud.cancel`, which
+  withdraws the card; if Kernal is gone, the card expires after 10 minutes.
+- **Classifier hardening.** Only plain printable ASCII and the space are parsed (anything else asks);
+  forbidden flags are looked for in every whitespace piece, quoted or not; intermediate path words must
+  be resource nouns; a `bq query` is a read only with `--maximum_bytes_billed` of at most 10 GB and no
+  dotted function call (UDF, `ML.`, `AI.`), `EXTERNAL_QUERY`, `VECTOR_SEARCH` or `NEXTVAL`.
+
+### Limits
+- The card guards the MCP path only. An agent with a shell can still reach the router directly (for
+  example with curl and the key in its environment) and skip the card; closing that is a design
+  question for the owner (#497), not something this extension can do.
+- A read verb is not harmless in every case: `describe` on a Cloud Run service, a function, a VM or
+  similar can return plaintext environment variables or secrets. Whether `describe` should ask is an
+  owner policy question; today it runs without a card.
+
 ## Changes since the plan (PR5: skill, Sysop tape, UI)
 - **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
   Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image

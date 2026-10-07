@@ -17,6 +17,7 @@
 import type { FastifyInstance } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { runAdminOp } from "../admin/ops.ts";
+import { isOperator } from "../auth.ts";
 import { laptopContext } from "../agentengine/identity.ts";
 
 /**
@@ -73,6 +74,7 @@ export async function registerAdminRoutes(app: FastifyInstance, ctx: RouteContex
         email: identity.email,
         via: "token",
         operator: false,
+        listedOperator: isOperator(identity.email, ctx.config.operators),
         approved: body.confirmed === true,
         ...(laptop.value ? { laptop: laptop.value } : {}),
         // A string only: `null` or a number reads as no approval yet, so it asks afresh.

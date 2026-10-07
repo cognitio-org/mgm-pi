@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Working } from "./Working.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 
@@ -40,6 +40,20 @@ export const OUTFITTER_SOURCE = "outfitter";
  * the next one (the model can time a harmless question just before a real approval). */
 export const ARM_DELAY_MS = 1000;
 
+/** Where a keypress belongs to something else: typing in a field (other than the card's own), or a
+ * menu or modal that's open. */
+function keyIsElsewhere(event: KeyboardEvent, card: HTMLElement | null): boolean {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return true;
+  if (document.querySelector("[aria-modal='true'], [role='menu']")) return true;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (card?.contains(target)) return target.tagName === "BUTTON";
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(target.tagName);
+}
+
+/** #498: the question docks above the composer as a card (docs/design/sessions-redesign-demo.html
+ * note 9), with keys for the common answer: Enter for the primary button, Esc to deny or cancel.
+ * Keys wait for the same arm delay as the buttons. */
 export function UiRequestPanel({ request, onRespond }: Props) {
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -51,6 +65,33 @@ export function UiRequestPanel({ request, onRespond }: Props) {
     return () => clearTimeout(timer);
   }, [request.id]);
   const busy = sending || !armed;
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // The answers Enter and Esc give, when this kind of card has them.
+  const confirmLike = isConfirm(request);
+  const keyAnswers = useRef<{ enter?: () => unknown; escape?: () => unknown }>({});
+  keyAnswers.current = confirmLike
+    ? { enter: () => respond(true), escape: () => respond(false) }
+    : isInput(request)
+      ? { enter: () => respond(inputValue) }
+      : {};
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (busy) return;
+      if (event.key !== "Enter" && event.key !== "Escape") return;
+      const card = cardRef.current;
+      // The card's own text field takes Enter as Submit; anywhere else typing wins.
+      const inOwnField = event.target instanceof HTMLInputElement && card?.contains(event.target);
+      if (!inOwnField && keyIsElsewhere(event, card)) return;
+      const answer = event.key === "Enter" ? keyAnswers.current.enter : keyAnswers.current.escape;
+      if (!answer) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void answer();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy]);
 
   async function respond(value: unknown) {
     setSending(true);
@@ -63,9 +104,13 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isSelect(request)) {
     return (
-      <div className="ui-request">
+      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+        <div className="ui-request-head">
+          <span className="lamp lamp-needsYou" aria-hidden="true" />
+          Needs you
+        </div>
         <strong>{request.title}</strong>
-        <div className="composer-row" style={{ marginTop: "0.5rem", flexWrap: "wrap" }}>
+        <div className="ui-request-actions">
           {request.options.map((opt) => (
             <button key={opt} className="btn" disabled={busy} onClick={() => respond(opt)}>
               {opt}
@@ -78,17 +123,21 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isConfirm(request) && request.source === OUTFITTER_SOURCE) {
     return (
-      <div className="ui-request ui-request-outfitter" role="alertdialog" aria-label="Outfitter approval">
-        <small className="ui-request-source">Outfitter asks you (not the agent)</small>
+      <div className="ui-request ui-request-outfitter" role="alertdialog" aria-label="Outfitter approval" ref={cardRef}>
+        <div className="ui-request-head">
+          <span className="lamp lamp-needsYou" aria-hidden="true" />
+          <small className="ui-request-source">Outfitter asks you (not the agent)</small>
+        </div>
         <strong>{request.title}</strong>
         <p>{request.message}</p>
-        <div className="composer-row">
+        <div className="ui-request-actions">
           <button className="btn btn-primary" disabled={busy} onClick={() => respond(true)}>
             Allow
           </button>
-          <button className="btn" disabled={busy} onClick={() => respond(false)}>
+          <button className="btn btn-danger" disabled={busy} onClick={() => respond(false)}>
             Deny
           </button>
+          <KeyHints primary="allow" secondary="deny" />
         </div>
       </div>
     );
@@ -96,16 +145,21 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isConfirm(request)) {
     return (
-      <div className="ui-request">
+      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+        <div className="ui-request-head">
+          <span className="lamp lamp-needsYou" aria-hidden="true" />
+          Needs you
+        </div>
         <strong>{request.title}</strong>
         <p>{request.message}</p>
-        <div className="composer-row">
+        <div className="ui-request-actions">
           <button className="btn btn-primary" disabled={busy} onClick={() => respond(true)}>
             Confirm
           </button>
           <button className="btn" disabled={busy} onClick={() => respond(false)}>
             Cancel
           </button>
+          <KeyHints primary="confirm" secondary="cancel" />
         </div>
       </div>
     );
@@ -113,10 +167,15 @@ export function UiRequestPanel({ request, onRespond }: Props) {
 
   if (isInput(request)) {
     return (
-      <div className="ui-request">
+      <div className="ui-request" ref={cardRef} role="group" aria-label="Question from the agent">
+        <div className="ui-request-head">
+          <span className="lamp lamp-needsYou" aria-hidden="true" />
+          Needs you
+        </div>
         <strong>{request.title}</strong>
-        <div className="composer-row" style={{ marginTop: "0.5rem" }}>
+        <div className="ui-request-actions">
           <input
+            aria-label={request.title}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             placeholder={typeof request.placeholder === "string" ? request.placeholder : undefined}
@@ -131,9 +190,17 @@ export function UiRequestPanel({ request, onRespond }: Props) {
   }
 
   return (
-    <div className="ui-request">
+    <div className="ui-request" ref={cardRef}>
       <strong>{request.method}</strong> (unsupported prompt type)
       <pre>{JSON.stringify(request, null, 2)}</pre>
     </div>
+  );
+}
+
+function KeyHints({ primary, secondary }: { primary: string; secondary: string }) {
+  return (
+    <span className="ui-request-keys" aria-hidden="true">
+      <kbd>↵</kbd> {primary} · <kbd>esc</kbd> {secondary}
+    </span>
   );
 }

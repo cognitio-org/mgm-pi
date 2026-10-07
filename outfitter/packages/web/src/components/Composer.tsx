@@ -8,6 +8,7 @@ import { useVoice, type VoiceEngines } from "../hooks/useVoice.ts";
 import { useSpeaker, type SpeechStarter } from "../hooks/useSpeaker.ts";
 import type { PiEntry } from "../api/client.ts";
 import { VoiceControl } from "./VoiceControl.tsx";
+import { SendIcon, StopIcon } from "./SessionIcons.tsx";
 
 interface Props {
   /** The page's own "Sending…" phase (deriveSessionActivity) -- shown on the Send button too. */
@@ -36,6 +37,15 @@ interface Props {
   voiceSpeak?: boolean;
   agentBusy?: boolean;
   speech?: SpeechStarter;
+  /** #498: a turn is running. The send button gives way to ■ Break (Send comes back beside it once
+   * there's a draft, which queues as today). */
+  busy?: boolean;
+  onBreak?: () => void;
+  /** The Break request is in flight. */
+  breaking?: boolean;
+  /** #498: the floppy's model chip and context ring, which sit in the composer's one row. */
+  modelChip?: ReactNode;
+  contextChip?: ReactNode;
 }
 
 type Behavior = "" | "steer" | "followUp";
@@ -69,6 +79,11 @@ export function Composer({
   voiceSpeak,
   agentBusy = false,
   speech,
+  busy = false,
+  onBreak,
+  breaking = false,
+  modelChip,
+  contextChip,
 }: Props) {
   const [text, setText] = useState("");
   const [behavior, setBehavior] = useState<Behavior>("");
@@ -211,11 +226,15 @@ export function Composer({
 
   const sendKeyHint = enterMode === "send" ? "Enter to send, Shift+Enter for a new line" : "Shift+Enter or ⌘/Ctrl+Enter to send";
 
+  const showSend = !busy || !onBreak || text.trim().length > 0;
+
   return (
     <div className={`composer${tall ? " is-tall" : ""}`}>
-      <div className="composer-row composer-status-row">
-        <div className="composer-status">{status}</div>
-      </div>
+      {status ? (
+        <div className="composer-row composer-status-row">
+          <div className="composer-status">{status}</div>
+        </div>
+      ) : null}
       <MarkdownEditor
         value={text}
         onChange={setText}
@@ -227,58 +246,6 @@ export function Composer({
         toolsOpen={toolsOpen}
         toolbarId={toolbarId}
       />
-      <span
-        className="send-wrap"
-        data-enter-mode={enterMode}
-        title={`Send (${sendKeyHint}). Right-click to set whether Enter sends.`}
-        onContextMenu={openEnterMenu}
-        onPointerDown={armHold}
-        onPointerUp={clearHold}
-        onPointerCancel={cancelHold}
-        onPointerLeave={clearHold}
-      >
-        <button
-          type="button"
-          className="btn btn-primary send-button"
-          aria-haspopup="menu"
-          aria-expanded={enterMenu}
-          aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
-          onClick={(event) => {
-            if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
-              ignoreClick.current = false;
-              return;
-            }
-            setEnterMenu(false);
-            void send();
-          }}
-        >
-          {sending ? (
-            <Working label="Sending" />
-          ) : (
-            <>
-              <span className="send-label">Send</span>
-              <span className="send-glyph" aria-hidden="true">
-                ▶
-              </span>
-            </>
-          )}
-        </button>
-        {enterMenu && (
-          <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
-            <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
-              Enter sends
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={enterMode === "newline"}
-              onClick={() => chooseEnterMode("newline")}
-            >
-              Enter is a new line
-            </button>
-          </div>
-        )}
-      </span>
       <div className="composer-row composer-controls">
         <button
           type="button"
@@ -327,7 +294,76 @@ export function Composer({
             </option>
           ))}
         </select>
+        {modelChip}
+        <span className="composer-spacer" />
+        {contextChip}
         <VoiceControl voice={voice} speaker={speaker} />
+        {showSend && (
+          <span
+            className="send-wrap"
+            data-enter-mode={enterMode}
+            title={`Send (${sendKeyHint}). Right-click to set whether Enter sends.`}
+            onContextMenu={openEnterMenu}
+            onPointerDown={armHold}
+            onPointerUp={clearHold}
+            onPointerCancel={cancelHold}
+            onPointerLeave={clearHold}
+          >
+            <button
+              type="button"
+              className="btn btn-primary send-button"
+              aria-haspopup="menu"
+              aria-expanded={enterMenu}
+              aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
+              onClick={(event) => {
+                if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
+                  ignoreClick.current = false;
+                  return;
+                }
+                setEnterMenu(false);
+                void send();
+              }}
+            >
+              {sending ? (
+                <Working label="Sending" />
+              ) : (
+                <>
+                  <span className="send-label sr-only">{busy ? "Send, queued for after this turn" : "Send"}</span>
+                  <span className="send-glyph" aria-hidden="true">
+                    <SendIcon />
+                  </span>
+                </>
+              )}
+            </button>
+            {enterMenu && (
+              <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
+                <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
+                  Enter sends
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={enterMode === "newline"}
+                  onClick={() => chooseEnterMode("newline")}
+                >
+                  Enter is a new line
+                </button>
+              </div>
+            )}
+          </span>
+        )}
+        {busy && onBreak && (
+          <button
+            type="button"
+            className="btn break-button"
+            onClick={onBreak}
+            disabled={breaking}
+            aria-label="Break"
+            title="Break: interrupt the current turn, like the C64 RUN/STOP key (Esc)"
+          >
+            {breaking ? <Working label="Breaking" /> : <StopIcon />}
+          </button>
+        )}
       </div>
       {(voice.note || speaker.note) && (
         <div className="voice-note" role="status">

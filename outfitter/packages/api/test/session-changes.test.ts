@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   capChanges,
+  capLivePatch,
   filesFromGithubCompare,
   loadSessionChanges,
   parseUnifiedPatch,
@@ -129,17 +130,26 @@ test("a conflicted file (diff --cc) is U", () => {
   assert.equal(file!.additions, 5);
 });
 
-test("a file listed for its commits and again for uncommitted edits is one entry", () => {
-  const committed = ["diff --git a/f b/f", "new file mode 100644", "--- /dev/null", "+++ b/f", "@@ -0,0 +1 @@", "+a"].join("\n");
-  const working = ["diff --git a/f b/f", "--- a/f", "+++ b/f", "@@ -1 +1,2 @@", " a", "+b"].join("\n");
-  const files = parseUnifiedPatch(`${committed}\n\n${working}\n`);
-  assert.equal(files.length, 1);
-  assert.equal(files[0]!.status, "A");
-  assert.equal(files[0]!.additions, 2);
-  assert.equal(files[0]!.patch, "@@ -0,0 +1 @@\n+a\n@@ -1 +1,2 @@\n a\n+b");
-  // Added in a commit, then deleted in the working tree: nothing left to show.
-  const removed = ["diff --git a/f b/f", "deleted file mode 100644", "--- a/f", "+++ /dev/null", "@@ -1 +0,0 @@", "-a"].join("\n");
-  assert.deepEqual(parseUnifiedPatch(`${committed}\n${removed}`), []);
+test("binary lines with /dev/null, quotes, or ' and ' in a path", () => {
+  const added = parseUnifiedPatch(["diff --git a/x and y.png b/x and y.png", "new file mode 100644", "index 0..1", "Binary files /dev/null and b/x and y.png differ"].join("\n"));
+  assert.deepEqual(added, [{ path: "x and y.png", status: "A", additions: 0, deletions: 0, binary: true }]);
+  const removed = parseUnifiedPatch(["diff --git a/old.bin b/old.bin", "deleted file mode 100644", "Binary files a/old.bin and /dev/null differ"].join("\n"));
+  assert.deepEqual(removed.map((f) => [f.path, f.status]), [["old.bin", "D"]]);
+  const quoted = parseUnifiedPatch(['diff --git "a/caf\\303\\251.bin" "b/caf\\303\\251.bin"', 'Binary files "a/caf\\303\\251.bin" and "b/caf\\303\\251.bin" differ'].join("\n"));
+  assert.deepEqual(quoted.map((f) => [f.path, f.status, f.binary]), [["café.bin", "M", true]]);
+});
+
+test("sections are listed as they come (agentd sends each path once)", () => {
+  const a = ["diff --git a/a b/a", "--- a/a", "+++ b/a", "@@ -1 +1 @@", "-x", "+y"].join("\n");
+  const b = ["diff --git a/b b/b", "new file mode 100644", "--- /dev/null", "+++ b/b", "@@ -0,0 +1 @@", "+z"].join("\n");
+  assert.deepEqual(parseUnifiedPatch(`${a}\n\n${b}\n`).map((f) => f.path), ["a", "b"]);
+});
+
+test("capLivePatch cuts an oversized live patch at a file boundary", () => {
+  const one = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n";
+  const two = "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-x\n+" + "z".repeat(200) + "\n";
+  assert.deepEqual(capLivePatch(one + two), { patch: one + two, truncated: false });
+  assert.deepEqual(capLivePatch(one + two, one.length + 20), { patch: one, truncated: true });
 });
 
 test("unquoteGitPath decodes octal escapes and leaves plain paths alone", () => {
@@ -173,11 +183,12 @@ test("a real repository, diffed the way agentd does it", { skip: spawnSync("git"
     git(dir, "commit", "-qm", "work");
     writeFileSync(join(dir, "keep.ts"), "a\nB\nc\nd\ne\n"); // uncommitted
     writeFileSync(join(dir, "new file.md"), "hello\n"); // untracked
-    // agentd: base...HEAD, then HEAD vs the working tree, then each untracked file vs /dev/null.
-    const committed = git(dir, "diff", "main...HEAD");
-    const working = git(dir, "diff", "HEAD");
+    // agentd: the merge-base against the working tree, then each untracked file vs /dev/null.
+    const mergeBase = git(dir, "merge-base", "main", "HEAD").trim();
+    const tracked = git(dir, "diff", mergeBase);
     const untracked = spawnSync("git", ["diff", "--no-index", "--", "/dev/null", "new file.md"], { cwd: dir, encoding: "utf8" }).stdout;
-    const files = parseUnifiedPatch([committed, working, untracked].filter(Boolean).join("\n"));
+    const files = parseUnifiedPatch([tracked, untracked].filter(Boolean).join("\n"));
+    assert.equal(files.length, 4, "each path once");
     const by = new Map(files.map((f) => [f.path, f]));
     assert.deepEqual([...by.keys()].sort(), ["drop.ts", "keep.ts", "new file.md", "renamed.ts"]);
     assert.equal(by.get("drop.ts")!.status, "D");
@@ -219,16 +230,18 @@ test("GitHub compare rows map to letters, keep renames, and mark a missing patch
     { filename: "c.ts", status: "removed", additions: 0, deletions: 4 },
     { filename: "d.ts", previous_filename: "old/d.ts", status: "renamed", additions: 0, deletions: 0 },
     { filename: "e.ts", status: "unchanged", additions: 0, deletions: 0 },
+    { filename: "logo.png", status: "modified", additions: 0, deletions: 0, changes: 0 },
     { filename: 42, status: "modified" },
     null,
   ]);
   assert.deepEqual(
-    files.map((f) => [f.path, f.status, f.oldPath ?? null, f.patchOmitted ?? false]),
+    files.map((f) => [f.path, f.status, f.oldPath ?? null, f.patchOmitted ?? false, f.binary ?? false]),
     [
-      ["a.ts", "M", null, false],
-      ["b.ts", "A", null, false],
-      ["c.ts", "D", null, true],
-      ["d.ts", "R", "old/d.ts", false],
+      ["a.ts", "M", null, false, false],
+      ["b.ts", "A", null, false, false],
+      ["c.ts", "D", null, true, false],
+      ["d.ts", "R", "old/d.ts", false, false],
+      ["logo.png", "M", null, false, true],
     ],
   );
   assert.deepEqual(filesFromGithubCompare(undefined), []);
@@ -253,10 +266,15 @@ test("a live Drive answers from its diff, with the last push", async () => {
   assert.equal(changes.source, "drive");
   assert.equal(changes.base, "main");
   assert.equal(changes.branch, "outfitter/s1");
-  assert.equal(changes.head, "a".repeat(40));
+  assert.equal(changes.head, undefined, "the list includes unpushed work; pushed.sha says what GitHub has");
   assert.deepEqual(changes.pushed, { sha: "a".repeat(40), at: "2026-10-07T10:00:00.000Z" });
   assert.equal(changes.truncated, false);
   assert.deepEqual(changes.files.map((f) => f.path), ["src/a.ts"]);
+  const cut = await loadSessionChanges(SESSION, {
+    liveDiff: async () => ({ base: "main", patch: MODIFIED, truncated: true }),
+    compare: neverCompare,
+  });
+  assert.equal(cut.truncated, true, "agentd's own cap shows");
 });
 
 test("asleep (or a Drive that can't answer) reads the pushed branch on GitHub", async () => {

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { GithubCatalog, type GithubCatalogSnapshot } from "../src/github-catalog.ts";
+import { COMPARE_CACHE_MAX, GithubCatalog, type GithubCatalogSnapshot } from "../src/github-catalog.ts";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
@@ -607,6 +607,36 @@ test("#499: compareBranch lists files with patches, the tip, and caches until th
   assert.equal(compares(), 1);
   await catalog.compareBranch({ ...args, expectedHead: tip });
   assert.equal(compares(), 2);
+});
+
+test("#499: the compare cache keeps one entry per branch, a bounded number in all, and capped patches", async () => {
+  const { catalog, calls } = harness(appRead, (call) => {
+    if (call.url.endsWith("/installation")) return json(installation(1, "acme", "Organization"));
+    if (call.url.endsWith("/access_tokens")) return token("ghs_READ", "acme/widget");
+    if (call.url.includes("/compare/")) {
+      return json({
+        ahead_by: 1,
+        files: [{ filename: "big.txt", status: "modified", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+" + "x".repeat(200_000) }],
+      });
+    }
+    return new Response("no", { status: 500 });
+  });
+  const compares = () => calls.filter((call) => call.url.includes("/compare/")).length;
+  const first = await catalog.compareBranch({ repo: "acme/widget", branch: "b0", baseBranch: "main", expectedHead: "1".repeat(40) });
+  assert.ok(first.ok);
+  if (!first.ok) return;
+  assert.equal(first.files[0]!.patch, undefined, "over the per-file cap before it is cached");
+  assert.equal(first.files[0]!.patchOmitted, true);
+  assert.equal(first.partial, true);
+  // A new head replaces the branch's entry; the old head is not kept beside it.
+  await catalog.compareBranch({ repo: "acme/widget", branch: "b0", baseBranch: "main", expectedHead: "2".repeat(40) });
+  await catalog.compareBranch({ repo: "acme/widget", branch: "b0", baseBranch: "main", expectedHead: "1".repeat(40) });
+  assert.equal(compares(), 3);
+  for (let i = 1; i <= COMPARE_CACHE_MAX + 5; i++) {
+    await catalog.compareBranch({ repo: "acme/widget", branch: `b${i}`, baseBranch: "main" });
+  }
+  const size = (catalog as unknown as { compares: Map<string, unknown> }).compares.size;
+  assert.equal(size, COMPARE_CACHE_MAX);
 });
 
 test("#499: compareBranch says not-found for a branch that isn't pushed, and never calls GitHub for a bad ref", async () => {

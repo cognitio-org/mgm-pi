@@ -49,13 +49,17 @@ test("a live Drive's changes come from its diff, split per file, with the last p
       base: "main",
       branch: "outfitter/s1",
       pushed: { sha: head, at: landedAt },
-      head,
       truncated: false,
       files: [
         { path: "src/a.ts", status: "M", additions: 2, deletions: 1, patch: "@@ -1 +1,2 @@\n-a\n+b\n+c" },
         { path: "notes.md", status: "A", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+hi" },
       ],
     });
+    // Within 5 s the same run's diff answers again without asking the Drive (nothing replies to a
+    // second ask, so an uncached request would time out and fall back to GitHub).
+    const cached = await app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}/changes` });
+    assert.equal(cached.json().source, "drive");
+    assert.equal(cached.json().files.length, 2);
     // The old raw-patch route still answers.
     const raw = app.fastify.inject({ method: "GET", url: `/api/sessions/${session.id}/diff` });
     const again = await agent.nextMessage();

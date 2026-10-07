@@ -308,6 +308,19 @@ const LOCAL_ENV_PASSTHROUGH = ["PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "GIT_CO
 
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
+/** #499: the most of a `diff.result` patch agentd sends. */
+export const MAX_DIFF_BYTES = 2 * 1024 * 1024;
+
+/** Cuts a patch at the last file boundary (`diff --git`/`diff --cc`) at or under `maxBytes`, so no
+ * file is sent half-written. `truncated` when anything was cut. */
+export function capPatch(patch: string, maxBytes = MAX_DIFF_BYTES): { patch: string; truncated: boolean } {
+  const bytes = Buffer.from(patch, "utf8");
+  if (bytes.length <= maxBytes) return { patch, truncated: false };
+  const head = bytes.subarray(0, maxBytes).toString("utf8");
+  const cut = Math.max(head.lastIndexOf("\ndiff --git "), head.lastIndexOf("\ndiff --cc "));
+  return { patch: cut > 0 ? head.slice(0, cut + 1) : "", truncated: true };
+}
+
 /** Where the agent side stages the commit to push, and the bundle it hands to root. Both live in
  * the workspace's own .git (the agent owns it) and are removed again after each push. */
 const PUSH_REF = "refs/outfitter/push";
@@ -618,22 +631,42 @@ export function createGitOps(exec: ExecFn = defaultExec, options: GitOpsOptions 
     },
 
     async diff(cwd, base) {
-      const committed = await run(cwd, ["diff", `${base}...HEAD`]);
-      const working = await run(cwd, ["diff", "HEAD"]);
-      // -z: unquoted paths, so names with spaces or odd bytes come through intact.
-      const untracked = await run(cwd, ["status", "--porcelain=v1", "-z"]);
+      // #499: one diff from the merge-base to the working tree covers the branch's commits and the
+      // uncommitted edits together, so each file appears once, with hunks numbered against one base.
+      // `--end-of-options`: `base` is a ref name, never an option.
+      // The base may exist only as origin's tracking ref in this clone. Neither found: HEAD (the
+      // uncommitted edits only), which is what a branch with no base to compare to has.
+      let from = "HEAD";
+      for (const ref of [base, `refs/remotes/origin/${base}`]) {
+        const mergeBase = await run(cwd, ["merge-base", "--end-of-options", ref, "HEAD"]);
+        const sha = mergeBase.stdout.trim();
+        if (mergeBase.code === 0 && SHA_RE.test(sha)) {
+          from = sha;
+          break;
+        }
+      }
+      const tracked = await run(cwd, ["diff", from]);
+      const parts = [tracked.stdout];
+      let size = Buffer.byteLength(tracked.stdout);
+      // -z: unquoted paths, so names with spaces or odd bytes come through intact. -uall: files
+      // inside a new directory are listed one by one, not as the directory.
+      const untracked = await run(cwd, ["status", "--porcelain=v1", "-z", "-uall"]);
       const untrackedFiles = untracked.stdout
         .split("\0")
         .filter((l) => l.startsWith("?? "))
         .map((l) => l.slice(3));
-      let untrackedDiff = "";
       for (const f of untrackedFiles) {
+        // Past the cap the rest would only be cut off again (capPatch, run.ts's handleDiff).
+        if (size > MAX_DIFF_BYTES) break;
         // `--`: an untracked file named like an option (`--output=...`) must stay a path.
         const d = await run(cwd, ["diff", "--no-index", "--", "/dev/null", f]);
         // git diff --no-index exits 1 when there is a difference (expected here); only bail on real errors.
-        if (d.code === 0 || d.code === 1) untrackedDiff += d.stdout;
+        if ((d.code === 0 || d.code === 1) && d.stdout) {
+          parts.push(d.stdout);
+          size += Buffer.byteLength(d.stdout);
+        }
       }
-      return [committed.stdout, working.stdout, untrackedDiff].filter(Boolean).join("\n");
+      return parts.filter(Boolean).join("\n");
     },
   };
 }

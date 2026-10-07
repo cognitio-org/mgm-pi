@@ -534,13 +534,26 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
   // #499: the Changes pane's file list. A live Drive answers from its working tree (the same diff
   // as above, split per file); otherwise, or if it can't answer, GitHub's compare of the pushed
   // branch. Always 200 for a session that exists: `source: "none"` says why there is nothing.
+  // A page polling the pane doesn't re-run git on the Drive more than once per LIVE_DIFF_TTL_MS.
+  const liveDiffs = new Map<string, { at: number; result: Promise<Record<string, unknown>> }>();
   app.get("/api/sessions/:id/changes", async (req, reply) => {
     const session = await getSessionOr404(ctx, req, reply);
     if (!session) return;
     const run = await ctx.store.runs.findActiveForSession(session.id);
     const live = run && ctx.agentLink.hasSocket(run.id) ? run : null;
+    const liveDiff = (runId: string): Promise<Record<string, unknown>> => {
+      const now = Date.now();
+      for (const [id, entry] of liveDiffs) if (now - entry.at >= LIVE_DIFF_TTL_MS) liveDiffs.delete(id);
+      const hit = liveDiffs.get(runId);
+      if (hit) return hit.result;
+      const result = ctx.agentLink.request(runId, { t: "diff" });
+      liveDiffs.set(runId, { at: now, result });
+      // A failure isn't kept: the next request asks again.
+      result.catch(() => liveDiffs.delete(runId));
+      return result;
+    };
     return loadSessionChanges(session, {
-      ...(live ? { liveDiff: () => ctx.agentLink.request(live.id, { t: "diff" }) } : {}),
+      ...(live ? { liveDiff: () => liveDiff(live.id) } : {}),
       compare: (args) => ctx.githubCatalog.compareBranch(args),
     });
   });
@@ -644,7 +657,10 @@ async function stopRun(ctx: RouteContext, run: Run): Promise<Run | null> {
   return ctx.store.runs.update(run.id, { state: "stopping", updatedAt: new Date().toISOString() });
 }
 
-export const ARCHIVED_ERROR = "this floppy is archived; restore it first";
+/** #499: how long one live Drive's diff answers GET /changes. */
+const LIVE_DIFF_TTL_MS = 5_000;
+
+export const ARCHIVED_ERROR ="this floppy is archived; restore it first";
 
 /** #207: who may archive, restore or format a floppy: its owner, or a sysop. A session with no
  * ownerEmail (teleport-imported, or created before the field) is sysop-only. This is the first

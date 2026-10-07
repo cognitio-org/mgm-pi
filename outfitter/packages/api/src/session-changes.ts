@@ -30,7 +30,8 @@ export interface SessionChanges {
   reason?: string;
   base: string | null;
   branch: string | null;
-  /** The commit the list describes: the Drive's last pushed head, or the branch tip on GitHub. */
+  /** The branch tip GitHub compared (GitHub source only; a live Drive's list includes unpushed
+   * work, so it has none). */
   head?: string;
   /** Commits the branch has that the base doesn't, and the reverse (GitHub only). */
   ahead?: number;
@@ -158,7 +159,7 @@ function parseSection(section: Section): ChangedFile | null {
       else if (line.startsWith("GIT binary patch")) binary = true;
       else if (line.startsWith("Binary files ")) {
         binary = true;
-        const m = line.match(/^Binary files (.+) and (.+) differ$/);
+        const m = line.match(BINARY_LINE);
         if (m) {
           from ??= stripSide(m[1]!, "a/");
           to ??= stripSide(m[2]!, "b/");
@@ -209,47 +210,35 @@ function parseSection(section: Section): ChangedFile | null {
   return file;
 }
 
-/** Folds a second entry for the same path into the first: agentd's patch lists a file once for its
- * commits and again for its uncommitted edits. Counts add up; patches run one after the other. */
-function mergeSame(first: ChangedFile, later: ChangedFile): ChangedFile | null {
-  let status: ChangeStatus;
-  if (first.status === "U" || later.status === "U") status = "U";
-  else if (first.status === "A" && later.status === "D") return null; // added, then removed again
-  else if (later.status === "D") status = "D";
-  else if (first.status === "D" && later.status === "A") status = "M";
-  else status = first.status;
-  const merged: ChangedFile = {
-    path: first.path,
-    status,
-    additions: first.additions + later.additions,
-    deletions: first.deletions + later.deletions,
-  };
-  const oldPath = first.oldPath ?? later.oldPath;
-  if (oldPath !== undefined && (status === "R" || status === "C")) merged.oldPath = oldPath;
-  if (first.binary || later.binary) merged.binary = true;
-  const patches = [first.patch, later.patch].filter((p): p is string => typeof p === "string");
-  if (patches.length > 0 && status !== "D") merged.patch = patches.join("\n");
-  else if (status === "D" && later.patch) merged.patch = later.patch;
-  return merged;
-}
-
-/** Parses a unified `git diff` (one or more concatenated, `diff --cc` included) into one entry per
- * file, in first-seen order. */
+/** Parses a unified `git diff` (several concatenated, `diff --cc` included) into one entry per
+ * section, in order. agentd's patch (packages/agentd/src/git.ts) is one diff from the merge-base to
+ * the working tree plus one `--no-index` diff per untracked file, so each path appears once; no
+ * merging of sections is needed (or attempted). */
 export function parseUnifiedPatch(patch: string): ChangedFile[] {
-  const byPath = new Map<string, ChangedFile>();
+  const files: ChangedFile[] = [];
   for (const section of splitSections(patch)) {
     const file = parseSection(section);
-    if (!file) continue;
-    const earlier = byPath.get(file.path);
-    if (!earlier) {
-      byPath.set(file.path, file);
-      continue;
-    }
-    const merged = mergeSame(earlier, file);
-    if (merged) byPath.set(file.path, merged);
-    else byPath.delete(file.path);
+    if (file) files.push(file);
   }
-  return [...byPath.values()];
+  return files;
+}
+
+/** `Binary files a/X and b/Y differ`, either side `/dev/null` or C-quoted. The first path is
+ * non-greedy and the second must start with `b/` (or be quoted or /dev/null), so a path containing
+ * " and " splits at the right place in the usual case. */
+const QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
+const BINARY_LINE = new RegExp(String.raw`^Binary files (${QUOTED}|/dev/null|a/.+?) and (${QUOTED}|/dev/null|b/.+) differ$`);
+
+/** The most of a live patch the api will split (agentd caps its own at 2 MB; this guards an older
+ * agentd, or a forged frame). */
+export const MAX_LIVE_PATCH_BYTES = 4 * 1024 * 1024;
+
+/** Cuts `patch` at the last file boundary under `maxBytes`. Same rule as agentd's capPatch. */
+export function capLivePatch(patch: string, maxBytes = MAX_LIVE_PATCH_BYTES): { patch: string; truncated: boolean } {
+  if (patch.length <= maxBytes / 4 || Buffer.byteLength(patch, "utf8") <= maxBytes) return { patch, truncated: false };
+  const head = Buffer.from(patch, "utf8").subarray(0, maxBytes).toString("utf8");
+  const cut = Math.max(head.lastIndexOf("\ndiff --git "), head.lastIndexOf("\ndiff --cc "));
+  return { patch: cut > 0 ? head.slice(0, cut + 1) : "", truncated: true };
 }
 
 /** GitHub's compare `files[]` status words to our letters. `unchanged` is not a change. */
@@ -283,6 +272,9 @@ export function filesFromGithubCompare(rows: unknown): ChangedFile[] {
     }
     if (typeof r.patch === "string" && r.patch) file.patch = r.patch;
     else if (file.additions + file.deletions > 0) file.patchOmitted = true;
+    // No patch and no line counts: a binary file (or an empty one; GitHub doesn't say which). A
+    // pure rename or copy is neither.
+    else if (status !== "R" && status !== "C") file.binary = true;
     files.push(file);
   }
   return files;
@@ -350,13 +342,14 @@ export async function loadSessionChanges(session: ChangesSession, sources: Chang
     try {
       const result = await sources.liveDiff();
       if (typeof result.patch === "string") {
-        const capped = capChanges(parseUnifiedPatch(result.patch));
+        const live = capLivePatch(result.patch);
+        const capped = capChanges(parseUnifiedPatch(live.patch));
+        // No `head`: the list includes work not pushed yet; `pushed.sha` says what GitHub has.
         return {
           source: "drive",
           ...common,
           base: typeof result.base === "string" && result.base ? result.base : base,
-          ...(pushed ? { head: pushed.sha } : {}),
-          truncated: capped.truncated,
+          truncated: result.truncated === true || live.truncated || capped.truncated,
           files: capped.files,
         };
       }

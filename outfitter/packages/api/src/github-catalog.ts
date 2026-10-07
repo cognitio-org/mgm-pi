@@ -12,7 +12,10 @@
 
 import { classifyTokenRequest422, githubAppJwt, GITHUB_APP_ID_SECRET, GITHUB_APP_KEY_SECRET } from "./github-app.ts";
 import { parseSessionRepo } from "./session-repo.ts";
-import { filesFromGithubCompare, type ChangedFile } from "./session-changes.ts";
+import { capChanges, filesFromGithubCompare, type ChangedFile } from "./session-changes.ts";
+
+/** #499: compare results kept (one per repo:base:branch). */
+export const COMPARE_CACHE_MAX = 200;
 
 const LIST_TTL_MS = 60_000;
 const FAILURE_TTL_MS = 15_000;
@@ -320,7 +323,7 @@ export class GithubCatalog {
   private readonly tokens = new Map<string, CachedToken>();
   private readonly details = new Map<string, { at: number; value: GithubDetailResult }>();
   private readonly statuses = new Map<string, { at: number; value: GithubSessionStatus }>();
-  private readonly compares = new Map<string, { at: number; value: GithubBranchCompare }>();
+  private readonly compares = new Map<string, { at: number; expectedHead: string; value: GithubBranchCompare }>();
   private readonly read: (secretName: string) => Promise<string>;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -497,8 +500,9 @@ export class GithubCatalog {
   }
 
   /** #499: the files base...branch changes on GitHub, with their patches. Same App token path as
-   * sessionStatus. `expectedHead` (the session's last pushed head) is part of the cache key, so a
-   * new checkpoint push is seen at once rather than after the cache runs out. */
+   * sessionStatus. Cached briefly, one entry per repo:base:branch (the newest replaces the last)
+   * and at most COMPARE_CACHE_MAX in all, already capped (capChanges). An entry only counts for the
+   * same `expectedHead` (the session's last pushed head), so a new push is seen at once. */
   async compareBranch(session: {
     repo: string | null;
     branch?: string | null;
@@ -512,13 +516,22 @@ export class GithubCatalog {
     if (!parsed || !validOwner(parsed.owner) || !validRepoName(parsed.repo) || !safeRef(branch) || !safeRef(base)) {
       return { ok: false, reason: "invalid" };
     }
-    const key = `${parsed.owner}/${parsed.repo}`.toLowerCase() + `:${base}:${branch}:${session.expectedHead ?? ""}`;
+    const key = `${parsed.owner}/${parsed.repo}`.toLowerCase() + `:${base}:${branch}`;
+    const expectedHead = session.expectedHead ?? "";
     const hit = this.compares.get(key);
-    if (hit && this.now() - hit.at < STATUS_TTL_MS) return hit.value;
-    const value = await this.fetchCompare(parsed.owner, parsed.repo, base, branch);
+    if (hit && hit.expectedHead === expectedHead && this.now() - hit.at < STATUS_TTL_MS) return hit.value;
+    const fetched = await this.fetchCompare(parsed.owner, parsed.repo, base, branch);
+    let value = fetched;
+    if (fetched.ok) {
+      const capped = capChanges(fetched.files);
+      value = { ...fetched, files: capped.files, partial: fetched.partial || capped.truncated };
+    }
     const transient = !value.ok && value.reason === "unavailable";
     const ttl = transient ? FAILURE_TTL_MS : STATUS_TTL_MS;
-    this.compares.set(key, { at: this.now() - (STATUS_TTL_MS - ttl), value });
+    // Re-insert so Map order is oldest-first, then drop the oldest past the bound.
+    this.compares.delete(key);
+    this.compares.set(key, { at: this.now() - (STATUS_TTL_MS - ttl), expectedHead, value });
+    while (this.compares.size > COMPARE_CACHE_MAX) this.compares.delete(this.compares.keys().next().value!);
     return value;
   }
 

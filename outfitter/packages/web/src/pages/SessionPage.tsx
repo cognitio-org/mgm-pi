@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type ModelRow, type SessionDetail } from "../api/client.ts";
+import { api, ApiError, type ModelRow, type SessionDetail } from "../api/client.ts";
 import { useSessionStream } from "../hooks/useSessionStream.ts";
 import { useProviders } from "../hooks/useProviders.ts";
 import { PHONE_QUERY, WIDE_QUERY, useMediaQuery } from "../hooks/useMediaQuery.ts";
@@ -625,6 +625,25 @@ export function SessionPage() {
       notes={diffNotes}
       lastPush={lastPush}
       onCreatePr={() => setPrDialogFor(sessionId)}
+      autofix={
+        session?.repo
+          ? {
+              state: session.autofix,
+              canManage: Boolean(session.canManage) && !archived,
+              onToggle: async (on) => {
+                // Bound to the floppy it started on, like the git writes (#502).
+                const id = sessionId;
+                try {
+                  const result = await api.setAutofix(id, on);
+                  setSession((s) => (s && s.id === id ? { ...s, autofixCi: result.autofixCi, autofix: result.autofix } : s));
+                  return null;
+                } catch (err) {
+                  return err instanceof ApiError ? err.message : "Auto-fix couldn't be changed. Try again.";
+                }
+              },
+            }
+          : undefined
+      }
       onSendNotes={async (text) => {
         const ok = await handleSend(text);
         if (ok) setChangesFullFor(null);

@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap.ts";
 import { BackIcon } from "./SessionIcons.tsx";
-import type { ChangedFile, GithubCheck, LastPush } from "../api/client.ts";
+import type { AutofixState, ChangedFile, GithubCheck, LastPush } from "../api/client.ts";
+import { relativeTime } from "../lib/relative-time.ts";
 import type { DiffNotes } from "../hooks/useDiffNotes.ts";
 import type { SessionGit } from "../hooks/useSessionGit.ts";
 import {
@@ -210,7 +211,54 @@ function FailingCheck({ check, git }: { check: GithubCheck; git: SessionGit }) {
   );
 }
 
-function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => void }) {
+/** #503 Auto-fix CI for this floppy. `onToggle` resolves to an error message, or null once saved. */
+export interface AutofixControl {
+  state: AutofixState | undefined;
+  canManage: boolean;
+  onToggle: (on: boolean) => Promise<string | null>;
+}
+
+function AutofixSwitch({ control }: { control: AutofixControl }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { state, canManage } = control;
+  const on = state?.on === true;
+  const toggle = async () => {
+    setSaving(true);
+    setError(null);
+    const failed = await control.onToggle(!on);
+    setSaving(false);
+    setError(failed);
+  };
+  let note = "When a check fails, send its log to the agent (at most 3 a day).";
+  if (state?.notice) note = state.notice;
+  else if (on && state?.lastAt && state.lastSha) note = `Last sent for ${state.lastSha.slice(0, 7)} ${relativeTime(state.lastAt)}.`;
+  else if (!canManage) note = "Only the floppy's owner can change this.";
+  return (
+    <div className="details-toggle">
+      <span>
+        Auto-fix CI
+        <small>{note}</small>
+        {error && (
+          <small className="git-error" role="alert">
+            {error}
+          </small>
+        )}
+      </span>
+      <button
+        type="button"
+        className="details-switch"
+        role="switch"
+        aria-checked={on}
+        aria-label="Auto-fix CI"
+        disabled={!canManage || saving}
+        onClick={() => void toggle()}
+      />
+    </div>
+  );
+}
+
+function PullRequest({ git, onCreatePr, autofix }: { git: SessionGit; onCreatePr: () => void; autofix?: AutofixControl }) {
   const [confirming, setConfirming] = useState(false);
   const status = git.status;
   const pr = status?.pr ?? null;
@@ -278,13 +326,7 @@ function PullRequest({ git, onCreatePr }: { git: SessionGit; onCreatePr: () => v
         </ul>
       )}
       {failing && <FailingCheck check={failing} git={git} />}
-      <div className="details-toggle">
-        <span>
-          Auto-fix CI
-          <small>When a check fails, send its log to the agent. Coming soon (#503).</small>
-        </span>
-        <button type="button" className="details-switch" role="switch" aria-checked={false} aria-label="Auto-fix CI, coming soon" disabled />
-      </div>
+      {autofix && <AutofixSwitch control={autofix} />}
       {merge.offered ? (
         <div className="git-actions">
           {confirming ? (
@@ -340,11 +382,13 @@ export function ChangesPane({
   lastPush,
   onCreatePr,
   onSendNotes,
+  autofix,
 }: {
   git: SessionGit;
   notes: DiffNotes;
   lastPush: LastPush | null | undefined;
   onCreatePr: () => void;
+  autofix?: AutofixControl;
   /** Resolves true once the message was accepted; the notes stay until then. */
   onSendNotes: (text: string) => Promise<boolean>;
 }) {
@@ -425,7 +469,7 @@ export function ChangesPane({
         <h2 id="changes-pr">
           <span>Pull request</span>
         </h2>
-        <PullRequest git={git} onCreatePr={onCreatePr} />
+        <PullRequest git={git} onCreatePr={onCreatePr} autofix={autofix} />
       </section>
 
       <section aria-labelledby="changes-files">

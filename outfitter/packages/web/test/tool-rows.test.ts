@@ -77,6 +77,12 @@ describe("testTally", () => {
     expect(testTally("===== 10 passed in 0.5s =====")).toEqual({ passed: 10, failed: 0 });
     expect(testTally("hello world")).toBeNull();
   });
+
+  it("reads through colour codes, and jest's skipped and todo counts", () => {
+    expect(testTally("\u001b[32m      Tests \u001b[39m \u001b[1m24 passed\u001b[22m (24)")).toEqual({ passed: 24, failed: 0 });
+    expect(testTally("Tests:       1 failed, 2 skipped, 3 todo, 11 passed, 17 total")).toEqual({ passed: 11, failed: 1 });
+    expect(testTally("Tests:       3 todo, 4 passed, 7 total")).toEqual({ passed: 4, failed: 0 });
+  });
 });
 
 describe("toolSummary", () => {
@@ -88,6 +94,19 @@ describe("toolSummary", () => {
     });
   });
 
+  it("a passing tally from a command that still failed reads as a failure", () => {
+    expect(toolSummary({ toolName: "bash", output: "Tests  24 passed (24)\n\nCommand exited with code 1", ...done, isError: true })).toEqual({
+      text: "✗ exit 1 · 24 passed",
+      tone: "fail",
+    });
+    expect(toolSummary({ toolName: "bash", output: "Tests  24 passed (24)", ...done, isError: true }).tone).toBe("fail");
+  });
+
+  it("exit code 0 is not a failure", () => {
+    expect(toolSummary({ toolName: "bash", output: "ok\nCommand exited with code 0", ...done })).toEqual({ text: "2 lines of output", tone: "dim" });
+    expect(toolSummary({ toolName: "bash", output: "Tests  3 passed (3)\nCommand exited with code 0", ...done }).tone).toBe("pass");
+  });
+
   it("a failing command shows its exit code; a quiet one says so", () => {
     expect(toolSummary({ toolName: "bash", output: "boom\n\nCommand exited with code 2", ...done, isError: true }).text).toBe("✗ exit 2");
     expect(toolSummary({ toolName: "bash", output: "", ...done }).text).toBe("no output");
@@ -96,6 +115,7 @@ describe("toolSummary", () => {
 
   it("counts lines, matches and entries for look-ups", () => {
     expect(toolSummary({ toolName: "read", output: "1\n2\n3", ...done }).text).toBe("3 lines");
+    expect(toolSummary({ toolName: "read", output: "1\n2\n3\n", ...done }).text).toBe("3 lines");
     expect(toolSummary({ toolName: "grep", output: "a:1: x\nb:2: y\n", ...done }).text).toBe("2 matches");
     expect(toolSummary({ toolName: "grep", output: "No matches found", ...done }).text).toBe("no matches");
     expect(toolSummary({ toolName: "ls", output: "a\nb/\n", ...done }).text).toBe("2 entries");

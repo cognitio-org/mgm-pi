@@ -1,0 +1,44 @@
+outfitter/packages/api/src/routes/sessions.ts
+  s_fe1c4322a69a90::t_bed20a333333ea 19
+  s_fe1c4322a69a90::t_fc21636a76900b 529-542
+outfitter/packages/api/test/session-changes.test.ts
+  s_fe1c4322a69a90::t_ce937b3a9e65fe 177
+  s_fe1c4322a69a90::t_28e95fa79f2ca5 1-176,178-296
+outfitter/packages/api/src/session-changes.ts
+  s_fe1c4322a69a90::t_86fe33da8f257c 331
+  s_fe1c4322a69a90::t_09f1965814dc05 315-330,332-383
+  s_fe1c4322a69a90::t_a520bc0fec7433 1-268,271-314
+  s_fe1c4322a69a90::t_fb33b142e2c01c 269-270
+outfitter/packages/api/test/github-routes.test.ts
+  s_fe1c4322a69a90::t_a684aacdc6525d 91-125
+outfitter/packages/api/test/session-changes-route.test.ts
+  s_fe1c4322a69a90::t_14e4efb98ade32 1-70
+outfitter/packages/web/src/api/client.ts
+  s_fe1c4322a69a90::t_ba96321e6b17cb 854-858
+  s_fe1c4322a69a90::t_6dfec14f429ecd 582-612
+outfitter/packages/api/test/github-catalog.test.ts
+  s_fe1c4322a69a90::t_5f4fa2ba2b8337 570-627
+outfitter/docs/protocol.md
+  s_fe1c4322a69a90::t_a0442311fead3d 563
+outfitter/packages/api/src/github-catalog.ts
+  s_fe1c4322a69a90::t_79074efe625894 490-556
+  s_fe1c4322a69a90::t_68db90995bbaf2 323
+  s_fe1c4322a69a90::t_5c22a825266182 15
+  s_fe1c4322a69a90::t_cf6bd8c8a4b460 121-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a97cc902d8100728bf325ec23d5038c864927cea",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

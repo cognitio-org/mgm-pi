@@ -85,10 +85,14 @@ api() {
   local out code
   out="$(curl -sS -X "$1" "${ROUTER_URL}$2" \
     -H @<(printf 'Authorization: Bearer %s\n' "${MASTER}") \
-    -H 'Content-Type: application/json' ${3:+--data-binary @-} -w '\n%{http_code}')"
+    -H 'Content-Type: application/json' ${3:+--data-binary @-} -w '\n%{http_code}')" || {
+    # DNS, TLS or connection failure: no answer at all, so nothing can be concluded from it.
+    echo "router $1 $2 -> no response (curl failed)" >&2
+    return 1
+  }
   code="${out##*$'\n'}"
   out="${out%$'\n'*}"
-  if (( code >= 400 )); then
+  if [[ ! "${code}" =~ ^[0-9]{3}$ ]] || (( code < 200 || code >= 300 )); then
     # Only message text, never the body: a 422 echoes the request (pydantic `input`), client secret
     # included. Whatever is printed is also scrubbed of the two secrets.
     local msg
@@ -113,7 +117,10 @@ show() {
     | {server_id, alias, url, transport, auth_type, oauth2_flow, authorization_url, token_url, allow_all_keys}'
 }
 
-list="$(api GET /v1/mcp/server)"
+# A failed or unreadable listing must stop here: treating it as "not registered" would POST blind.
+list="$(api GET /v1/mcp/server)" || deploy_fail "couldn't list the router's MCP servers; nothing was changed"
+jq -e 'type == "array" or type == "object"' <<<"${list}" >/dev/null 2>&1 \
+  || deploy_fail "the router's MCP server list isn't JSON; nothing was changed"
 existing="$(jq -c --arg id "${SERVER_ID}" '(if type == "array" then . else (.servers // .data // []) end)
   | map(select(.server_id == $id or .alias == $id))[0] // empty' <<<"${list}")"
 existing_id="$(jq -r '.server_id // empty' <<<"${existing:-null}")"

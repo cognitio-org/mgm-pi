@@ -34,7 +34,11 @@ import {
 import { ThinkingRow, TranscriptFlow, UserBlock } from "../components/TranscriptFlow.tsx";
 import { Composer } from "../components/Composer.tsx";
 import { StatusPill } from "../components/StatusPill.tsx";
-import { GithubStatus } from "../components/GithubStatus.tsx";
+import { ChangesPane } from "../components/ChangesPane.tsx";
+import { CreatePrDialog } from "../components/CreatePrDialog.tsx";
+import { GitChips, GitStrip, type GitChipAction } from "../components/GitChips.tsx";
+import { useSessionGit } from "../hooks/useSessionGit.ts";
+import { useDiffNotes } from "../hooks/useDiffNotes.ts";
 import { PreviewChips } from "../components/PreviewChips.tsx";
 import { IdeChip } from "../components/IdeChip.tsx";
 import { IdeProvider } from "../components/IdeProvider.tsx";
@@ -71,8 +75,11 @@ const OUTCOME_FLASH_MS = 3000;
 /** How long a "Copied" note stays in the dock. */
 const TOAST_MS = 2000;
 
-/** The right pane's tabs. #502 adds Changes beside Details. */
-const PANE_TABS = [{ id: "details", label: "Details" }] as const;
+/** The right pane's tabs (#502: Changes first). */
+const PANE_TABS = [
+  { id: "changes", label: "Changes" },
+  { id: "details", label: "Details" },
+] as const;
 type PaneTab = (typeof PANE_TABS)[number]["id"];
 
 /**
@@ -110,6 +117,7 @@ export function SessionPage() {
     agentSeenAt,
     piActiveAt,
     liveThought: streamedThought,
+    lastPush,
   } = useSessionStream(sessionId, session?.id === sessionId ? session.lastPush : undefined);
   const { providers } = useProviders();
   const phone = useMediaQuery(PHONE_QUERY);
@@ -136,7 +144,11 @@ export function SessionPage() {
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const navItems = useContext(AppNavContext);
   const versionText = useContext(AppVersionContext);
-  const [paneTab, setPaneTab] = useState<PaneTab>("details");
+  const [paneTab, setPaneTab] = useState<PaneTab>("changes");
+  // #502: the Create PR dialog, and the phone's full-screen Changes view, held as the floppy they
+  // were opened on so moving to another one closes them.
+  const [prDialogFor, setPrDialogFor] = useState<string | null>(null);
+  const [changesFullFor, setChangesFullFor] = useState<string | null>(null);
   const [scannerColour, setScannerColour] = useState<ScannerColour>(() => loadScannerColour());
   // The phone's bottom sheet, held as the session it was opened on, like the model switcher.
   const [sheetFor, setSheetFor] = useState<string | null>(null);
@@ -296,6 +308,32 @@ export function SessionPage() {
     () => previewAccessByEntry(entries, session?.htmlPreviewAccessByRun, previewAccessFor(session?.allowExternalHtmlResources)),
     [entries, session?.htmlPreviewAccessByRun, session?.allowExternalHtmlResources],
   );
+  // #502: the branch, PR and checks, read once for the chips, the Changes tab and the phone strip.
+  // Messages for the agent (Fix CI, a conflict, diff notes) go through the normal send path.
+  const git = useSessionGit({
+    sessionId,
+    repo: session?.id === sessionId ? session.repo : undefined,
+    lastPush,
+    runState,
+    send: (text) => handleSend(text),
+  });
+  const diffNotes = useDiffNotes(sessionId);
+  const changesFull = phone && changesFullFor === sessionId;
+  const prDialog = prDialogFor === sessionId;
+
+  // The phone's Changes view closes on Esc, unless a dialog opened over it wants it.
+  useEffect(() => {
+    if (!changesFull) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelectorAll("[aria-modal='true']").length > 1) return;
+      event.preventDefault();
+      setChangesFullFor(null);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [changesFull]);
+
   const header = useMemo(() => {
     const windowById = new Map(models.map((m) => [m.id, m.contextWindow]));
     return deriveSessionHeader(entries, (id) => windowById.get(id));
@@ -493,6 +531,24 @@ export function SessionPage() {
     }
   }
 
+  /** A git chip: open the Changes tab (the full-screen view on a phone), or do its action. */
+  function onGitAction(action: GitChipAction) {
+    if (action === "create-pr") {
+      setPrDialogFor(sessionId);
+      return;
+    }
+    if (action === "fix-ci") void git.fixCi();
+    if (phone) {
+      setChangesFullFor(sessionId);
+      return;
+    }
+    setPaneTab("changes");
+    if (!paneOpen) {
+      savePaneOpen(true);
+      setPaneChoice(true);
+    }
+  }
+
   function togglePane() {
     savePaneOpen(!paneOpen);
     setPaneChoice(!paneOpen);
@@ -569,10 +625,22 @@ export function SessionPage() {
 
   const liveChips = (
     <>
-      {session?.repo && <GithubStatus key={`${sessionId}:${session.repo}`} sessionId={sessionId} repo={session.repo} />}
       <PreviewChips sessionId={sessionId} runState={runState} onError={setApiError} />
       <IdeChip />
     </>
+  );
+
+  const changesPane = (
+    <ChangesPane
+      git={git}
+      notes={diffNotes}
+      lastPush={lastPush}
+      onCreatePr={() => setPrDialogFor(sessionId)}
+      onSendNotes={(text) => {
+        setChangesFullFor(null);
+        void handleSend(text);
+      }}
+    />
   );
 
   const details = (withChips: boolean) => (
@@ -703,16 +771,20 @@ export function SessionPage() {
                 )}
               </span>
             </div>
-            {/* #502 adds the git chips (branch, lines, PR and checks) here. */}
-            {!phone && <div className="session-chips">{liveChips}</div>}
+            {!phone && (
+              <div className="session-chips">
+                <GitChips git={git} onAction={onGitAction} />
+                {liveChips}
+              </div>
+            )}
             {!phone && (
               <button
                 type="button"
                 className="icon-btn"
                 aria-pressed={paneOpen}
                 aria-controls={paneOpen ? "session-pane" : undefined}
-                aria-label="Details pane"
-                title="Details: model, context, Drive stats and logs"
+                aria-label="Changes and details pane"
+                title="Changes and details: the branch and PR, model, context, Drive stats and logs"
                 onClick={togglePane}
               >
                 <PaneIcon />
@@ -735,6 +807,7 @@ export function SessionPage() {
               </PopMenu>
             )}
           </header>
+          {phone && <GitStrip git={git} onOpen={() => setChangesFullFor(sessionId)} />}
           <div className="session-body">
             <div className="session-col">
               <div className="session-scroll" ref={scrollRef} onScroll={onSessionScroll}>
@@ -905,7 +978,7 @@ export function SessionPage() {
               </div>
             </div>
             {!phone && paneOpen && (
-              <aside id="session-pane" className="session-pane" aria-label="Floppy details">
+              <aside id="session-pane" className="session-pane" aria-label="Changes and details">
                 <div className="pane-tabs" role="tablist" aria-label="Pane">
                   {PANE_TABS.map((tab) => (
                     <button
@@ -918,16 +991,44 @@ export function SessionPage() {
                       onClick={() => setPaneTab(tab.id)}
                     >
                       {tab.label}
+                      {tab.id === "changes" && git.changes && git.changes.files.length > 0 ? ` ${git.changes.files.length}` : ""}
                     </button>
                   ))}
                 </div>
                 <div className="pane-panel" role="tabpanel" id={`pane-panel-${paneTab}`} aria-labelledby={`pane-tab-${paneTab}`}>
+                  {paneTab === "changes" && changesPane}
                   {paneTab === "details" && details(false)}
                 </div>
               </aside>
             )}
           </div>
         </div>
+
+        {changesFull && (
+          <div className="changes-full" role="dialog" aria-modal="true" aria-label="Changes">
+            <header className="session-head">
+              <button type="button" className="icon-btn" onClick={() => setChangesFullFor(null)} aria-label="Back to the floppy" autoFocus>
+                <BackIcon />
+              </button>
+              <div className="session-head-title">
+                <h1>Changes</h1>
+                <span className="session-state">{floppyTitle}</span>
+              </div>
+            </header>
+            <div className="changes-full-body">{changesPane}</div>
+          </div>
+        )}
+
+        {prDialog && (
+          <CreatePrDialog
+            defaultTitle={floppyTitle}
+            repo={session?.repo ?? null}
+            branch={git.changes?.branch ?? git.status?.branch ?? null}
+            base={git.changes?.base ?? git.status?.baseBranch ?? null}
+            onSubmit={git.createPr}
+            onClose={() => setPrDialogFor(null)}
+          />
+        )}
 
         {sheetOpen && (
           <SessionSheet onClose={() => setSheetFor(null)} returnFocus={moreRef} menu={menu(() => setSheetFor(null))}>

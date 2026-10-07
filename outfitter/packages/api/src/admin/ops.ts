@@ -603,7 +603,8 @@ export function registerAdminOp(name: string, op: AdminOp): () => void {
   if (op.webApproval && (!op.laptopCard || (!op.asks && !ALWAYS_ASKS.has(op.kind)))) {
     throw new Error(`admin op ${name}: a webApproval op needs a laptopCard, and asks (or a class that always asks)`);
   }
-  if (op.laptop && !op.webApproval && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
+  // GA-4: `gcloud.note` is the one other laptop op, an audit row for a decision the TUI took.
+  if (op.laptop && !op.webApproval && name !== "gcloud.note" && (op.capability !== "memory" || (op.kind !== "read" && op.kind !== "write"))) {
     throw new Error(`admin op ${name}: only a memory read or write (or a webApproval op) may be laptop-callable`);
   }
   // Skipping the audit is for a laptop's own memory writes (memory.record) only.

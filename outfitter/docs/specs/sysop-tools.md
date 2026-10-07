@@ -42,6 +42,17 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## gcloud MCP approval cards (GA-4, #494)
+- **Not an admin tool, but the same approval flow.** Google's remote gcloud MCP server (`gcloud`) is
+  reached through the router, so its calls never pass the API. Kernal's `gcloud-approval` extension
+  brokers pi-mcp-adapter's approval event for that server and asks first for any command
+  `classify.ts` doesn't call a plain read (default: ask).
+- **Drive:** `gcloud.run`, an `operator` op, raises the owner's `admin:<approvalId>` web card with the
+  project and command; the answer, including a decline or timeout, is an `adminAudit` row whose
+  `target` is `<tool> <project> :: <command>`.
+- **Laptop:** a TUI confirm, then `gcloud.note` (the one laptop-callable op outside memory and web
+  approvals) records the decision. No TUI (`kernal -p`): denied.
+
 ## Changes since the plan (PR5: skill, Sysop tape, UI)
 - **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
   Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image

@@ -41,6 +41,8 @@ import { MemoryRecorder } from "./agentengine/recorder.ts";
 import { memoryUsage } from "./agentengine/usage.ts";
 // E9 PR3: registers the memory.* admin ops (side effect only).
 import "./admin/memory-ops.ts";
+// GA-4: registers gcloud.run / gcloud.note (approval cards for the gcloud MCP).
+import "./admin/gcloud-ops.ts";
 import { CachedSandboxTelemetry, GcpSandboxTelemetry, NoSandboxTelemetry, type SandboxTelemetry } from "./sandbox-telemetry.ts";
 import { applySentrySettings, installSentryErrorHandler, sentryEnabled, sentryLogMethod, Sentry, type SentryRuntime } from "./sentry.ts";
 import { FleetSettingsCache } from "./fleet-settings.ts";

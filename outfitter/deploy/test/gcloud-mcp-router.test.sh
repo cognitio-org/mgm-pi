@@ -85,6 +85,12 @@ grep -q "CONFIRM=1 is required" "${WORK}/out" || fail "wrong refusal"
 ROUTER_URL=http://router.example.com CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a non-https ROUTER_URL"
 grep -q "must be https" "${WORK}/out" || fail "wrong refusal for http"
 
+# An unreachable router (DNS down, connection refused) stops before any write: a failed listing
+# must never read as "not registered" and lead to a blind POST.
+ROUTER_URL=http://127.0.0.1:1 CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "an unreachable router didn't fail the run"
+grep -q "couldn't list the router's MCP servers" "${WORK}/out" || { cat "${WORK}/out"; fail "wrong message for an unreachable router"; }
+! grep -q "+ register" "${WORK}/out" || { cat "${WORK}/out"; fail "tried to register after a failed listing"; }
+
 # A 422 that echoes the request (incl. the client secret) must not leak it.
 touch "${FAIL_FILE}"
 CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "422 didn't fail the run"

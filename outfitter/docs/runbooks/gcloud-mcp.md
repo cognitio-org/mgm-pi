@@ -53,8 +53,11 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
    `roles/mcp.toolUser` to the operators (`OUTFITTER_OPERATORS`, override with `GCLOUD_MCP_SYSOPS`),
    and creates the deny policy `gcloud-mcp-gateway-only`: `mcp.googleapis.com/tools.call` is denied
    to everyone unless `request.auth.oauth.client_id` is the router's client. Writing deny policies
-   needs `roles/iam.denyAdmin` on the project (Owner does not include it): grant it to yourself,
-   run, remove it. The policy covers every Google remote MCP server in the project, and it blocks
+   needs `roles/iam.denyAdmin`, which Owner doesn't include and which can only be granted on the
+   **organization** (a project grant fails with "Role roles/iam.denyAdmin is not supported for this
+   resource"). Grant it, wait a minute, run, then remove it:
+   `gcloud --configuration=outfitter organizations add-iam-policy-binding 175498176044 --member=user:mgm@mgms.eu --role=roles/iam.denyAdmin --condition=None`
+   and the same with `remove-iam-policy-binding` afterwards. The policy covers every Google remote MCP server in the project, and it blocks
    every other caller too: a service account, Application Default Credentials, or another client
    (Gemini CLI, an MCP Inspector) can no longer call Google remote MCP servers in this project. The
    follow-on servers below use the same client, so they pass. It is attached to the project only;

@@ -42,6 +42,28 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (GA-2/GA-3: gcloud MCP for operators, #492/#493, epic #497)
+- **Router admission is the boundary.** Google's remote gcloud is the router MCP server `gcloud`
+  (per-user OAuth vault, like `sentry`). Outfitter admits it through `object_permission.mcp_servers`
+  on `/key/generate` (a field of the existing route: no new admin route, no admin-key rotation).
+  Operator device keys (`OUTFITTER_OPERATORS` owner) and run keys of an `adminTools: operator` tape
+  with an operator owner (the `operator` test of `admin/drive.ts`) list `gcloud`; every other key is
+  minted exactly as before, with no list. `central/gcloud-mcp.ts` holds both tests.
+- **The operator list also names `ce_knowledge_base`, `headroom` and `sentry`.** A key with its own
+  list is "scoped" on the router; naming the servers every key uses keeps an operator's access to them
+  if the router ever restricts open servers to a key's scope.
+- **Existing keys don't change.** A device key gets `gcloud` at its next login or re-mint, a run key
+  at the next run; removing an operator takes effect the same way (device keys last 90 days: revoke the
+  device to cut access sooner). The router still checks the caller's own grant, so a key never reaches
+  another user's token.
+- **Drives:** the image's `mcp.json` ships `gcloud` with `disabled: true` (`render-mcp.sh`). The api
+  sends `run.spec.mcp.enable: ["gcloud"]` only for such an operator run, and agentd (`mcp-gate.ts`)
+  flips the flag before pi starts. That file is a tidy-up (pi can edit it); the run key is the
+  boundary. An older api or agentd leaves the server off.
+- **Laptop:** `kernal/.pi/mcp.json` has `gcloud` (`lazy`, OAuth through the router) for everyone.
+  Kernal doesn't know operator status, and a lazy server costs nothing until used; the router hides it
+  from non-operator keys. Usage rules for the agent are in the `gcloud-mcp` skill.
+
 ## Changes since the plan (PR5: skill, Sysop tape, UI)
 - **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
   Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image

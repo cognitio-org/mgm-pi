@@ -24,6 +24,7 @@ import type { FleetSettings } from "../fleet-settings.ts";
 import type { RouterKey } from "../store/keys.ts";
 import type { Run, Session, Store } from "../store/types.ts";
 import { runKeyAlias, type LitellmKeys, type RouterKeyLimitsSource } from "./litellm-keys.ts";
+import { runKeyMcpServers } from "./gcloud-mcp.ts";
 import { resolveConfig } from "./settings-resolver.ts";
 import type { SettingValue, ValueSource } from "./settings-schema.ts";
 import { userIdFor } from "./user-id.ts";
@@ -74,6 +75,9 @@ export interface RunKeyRequest {
   sharedKey: string;
   /** An A2A session keeps its tape's dedicated key (§9), unchanged. */
   a2a: boolean;
+  /** GA-2: the tape has `adminTools: operator` and the owner is an operator (gcloud-mcp.ts gcloudRun),
+   * so the key is admitted to the router's `gcloud` MCP server. Absent means no. */
+  gcloud?: boolean;
 }
 
 export interface RunKeysOptions {
@@ -154,6 +158,7 @@ export class RunKeys {
         sessionId: req.session.id,
         durationSeconds: RUN_KEY_DURATION_SECONDS,
         mint,
+        mcpServers: runKeyMcpServers(req.gcloud === true),
       });
       return { key: minted.key, source: "run", alias: minted.alias };
     } catch (err) {

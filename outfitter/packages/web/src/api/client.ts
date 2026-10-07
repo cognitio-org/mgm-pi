@@ -84,6 +84,7 @@ export interface AutofixState {
   /** Paused after 3 messages in 24 hours; `notice` says so, `resumesAt` is when it resumes by
    * itself. Turning it on again (setAutofix(id, true)) resumes at once. */
   capped?: boolean;
+  /** The pause notice, or (with `on: false`) "Auto-fix turned itself off after 3 days of failing CI." */
   notice?: string;
   resumesAt?: string;
 }
@@ -943,7 +944,9 @@ export const api = {
     return request(`/api/sessions/${id}/voice`, { method: "PUT", body: JSON.stringify({ speak }) });
   },
 
-  /** #503 Auto-fix CI on or off (owner or sysop; 409 for an archived or repo-less floppy). */
+  /** #503 Auto-fix CI on or off (owner or sysop). Turning it on is a 409 for an archived or
+   * repo-less floppy, `code: "autofix-a2a"` for an A2A task's, and `code: "autofix-limit"` past 10
+   * floppies per owner. */
   setAutofix(id: string, on: boolean): Promise<{ autofixCi: boolean; autofix: AutofixState }> {
     return request(`/api/sessions/${id}/autofix`, { method: "PUT", body: JSON.stringify({ on }) });
   },

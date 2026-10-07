@@ -165,14 +165,18 @@ class MemorySessions implements SessionsCollection {
     return this.rows.delete(id);
   }
 
-  async setAutofixCi(id: string, on: boolean): Promise<Session | null> {
+  async setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null> {
     const row = this.rows.get(id);
     if (!row) return null;
-    const { cappedAt: _c, cappedSha: _s, sends: _sends, ...kept } = row.autofix ?? { rev: 0 };
+    const { cappedAt: _c, cappedSha: _s, sends: _sends, capDays: _d, offNotice: _o, nextPollAt: _n, ...kept } = row.autofix ?? { rev: 0 };
     const autofix: AutofixState = on ? { ...kept, rev: kept.rev + 1 } : { ...(row.autofix ?? { rev: 0 }), rev: kept.rev + 1 };
-    const next: Session = { ...row, autofixCi: on, autofix };
+    const next: Session = { ...row, autofixCi: on, autofix, ...(on && nowIso ? { updatedAt: nowIso } : {}) };
     this.rows.set(id, next);
     return clone(next);
+  }
+
+  async countAutofixForOwner(ownerEmail: string): Promise<number> {
+    return [...this.rows.values()].filter((s) => s.autofixCi === true && !s.archivedAt && s.ownerEmail === ownerEmail).length;
   }
 
   async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {

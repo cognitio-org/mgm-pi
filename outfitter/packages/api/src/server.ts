@@ -182,10 +182,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
   const autofix = new AutofixWatcher({
     store,
     github,
-    post: async (sessionId, mailId, text) => {
+    insert: async (sessionId, mailId, text) => {
       await mail.post({ id: mailId, sessionId, from: { kind: "system" }, text });
-      await agentLink.deliverMailForSession(sessionId);
     },
+    deliver: (sessionId) => agentLink.deliverMailForSession(sessionId),
     log: (msg, err) => fastify.log.warn({ err }, msg),
   });
   // Session search (#289): chunks follow entries as they arrive, and imports and formats.

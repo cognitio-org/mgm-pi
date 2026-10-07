@@ -18,7 +18,7 @@ import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts
 import type { Identity } from "../auth.ts";
 import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
 import { loadSessionChanges } from "../session-changes.ts";
-import { autofixView } from "../autofix.ts";
+import { AUTOFIX_MAX_PER_OWNER, autofixView } from "../autofix.ts";
 
 /** Same checks `GithubAppTokens.mint` uses before it calls GitHub. Existence of a secret version is not enough. */
 async function githubAppConfigured(ctx: RouteContext, repo: string): Promise<boolean> {
@@ -489,7 +489,18 @@ export async function registerSessionRoutes(app: FastifyInstance, ctx: RouteCont
     if (typeof on !== "boolean") return reply.code(400).send({ error: "on must be true or false" });
     if (on && session.archivedAt) return reply.code(409).send({ error: ARCHIVED_ERROR });
     if (on && !session.repo) return reply.code(409).send({ error: "this floppy has no repository, so it has no CI to fix" });
-    const updated = await ctx.store.sessions.setAutofixCi(session.id, on);
+    // An A2A task's session: its caller's text must not get a standing message channel.
+    if (on && isA2ASession(session)) {
+      return reply.code(409).send({ error: "Auto-fix isn't available on an A2A task's session", code: "autofix-a2a" });
+    }
+    if (on && session.autofixCi !== true && session.ownerEmail) {
+      const count = await ctx.store.sessions.countAutofixForOwner(session.ownerEmail);
+      if (count >= AUTOFIX_MAX_PER_OWNER) {
+        return reply.code(409).send({ error: `Auto-fix is already on for ${AUTOFIX_MAX_PER_OWNER} floppies; turn it off on one first`, code: "autofix-limit" });
+      }
+    }
+    // Turning it on counts as activity, so the watcher's 7-day filter includes the floppy.
+    const updated = await ctx.store.sessions.setAutofixCi(session.id, on, new Date().toISOString());
     if (!updated) return reply.code(404).send({ error: "session not found" });
     return { autofixCi: on, autofix: autofixView(updated) };
   });

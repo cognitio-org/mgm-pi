@@ -181,15 +181,30 @@ class MongoSessions implements SessionsCollection {
     return (await this.col.deleteOne({ _id: id })).deletedCount > 0;
   }
 
-  async setAutofixCi(id: string, on: boolean): Promise<Session | null> {
+  async setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null> {
     const result = await this.col.findOneAndUpdate(
       { _id: id },
       on
-        ? { $set: { autofixCi: true }, $inc: { "autofix.rev": 1 }, $unset: { "autofix.cappedAt": "", "autofix.cappedSha": "", "autofix.sends": "" } }
+        ? {
+            $set: { autofixCi: true, ...(nowIso ? { updatedAt: nowIso } : {}) },
+            $inc: { "autofix.rev": 1 },
+            $unset: {
+              "autofix.cappedAt": "",
+              "autofix.cappedSha": "",
+              "autofix.sends": "",
+              "autofix.capDays": "",
+              "autofix.offNotice": "",
+              "autofix.nextPollAt": "",
+            },
+          }
         : { $set: { autofixCi: false }, $inc: { "autofix.rev": 1 } },
       { returnDocument: "after" },
     );
     return stripId<Session>(result);
+  }
+
+  async countAutofixForOwner(ownerEmail: string): Promise<number> {
+    return this.col.countDocuments({ autofixCi: true, archivedAt: null, ownerEmail } as Record<string, unknown>);
   }
 
   async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {

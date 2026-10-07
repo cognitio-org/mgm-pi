@@ -17,14 +17,22 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
    `access_type=offline` and `prompt=consent` for accounts.google.com and keeps the stored refresh
    token when Google's refresh response omits it. Without it a grant can die after the first
    refresh. (Follow the router release lock: check the live release before rolling.)
-2. **Create the OAuth client.** Google Cloud console, project `outfitter-509211`, APIs & Services,
-   OAuth consent screen. The user type must be **Internal** (an External app in Testing expires
-   refresh tokens after 7 days). Then Credentials, Create credentials, OAuth client ID, type
-   **Web application**. Authorized redirect URI: `https://router.kernal.one/callback` (the router
-   builds its MCP OAuth callback as `<base url>/callback`). Copy the client ID and secret.
-   Internal needs the project inside a Workspace organization; if the console only offers
-   External, stop and ask: External is not acceptable here.
-3. **Store the client secret** in Secret Manager as `outfitter-gcloud-mcp-oauth-client-secret`,
+2. **Create the OAuth client in its own project, not `outfitter-509211`.** A project has one OAuth
+   consent screen, and `outfitter-509211`'s must stay **External**: IAP's custom client admits
+   people outside the Workspace (serviam-it.hr, a gmail.com account). Switching it to Internal
+   would lock them out of app.kernal.one. So (owner decision 2026-10-07):
+   - Create a small project in the mgmonteleone.com organization with no billing account, e.g.
+     `gcloud --configuration=outfitter projects create kernal-oauth --organization=175498176044`.
+   - In its console: APIs & Services, OAuth consent screen, user type **Internal** (an External app
+     in Testing expires refresh tokens after 7 days).
+   - Then Credentials, Create credentials, OAuth client ID, type **Web application**, authorized
+     redirect URI `https://router.kernal.one/callback` (the router builds its MCP OAuth callback as
+     `<base url>/callback`). Copy the client ID and secret.
+
+   A client from another project works for any project's APIs; the token's quota and IAM are
+   checked on the project each command names. Only the client lives in the new project. The
+   secret, the router row and the deny policy all stay as below.
+3. **Store the client secret** in `outfitter-509211`'s Secret Manager as `outfitter-gcloud-mcp-oauth-client-secret`,
    straight from the console download or clipboard, never into a file in the repo:
    `pbpaste | gcloud --configuration=outfitter secrets create outfitter-gcloud-mcp-oauth-client-secret --data-file=-`
    (`secrets versions add` for a rotation). The name starts with `outfitter-`, so

@@ -1,0 +1,90 @@
+outfitter/packages/web/src/components/TranscriptFlow.tsx
+  s_fe1c4322a69a90::t_61b4c691f9ee8e 147
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 57
+  s_fe1c4322a69a90::t_5884ab43de862a 1,44,54,162-163,167,210,230
+  s_fe1c4322a69a90::t_21059aa5647813 143-146,148-161,164,208
+outfitter/packages/web/src/styles/layout.css
+  s_fe1c4322a69a90::t_79dd8607e6e3f6 198,205
+outfitter/packages/web/src/components/SessionMenu.tsx
+  s_fe1c4322a69a90::t_1c3dda60c0d4f9 140-151
+  s_fe1c4322a69a90::t_1e32d87d4f757a 34-35,59,86-87,107-109,158-162
+outfitter/packages/web/src/styles/session.css
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 513
+  s_fe1c4322a69a90::t_1c3dda60c0d4f9 362-367,1378-1399
+  s_fe1c4322a69a90::t_19b79387075b49 1400
+outfitter/packages/web/src/lib/flow.ts
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 14-16,33
+outfitter/packages/web/test/failed-attempts.test.tsx
+  s_fe1c4322a69a90::t_86ccc41688b906 11,14,168-169,173-180,184-188
+outfitter/packages/web/test/html-preview-per-run.test.tsx
+  s_fe1c4322a69a90::t_86ccc41688b906 6-7,9,34,36,41,84-85,96-98
+outfitter/packages/web/src/components/IdeChip.tsx
+  s_fe1c4322a69a90::t_644341d2b42ced 4,100
+outfitter/packages/web/src/styles/pages.css
+  s_fe1c4322a69a90::t_79dd8607e6e3f6 682-683,687-688,701,706-707,738
+outfitter/packages/web/test/break-keys.test.ts
+  s_fe1c4322a69a90::t_2358db7c8b7ce1 1-55
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 3,12-13,98
+outfitter/packages/web/src/hooks/useMediaQuery.ts
+  s_fe1c4322a69a90::t_1e32d87d4f757a 20-22
+outfitter/packages/web/src/lib/scanner.ts
+  s_fe1c4322a69a90::t_392b9c958c3720 3,54-55,65
+outfitter/packages/web/src/lib/nav.ts
+  s_fe1c4322a69a90::t_1e32d87d4f757a 31-33
+outfitter/packages/web/src/components/KnightRiderScanner.tsx
+  s_fe1c4322a69a90::t_392b9c958c3720 4-6,9-10,19-20,23-26,35-59
+outfitter/packages/web/src/components/PopMenu.tsx
+  s_fe1c4322a69a90::t_1c3dda60c0d4f9 5-6,37-38,46-50,59-66,73
+outfitter/packages/web/src/lib/break-keys.ts
+  s_fe1c4322a69a90::t_2358db7c8b7ce1 31-37
+  s_fe1c4322a69a90::t_e91cae336853e3 1-30
+outfitter/packages/web/test/browser-capture.test.tsx
+  s_fe1c4322a69a90::t_86ccc41688b906 101,127,144,160
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_fe1c4322a69a90::t_2358db7c8b7ce1 7,222
+  s_fe1c4322a69a90::t_24cc92b5cfe54c 679
+  s_fe1c4322a69a90::t_1e32d87d4f757a 8,138,948
+  s_fe1c4322a69a90::t_4947216f884695 1-2,6,52-54,65,132-137,431,453-454,456,458,461,497-498,625-626,640,723,776,788,872,933-946,949-950
+  s_fe1c4322a69a90::t_5884ab43de862a 285-302
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 10
+outfitter/packages/web/src/App.tsx
+  s_fe1c4322a69a90::t_1e32d87d4f757a 14,136,258
+outfitter/packages/web/test/gemini-empty-stop.test.tsx
+  s_fe1c4322a69a90::t_86ccc41688b906 8,101-103
+outfitter/packages/web/test/thought-bubble.test.tsx
+  s_fe1c4322a69a90::t_86ccc41688b906 2,5-6
+outfitter/packages/web/test/session-redesign.test.tsx
+  s_fe1c4322a69a90::t_2735621b693f37 108-130,135,139-140,142-145
+  s_fe1c4322a69a90::t_24cc92b5cfe54c 187
+  s_fe1c4322a69a90::t_967c208e98ce73 5,8-14,202-282,285-291,300-303,316-361
+  s_fe1c4322a69a90::t_ee6b88ae964a29 283-284,292-299,304-315
+outfitter/packages/web/test/scanner.test.ts
+  s_fe1c4322a69a90::t_392b9c958c3720 2,34-51
+outfitter/packages/web/src/components/SessionSheet.tsx
+  s_fe1c4322a69a90::t_260d293f3ec261 1-84
+outfitter/packages/web/src/lib/html-preview-access.ts
+  s_fe1c4322a69a90::t_fb54caba9a4c9f 5
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_fe1c4322a69a90::t_a9ec88dbde7e2b 1,43-47,52-53,76,78-93,106,125,147,169,192
+outfitter/packages/web/src/components/DiskBoxSidebar.tsx
+  s_fe1c4322a69a90::t_24cc92b5cfe54c 29,37-38,50-52,55,60-61,64,73-76,79-80,90,96-97
+outfitter/packages/web/src/lib/session-prefs.ts
+  s_fe1c4322a69a90::t_1e32d87d4f757a 35-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6f4a6aad146be05e2bf6d74bf8837693f0bddcbd",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

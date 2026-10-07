@@ -64,17 +64,6 @@ select {
     min-width: 36px;
   }
 
-  /* The session title bar's transport buttons and the status bar's chips are the densest rows on
-   * the page; they sit in a striped bar, so they shrink further. */
-  .session-titlebar .run-controls .btn {
-    min-height: 28px;
-    padding-top: 0.15rem;
-    padding-bottom: 0.15rem;
-    font-size: 0.82rem;
-  }
-
-  .nerd-out-toggle,
-  .thought-bubble-toggle,
   .copy-chip {
     min-height: 24px;
   }
@@ -298,120 +287,11 @@ select {
   }
 }
 
-/* ---------- session page: composer sticks above the keyboard/home indicator ---------- */
+/* ---------- the composer on a phone (its card and pinning are styles/session.css, #498) ---------- */
 
 @media (max-width: 700px) {
   .app-main {
     padding: 0.5rem;
-  }
-
-  .session-view {
-    /* iOS Safari's dynamic toolbar changes 100vh mid-scroll; dvh/svh track the *actual* visible
-     * viewport instead, which is what a sticky composer needs to stay pinned correctly. */
-    min-height: 100svh;
-  }
-
-  /* The page itself scrolls on a phone (the composer sticks to the visual viewport), so the
-   * session title bar sticks under the app bar instead of inside the panel. */
-  .session-scroll {
-    overflow: visible;
-    flex: none;
-    box-shadow: none;
-  }
-
-  .session-chrome {
-    top: var(--app-header-h, 0px);
-    z-index: 20;
-  }
-
-  .session-titlebar {
-    flex-wrap: wrap;
-  }
-
-  .session-window-name {
-    max-width: 46vw;
-  }
-
-  .session-titlebar .run-controls {
-    flex: 1 0 100%;
-    margin-left: 0;
-    justify-content: flex-start;
-  }
-
-  /* The repo/branch clause ellipsizes instead of wrapping the whole status line onto extra rows --
-   * a long "org/repo @ some-long-branch-name" was pushing the second header line taller than
-   * needed on a 390px screen. */
-  .session-repo-branch {
-    max-width: 65vw;
-  }
-
-  /* One sideways line, not a stack of wrapped facts under the title bar. */
-  .session-statusbar {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
-  .session-statusbar > * {
-    flex: 0 0 auto;
-  }
-
-  /* In the sideways scroller the GitHub chip takes its full width, like every other fact. Capped at
-   * 100% with nowrap and no clipping, its text used to spill past the box and draw over the chips
-   * after it (a preview's Share…, the IDE's Close). */
-  .session-statusbar > .github-chip {
-    max-width: none;
-  }
-
-  .session-model-info {
-    flex-wrap: nowrap;
-  }
-
-  .run-controls {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 0.35rem;
-    width: 100%;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .run-controls button,
-  .run-controls .btn {
-    flex: 1 1 0;
-    min-width: 0;
-    font-size: 0.76rem;
-    padding: 0.45rem 0.4rem;
-    white-space: nowrap;
-  }
-
-  /* The title bar holds every session button. Let them keep their labels and scroll sideways
-   * instead of shrinking "This Floppy's group" down to a few letters. */
-  .session-titlebar .run-controls button,
-  .session-titlebar .run-controls .btn,
-  .session-titlebar .run-controls select {
-    flex: 0 0 auto;
-    min-width: max-content;
-  }
-
-  .transcript {
-    max-height: none;
-    overflow-y: visible;
-    padding: 0.9rem 0.45rem 0.5rem;
-  }
-
-  .rail-glyph-hint {
-    max-width: 24ch;
-  }
-
-  .composer {
-    position: sticky;
-    bottom: 0;
-    z-index: 15;
-    background: var(--bg-elevated);
-    border-top: 1px solid var(--border-strong);
-    padding: 0.45rem 0.5rem calc(0.45rem + env(safe-area-inset-bottom));
-    margin: 0 -0.5rem -0.5rem;
-    overscroll-behavior: contain;
   }
 
   .composer-controls {

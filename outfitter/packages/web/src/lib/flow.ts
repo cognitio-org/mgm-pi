@@ -11,6 +11,9 @@ import type { PiEntry } from "../api/client.ts";
 import type { GroupedEntry, ThinkingBlock } from "./thinking.ts";
 import { isLookup, toolKind } from "./tool-rows.ts";
 
+/** Id of the row that shows a thought before its message is an entry (#285). */
+export const STREAMED_THOUGHT_ID = "live-thought";
+
 export interface FlowTool {
   kind: "tool";
   id: string;
@@ -27,7 +30,7 @@ export interface FlowTool {
 }
 
 type UserView = Extract<GroupedEntry, { kind: "user" }>;
-type PassView = Exclude<GroupedEntry, { kind: "user" | "assistant-text" | "thinking-group" | "tool-call" | "tool-result" }>;
+export type PassView = Exclude<GroupedEntry, { kind: "user" | "assistant-text" | "thinking-group" | "tool-call" | "tool-result" }>;
 
 export type FlowItem =
   | { kind: "user"; id: string; view: UserView }

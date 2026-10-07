@@ -17,3 +17,6 @@ export function useMediaQuery(query: string): boolean {
 /** #498: below this the session page is a phone layout: the Disk Box is its own screen and the
  * floppy fills the window. */
 export const PHONE_QUERY = "(max-width: 719.98px)";
+
+/** #498 review: wide enough that the Details pane opens by default (until the person chooses). */
+export const WIDE_QUERY = "(min-width: 1280px)";

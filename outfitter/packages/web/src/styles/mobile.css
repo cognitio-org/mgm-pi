@@ -341,39 +341,6 @@ select {
     padding-left: 0.5rem;
     padding-right: 0.3rem;
   }
-
-  /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
-   * that expands its body in place -- there's no room for a full-width preview line on a phone.
-   * The group wrapper drops its full-width dashed-box treatment here too, so a collapsed chip (a
-   * small icon button) doesn't sit inside an oversized empty rectangle -- it only regains that
-   * look once expanded. */
-  .entry.assistant-thinking-group {
-    width: fit-content;
-    max-width: 100%;
-    border: none;
-    background: none;
-    padding: 0;
-  }
-
-  .entry.assistant-thinking-group:has(.thinking-chip-body) {
-    width: auto;
-    border: 1px dashed var(--border);
-    background: var(--bg-inset);
-  }
-
-  .thinking-details {
-    display: none;
-  }
-
-  .thinking-chip {
-    display: inline-flex;
-    margin: 0;
-    border-style: dashed;
-  }
-
-  .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
-    display: block;
-  }
 }
 
 /* ---------- dialogs: full-height sheets on mobile ---------- */

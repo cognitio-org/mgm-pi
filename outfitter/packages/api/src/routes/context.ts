@@ -19,6 +19,7 @@ import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 import type { VoiceService } from "../voice.ts";
 import type { VoiceUsage } from "../voice-usage.ts";
 import type { GithubCatalog } from "../github-catalog.ts";
+import type { GithubBroker } from "../github-broker.ts";
 import type { AgentEngine } from "../agentengine/index.ts";
 import type { FleetSettingsCache } from "../fleet-settings.ts";
 import type { DeviceLifecycle } from "../central/device-lifecycle.ts";
@@ -76,6 +77,9 @@ export interface RouteContext {
   /** Repositories the GitHub App can reach, plus creating one and a Floppy's live status.
    * Mints its own tokens; a Drive's installation token is unchanged. */
   githubCatalog: GithubCatalog;
+  /** The GitHub broker (agentd's github.request frames). #500: the session pull request routes
+   * (create, merge, sync, re-run, checks and their logs) go through its gates and credential. */
+  github: GithubBroker;
   /** #389 (docs/specs/central-auth.md §5.3): device login and revoke hooks. routes/device.ts
    * announces; CA-5's router keys listen. */
   deviceLifecycle: DeviceLifecycle;

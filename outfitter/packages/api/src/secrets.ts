@@ -10,6 +10,7 @@ import {
   GITHUB_APP_INSTALLATION_SECRET,
   GITHUB_APP_KEY_SECRET,
   GITHUB_APP_SLUG_SECRET,
+  RERUN_PERMISSIONS,
   GithubAppTokens,
   type MintFailure,
   type MintFailureContext,
@@ -41,6 +42,14 @@ export interface SecretsBroker {
   /** GitHub credential for the API broker. A PAT is the same token the run gets. An App installation
    * token is minted with BROKER_PERMISSIONS and is not the drive token. */
   brokerGithubToken?(session: Session): Promise<{
+    token: string;
+    appFailure?: Exclude<MintFailure, "not-configured">;
+  }>;
+  /** #500: the credential for re-running a session's failed workflow runs (the web UI's Re-run).
+   * A per-session PAT is the same token as always; an App installation token is minted with
+   * RERUN_PERMISSIONS (`actions: write`) only, its own profile, so an installation that hasn't
+   * granted that permission fails this mint alone (`permissions-missing`). */
+  rerunGithubToken?(session: Session): Promise<{
     token: string;
     appFailure?: Exclude<MintFailure, "not-configured">;
   }>;
@@ -107,6 +116,10 @@ export class MemorySecretsBroker implements SecretsBroker {
   }
 
   async brokerGithubToken(): Promise<{ token: string }> {
+    return { token: this.githubToken };
+  }
+
+  async rerunGithubToken(): Promise<{ token: string }> {
     return { token: this.githubToken };
   }
 
@@ -187,6 +200,14 @@ export class GcpSecretsBroker implements SecretsBroker {
     return cred.appFailure ? { token: cred.token, appFailure: cred.appFailure } : { token: cred.token };
   }
 
+  async rerunGithubToken(session: Session): Promise<{
+    token: string;
+    appFailure?: Exclude<MintFailure, "not-configured">;
+  }> {
+    const cred = await this.githubTokenForSession(session, RERUN_PERMISSIONS);
+    return cred.appFailure ? { token: cred.token, appFailure: cred.appFailure } : { token: cred.token };
+  }
+
   async refreshGithubAppToken(session: Session): Promise<{ token: string; expiresAt?: string; credential?: "app" | "session" } | undefined> {
     const own = await this.accessSecretOrEmpty(`outfitter-github-token-${session.id}`);
     if (own) return { token: own, credential: "session" };
@@ -226,7 +247,7 @@ export class GcpSecretsBroker implements SecretsBroker {
    * for the API process. A PAT is the same string either way; only an installation token splits. */
   private async githubTokenForSession(
     session: Session,
-    permissions: typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS,
+    permissions: typeof DRIVE_PERMISSIONS | typeof BROKER_PERMISSIONS | typeof RERUN_PERMISSIONS,
   ): Promise<{
     token: string;
     expiresAt?: string;

@@ -227,15 +227,26 @@ export interface TestTally {
   failed: number;
 }
 
+/** Terminal colour codes, which test runners often leave in captured output. */
+const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, "");
+}
+
 /** Pass/fail counts from a test runner's output, when it's one this recognises. */
-export function testTally(output: string): TestTally | null {
+export function testTally(raw: string): TestTally | null {
+  const output = stripAnsi(raw);
   const num = (s: string | undefined) => (s ? Number(s) : 0);
   // vitest: "Tests  2 failed | 11 passed (13)"
   let m = /^\s*Tests\s+(?:(\d+) failed\s*\|\s*)?(?:(\d+) passed)?.*\(\d+\)\s*$/m.exec(output);
   if (m && (m[1] || m[2])) return { passed: num(m[2]), failed: num(m[1]) };
-  // jest: "Tests:       1 failed, 11 passed, 12 total"
-  m = /^Tests:\s+(?:(\d+) failed,\s*)?(?:\d+ skipped,\s*)?(?:(\d+) passed,\s*)?\d+ total/m.exec(output);
-  if (m) return { passed: num(m[2]), failed: num(m[1]) };
+  // jest: "Tests:       1 failed, 2 skipped, 3 todo, 11 passed, 17 total" (any of the parts may be missing)
+  m = /^Tests:\s+(.*?)\d+ total/m.exec(output);
+  if (m) {
+    const part = (word: string) => num(new RegExp(`(\\d+) ${word}`).exec(m![1]!)?.[1]);
+    return { passed: part("passed"), failed: part("failed") };
+  }
   // node --test (TAP summary): "# pass 12" / "# fail 1"; also its spec reporter's "ℹ pass 12"
   const pass = /^(?:#|ℹ) pass (\d+)$/m.exec(output);
   const fail = /^(?:#|ℹ) fail (\d+)$/m.exec(output);
@@ -289,19 +300,23 @@ export function toolSummary(tool: ToolRowInput, diff: ToolDiff | null = toolDiff
   const kind = toolKind(tool.toolName);
   if (kind === "bash") {
     const tally = testTally(output);
-    const code = EXIT_CODE.exec(output)?.[1];
+    const codeText = EXIT_CODE.exec(output)?.[1];
+    const code = codeText === undefined ? undefined : Number(codeText);
+    // A command failed when pi says so or it exited non-zero; "exit code 0" is a success.
+    const failed = tool.isError || (code !== undefined && code !== 0);
     if (tally) {
       if (tally.failed > 0) return { text: `✗ ${tally.failed} failed${tally.passed ? `, ${tally.passed} passed` : ""}`, tone: "fail" };
+      if (failed) return { text: `✗ ${code !== undefined && code !== 0 ? `exit ${code}` : "failed"} · ${tally.passed} passed`, tone: "fail" };
       return { text: `✓ ${tally.passed} passed`, tone: "pass" };
     }
-    if (tool.isError || code) return { text: code ? `✗ exit ${code}` : `✗ ${firstLine(output) || "failed"}`, tone: "fail" };
+    if (failed) return { text: code !== undefined && code !== 0 ? `✗ exit ${code}` : `✗ ${firstLine(stripAnsi(output)) || "failed"}`, tone: "fail" };
     const lines = countLines(output);
     return { text: lines === 0 ? "no output" : plural(lines, "line") + " of output", tone: "dim" };
   }
   if (tool.isError) return { text: `✗ ${firstLine(output) || "failed"}`, tone: "fail" };
   switch (kind) {
     case "read":
-      return { text: plural(output.split("\n").length, "line"), tone: "dim" };
+      return { text: plural(splitLines(output).length, "line"), tone: "dim" };
     case "search": {
       if (/^no (matches|results)/i.test(output.trim())) return { text: "no matches", tone: "dim" };
       return { text: plural(countLines(output), "match", "matches"), tone: "dim" };

@@ -52,19 +52,22 @@ function timeOf(entry: PiEntry | undefined): number | undefined {
   return Number.isNaN(t) ? undefined : t;
 }
 
-/** How long each thinking reply took, by entry id: from the entry before it (the prompt or the last
- * tool result) to the reply itself. That covers the whole model call, which is what "Thought for
- * 4s" means to a reader. Missing timestamps leave the entry out. */
+/** How long each thinking reply took, by entry id: from the message before it (the prompt or the
+ * last tool result) to the reply itself. That covers the whole model call, which is what "Thought
+ * for 4s" means to a reader. Entries that aren't messages (a model change, a label, a capture) are
+ * skipped when looking back; missing timestamps leave the reply out. */
 export function thinkingSeconds(entries: PiEntry[]): Map<string, number> {
   const out = new Map<string, number>();
-  for (let i = 1; i < entries.length; i++) {
-    const entry = entries[i]!;
+  let previousMessage: PiEntry | undefined;
+  for (const entry of entries) {
     if (entry.type !== "message") continue;
     const message = entry.message as { role?: string; content?: unknown } | undefined;
+    const before = previousMessage;
+    previousMessage = entry;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
     if (!message.content.some((b) => (b as { type?: string })?.type === "thinking")) continue;
     const end = timeOf(entry);
-    const start = timeOf(entries[i - 1]);
+    const start = timeOf(before);
     if (end === undefined || start === undefined || end < start) continue;
     out.set(entry.id, Math.max(1, Math.round((end - start) / 1000)));
   }

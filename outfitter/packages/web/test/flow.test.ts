@@ -87,6 +87,9 @@ describe("flow helpers", () => {
     const secs = thinkingSeconds(entries);
     expect(secs.get("a")).toBe(4);
     expect(secs.has("b")).toBe(false);
+    // Entries that aren't messages are skipped when looking back.
+    const withLabel: PiEntry[] = [entries[0]!, { id: "m", type: "model_change", timestamp: "2026-10-07T10:00:04.000Z" }, entries[1]!];
+    expect(thinkingSeconds(withLabel).get("a")).toBe(4);
     const items = buildFlow(groupThinkingBlocks([think("a#0")]), { seconds: secs });
     expect(items[0]).toMatchObject({ kind: "thinking", seconds: 4 });
   });

@@ -9,7 +9,8 @@
 # The server is an `oauth2` authorization_code server on the router's per-user vault, the same mode
 # as `sentry` (#482): each person signs in with their own Google account and their token stays in the
 # router. Google has no dynamic client registration, so this needs a static OAuth client: an INTERNAL
-# Web client in project outfitter-509211 (docs/runbooks/gcloud-mcp.md). The redirect URI to register
+# Web client in its own project (e.g. kernal-oauth), because outfitter-509211's consent screen
+# must stay External for IAP; the secret stays in outfitter-509211 (docs/runbooks/gcloud-mcp.md). The redirect URI to register
 # on it is ${ROUTER_URL}/callback (discoverable_endpoints.py builds it from the request base URL).
 #
 # Secrets, never printed or put on a command line:

@@ -64,8 +64,12 @@ const READ_BY_PRODUCT: Readonly<Record<string, ReadonlySet<string>>> = {
     "list_metric_descriptors", "list_dashboards", "get_dashboard",
   ]),
   // Firestore: empty on purpose. The names were not available when this was written, so every
-  // firestore tool asks until a verified read-only name is added here.
-  firestore: new Set<string>(),
+  // Verified live 2026-10-08 against firestore.googleapis.com/mcp tools/list (readOnlyHint: true).
+  firestore: new Set([
+    "get_document", "list_documents", "list_collections",
+    "get_database", "list_databases", "get_index", "list_indexes",
+    "get_backup", "list_backups", "get_backup_schedule", "list_backup_schedules",
+  ]),
 };
 
 /** Product tools whose readOnlyHint is false (Cloud Run deploys). */

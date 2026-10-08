@@ -324,12 +324,13 @@ describe("Google product tools (GB-5, #541)", () => {
     cloudrun: ["get_service", "list_services"],
     cloudlogging: ["list_log_entries", "list_log_names", "get_bucket", "list_buckets", "get_view", "list_views"],
     cloudmonitoring: ["list_timeseries", "query_range", "get_alert_policy", "list_alert_policies", "get_alert", "list_alerts", "list_metric_descriptors", "list_dashboards", "get_dashboard"],
+    firestore: ["get_document", "list_documents", "list_collections", "get_database", "list_databases", "get_index", "list_indexes", "get_backup", "list_backups", "get_backup_schedule", "list_backup_schedules"],
   };
 
   test("the allow-list is exactly Google's readOnlyHint tools", () => {
     assert.deepEqual([...PRODUCT_READ_TOOLS].sort(), Object.values(READS).flat().sort());
     assert.deepEqual([...PRODUCT_WRITE_TOOLS].sort(), ["deploy_service_from_archive", "deploy_service_from_file_contents", "deploy_service_from_image"]);
-    assert.equal(FIRESTORE_READ_TOOLS.size, 0);
+    assert.deepEqual([...FIRESTORE_READ_TOOLS].sort(), [...READS.firestore].sort());
   });
 
   test("every read tool runs unasked when prefixed with its own product, on google_cloud and on a renamed server", async () => {
@@ -423,8 +424,8 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal((l.calls[0].args as { tool: string }).tool, "deploy_service_from_image");
   });
 
-  test("unknown tools ask: firestore (none are allow-listed), new Google tools, unknown servers' tools on google_cloud", async () => {
-    for (const t of ["firestore-get_document", "firestore-list_documents", "firestore-run_query", "firestore-delete_document", "cloudrun-delete_service", "mystery-tool"]) {
+  test("writes and unknown tools ask: firestore writes, new Google tools, unknown servers' tools on google_cloud", async () => {
+    for (const t of ["firestore-add_document", "firestore-update_document", "firestore-delete_document", "firestore-create_database", "firestore-run_query", "cloudrun-delete_service", "mystery-tool"]) {
       const call = prod(t);
       assert.equal(isGated(call), true, t);
       assert.equal(needsApproval(call), true, t);
@@ -476,7 +477,8 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(baseTool("cloudlogging-get_service"), "cloudlogging-get_service");
     assert.equal(baseTool("forget_service"), "forget_service");
     assert.equal(baseTool("get_service_v2"), "get_service_v2");
-    assert.equal(baseTool("firestore-get_document"), "firestore-get_document");
+    assert.equal(baseTool("firestore-get_document"), "get_document");
+    assert.equal(baseTool("cloudrun-get_document"), "cloudrun-get_document");
   });
 
   test("a gcloud command tool on google_cloud still uses the classifier", async () => {

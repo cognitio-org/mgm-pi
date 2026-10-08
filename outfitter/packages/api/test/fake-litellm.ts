@@ -37,6 +37,9 @@ export class FakeLitellm {
   /** #384: router deployments (`/model/*`), in insertion order. Duplicates of one model_info.id only
    * arise through `deployments.push` (as two instances racing would leave them). */
   readonly deployments: FakeDeployment[] = [];
+  /** GET /v1/mcp/user-credentials rows by user_id, as the router answers them (same-person rows
+   * included, no tokens). DELETE /v1/mcp/user-credentials/<server_id> removes one. */
+  readonly mcpCredentials = new Map<string, Array<Record<string, unknown>>>();
   /** Off: every call throws, as when the router is down. */
   down = false;
   private readonly failures = new Map<string, Array<{ status: number; body: unknown }>>();
@@ -71,7 +74,16 @@ export class FakeLitellm {
   };
 
   private answer(call: FakeLitellmCall): Response {
+    const mcpDelete = call.method === "DELETE" ? /^\/v1\/mcp\/user-credentials\/([^/]+)$/.exec(call.path) : null;
+    if (mcpDelete) {
+      const serverId = decodeURIComponent(mcpDelete[1]);
+      const rows = this.mcpCredentials.get(call.query.user_id) ?? [];
+      this.mcpCredentials.set(call.query.user_id, rows.filter((r) => r.server_id !== serverId));
+      return json(200, { server_id: serverId, has_credential: false, is_expired: false });
+    }
     switch (`${call.method} ${call.path}`) {
+      case "GET /v1/mcp/user-credentials":
+        return json(200, structuredClone(this.mcpCredentials.get(call.query.user_id) ?? []));
       case "GET /user/info": {
         const user = this.users.get(call.query.user_id);
         if (!user) return this.unknownUser === "404" ? json(404, { detail: { error: "User not found" } }) : json(200, { user_id: call.query.user_id, user_info: null, keys: [] });

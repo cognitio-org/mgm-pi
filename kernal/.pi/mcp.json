@@ -29,6 +29,19 @@
       "oauth": {
         "clientName": "kernal"
       }
+    },
+    "google_cloud": {
+      "url": "https://router.kernal.one/google_cloud/mcp",
+      "auth": "oauth",
+      "lifecycle": "lazy",
+      "disabled": true,
+      "approveTools": true,
+      "headers": {
+        "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
+      },
+      "oauth": {
+        "clientName": "kernal"
+      }
     }
   }
 }

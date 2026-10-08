@@ -30,6 +30,8 @@ export const vocabulary = {
   // #389 central sign-in and settings (docs/specs/central-auth.md §6-§7).
   device: { one: "Device", many: "Devices", hint: "computers where Kernal is signed in with your account" },
   account: { one: "Account", many: "Account", hint: "your Kernal settings: profiles, keys, local models and spend" },
+  // MO-5 (docs/specs/mcp-connections.md §4).
+  connection: { one: "Connection", many: "Connections", hint: "your sign-ins to tools like Sentry, used by your Drives and Kernal" },
   // docs/specs/subscriptions.md §4. Nav label and the Subscriptions page subtitle.
   subscription: {
     one: "Subscriptions",

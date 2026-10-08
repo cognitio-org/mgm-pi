@@ -75,7 +75,7 @@ run() { bash "${SCRIPT}" >"${WORK}/out" 2>&1 || { cat "${WORK}/out"; fail "scrip
   ! grep -q 'sk-' "${WORK}/out" || { cat "${WORK}/out"; fail "a key value reached the output"; }; }
 # routes_called FILE... -- the LiteLLM routes those api files call, sorted.
 API_SRC="${HERE}/../../packages/api/src"
-routes_called() { grep -ohE '(this\.(call|ok)\("(GET|POST)", "/[a-z/_]+"|\$\{root\}/[a-z/_]+)' "$@" | grep -oE '/[a-z/_]+' | sort -u; }
+routes_called() { grep -ohE '(this\.(call|ok)\("(GET|POST|DELETE)", ["`]/[a-z0-9/_-]+|\$\{root\}/[a-z/_]+)' "$@" | grep -oE '/[a-z0-9/_-]+' | sed 's#/$##' | sort -u; }
 # routes_allowed ALIAS_PREFIX -- the allowed_routes of the first key minted under that alias, sorted.
 routes_allowed() { grep -m1 "^POST /key/generate .*\"key_alias\":\"$1-" "${ROUTER_LOG}" | sed 's/^POST \/key\/generate //' \
   | node -e 'let b="";process.stdin.on("data",(c)=>(b+=c)).on("end",()=>console.log(JSON.parse(b).allowed_routes.join("\n")))' \

@@ -48,7 +48,7 @@ import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-though
 import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
 import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
-import { GCLOUD_MCP_SERVER, gcloudRun, mcpEnableFor } from "./central/gcloud-mcp.ts";
+import { gcloudRun, mcpEnableFor, mcpEnableList, runKeyMcpToolsets } from "./central/gcloud-mcp.ts";
 import { checkpointEvent } from "./checkpoint-wire.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -1350,6 +1350,7 @@ export class AgentLink {
           sharedKey: secrets.litellmKey,
           a2a: a2aSession,
           gcloud,
+          googleCloudToolsetId: this.config.googleCloudToolsetId,
         })
       : undefined;
     const litellmKey = keyChoice ? keyChoice.key : secrets.litellmKey;
@@ -1416,7 +1417,7 @@ export class AgentLink {
       ...(settings ? { settings } : {}),
       // Only when this spec carries the run's own key (gcloud-mcp.ts mcpEnableFor): a fallback to the
       // shared key, or a spec that sends no key, has no router grant to enforce it.
-      ...(mcpEnableFor(gcloud, keyChoice) ? { mcp: { enable: [GCLOUD_MCP_SERVER] } } : {}),
+      ...(mcpEnableFor(gcloud, keyChoice) ? { mcp: { enable: mcpEnableList(runKeyMcpToolsets(gcloud, this.config.googleCloudToolsetId)) } } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.

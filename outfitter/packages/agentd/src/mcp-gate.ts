@@ -1,5 +1,5 @@
 // Operator-only MCP servers in a Drive (#493, epic #497). The image's mcp.json ships a gated server
-// (today `gcloud`, Google's remote gcloud through the router) switched off: `disabled: true`, which
+// (`gcloud` and the `google_cloud` toolset, Google's remote gcloud through the router) switched off: `disabled: true`, which
 // pi-mcp-adapter honours (no connection, no tools). The api turns it on for one run through
 // run.spec.mcp.enable, only when the tape has `adminTools: operator` AND the owner is an operator
 // (api/src/central/gcloud-mcp.ts gcloudRun, the same test as the admin socket). agentd flips the flag
@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 /** The servers run.spec.mcp may switch on. Anything else in the list is ignored. Must match the api's
  * central/gcloud-mcp.ts, kernal's _shared/mcp-gate.ts and image/render-mcp.sh (api test compares). */
-export const GATED_MCP_SERVERS: readonly string[] = ["gcloud"];
+export const GATED_MCP_SERVERS: readonly string[] = ["gcloud", "google_cloud"];
 
 export interface McpGateResult {
   /** Gated servers left on for this run. */

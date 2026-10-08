@@ -9,6 +9,7 @@ import { FakeLitellm } from "./fake-litellm.ts";
 import { createLitellmKeys } from "../src/central/litellm-keys.ts";
 import { CONNECTABLE_MCP_SERVERS, McpConnections, connectionNotice, connectUrl, type Connection } from "../src/central/mcp-connections.ts";
 import { userIdFor } from "../src/central/user-id.ts";
+import { GOOGLE_CLOUD_ENTRY } from "../src/central/gcloud-mcp.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import type { Session } from "../src/store/types.ts";
 
@@ -28,10 +29,13 @@ function fixture(now: () => number = Date.now) {
 }
 
 describe("CONNECTABLE_MCP_SERVERS", () => {
-  test("is exactly the gateway OAuth servers in kernal/.pi/mcp.json (render-mcp.sh's rule)", () => {
+  test("is exactly the gateway OAuth servers in kernal/.pi/mcp.json (render-mcp.sh's rule), toolset entries aside", () => {
     const mcp = JSON.parse(readFileSync(new URL("../../../../kernal/.pi/mcp.json", import.meta.url), "utf8"));
     const gateway = Object.entries(mcp.mcpServers as Record<string, { auth?: string; headers?: Record<string, string> }>)
       .filter(([, def]) => def.auth === "oauth" && (def.headers?.["x-litellm-api-key"] ?? "") !== "")
+      // A toolset entry (google_cloud) is not a router server and holds no grant of its own: its
+      // members' grants are the ones Connections shows.
+      .filter(([name]) => name !== GOOGLE_CLOUD_ENTRY)
       .map(([name]) => name)
       .sort();
     assert.deepEqual(CONNECTABLE_MCP_SERVERS.map((s) => s.name).sort(), gateway);

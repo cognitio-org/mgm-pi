@@ -20,7 +20,6 @@ import { registerAdminOp, type AdminResult } from "./ops.ts";
 
 const MAX_COMMAND = 4000;
 const MAX_PROJECT = 200;
-const TOOLS = ["run_gcloud_command", "run_bq_command"] as const;
 /**
  * Google's product tools (GB-5, #541) and the router server each belongs to, for the card's title.
  * Kernal sends the tool's base name; `command` is then a one-line summary of its arguments.

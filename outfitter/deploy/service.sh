@@ -265,18 +265,20 @@ if [[ "${ROLE}" == "web" ]]; then
   fi
   echo "   link origin: ${OUTFITTER_LINK_ORIGIN}"
   ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
-  # OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts): emails allowed to manage secrets
-  # and deploy-level settings via /api/operator/* (src/auth.ts's requireOperator). Separated by
-  # ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on commas, so a
-  # comma-separated operator list would be sliced into separate env vars; config.ts's parser also
-  # accepts ',' and whitespace for a locally-set env var, but this script must use ';'. Defaults to
-  # the two current operators (see the same Decisions table entry); override by exporting
-  # OUTFITTER_OPERATORS before running this script.
-  ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
   # #252/#257 web voice (config.env): the Deepgram project the voice key belongs to, for per-person
   # usage. Not secret. Empty leaves it out.
   [[ -n "${DEEPGRAM_PROJECT_ID:-}" ]] && ENV_VARS="${ENV_VARS},DEEPGRAM_PROJECT_ID=${DEEPGRAM_PROJECT_ID}"
 fi
+# OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts), on BOTH roles. The web role uses it
+# for /api/operator/* (src/auth.ts's requireOperator); the link role needs it too, because it mints
+# device keys (operators' keys list the gcloud MCP server, GA-2), mints Drive run keys (operator tapes),
+# decides a Drive's operator admin tools (admin/drive.ts) and runs the operator-key reconcile on the
+# tick. Link identities come from verified device/run tokens, so the list grants nothing by itself.
+# Separated by ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on
+# commas, so a comma-separated operator list would be sliced into separate env vars; config.ts's
+# parser also accepts ',' and whitespace for a locally-set env var, but this script must use ';'.
+# Defaults to the two current operators (config.env); override by exporting OUTFITTER_OPERATORS.
+ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
 # E9 Agent Engine (config.env): link role only, each var only when set. Not secret.
 if [[ "${ROLE}" == "link" ]]; then
   [[ -n "${AGENT_ENGINE_BASE_URL:-}" ]] && ENV_VARS="${ENV_VARS},AGENT_ENGINE_BASE_URL=${AGENT_ENGINE_BASE_URL}"

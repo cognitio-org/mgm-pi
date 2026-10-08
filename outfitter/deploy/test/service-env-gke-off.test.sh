@@ -202,5 +202,15 @@ else
   fails=$((fails + 1))
 fi
 
+# The link role gets the operators too: it mints device and run keys (operators' keys list the
+# gcloud MCP server), decides a Drive's operator admin tools and runs the operator-key reconcile.
+# Without it every link-side operator check saw an empty list (found 2026-10-08, #497).
+if [[ "${LINK_ENV}" == *",OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,"* ]]; then
+  echo "ok: the link role gets OUTFITTER_OPERATORS"
+else
+  echo "FAIL: expected OUTFITTER_OPERATORS on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+
 echo "${fails} failed"
 [[ "${fails}" -eq 0 ]]

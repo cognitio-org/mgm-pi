@@ -498,42 +498,52 @@ describe("connect extension", async () => {
   });
 
   // pi crashed on /new: the 15 s Local Host footer timer called setStatus on the replaced session's
-  // ctx, which throws "This extension ctx is stale after session replacement".
+  // ctx, which throws "This extension ctx is stale after session replacement or reload".
   test("timers holding a session's ctx stop at session_shutdown, and a stale ctx never takes pi down", async () => {
     const restore = stubFetch({});
     mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
     try {
+      // Counts every ui call *before* the stale check, so a timer still firing after shutdown is seen
+      // even though the extension swallows the stale error.
       const staleCtx = () => {
         const ctx = makeCtx({ hasUI: true }) as any;
-        const state = { stale: false, localHost: 0 };
+        const state = { stale: false, localHost: 0, budgetClose: 0 };
         const { setStatus, setWidget } = ctx.ui;
-        const guard = (fn: (...a: any[]) => void) => (...a: any[]) => {
+        ctx.ui.setStatus = (k: string, t: string | undefined) => {
+          if (k === "local-host") state.localHost++;
           if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
-          if (a[0] === "local-host") state.localHost++;
-          fn(...a);
+          setStatus(k, t);
         };
-        ctx.ui.setStatus = guard(setStatus);
-        ctx.ui.setWidget = guard(setWidget);
+        ctx.ui.setWidget = (k: string, w: unknown, o?: unknown) => {
+          if (k === "budget" && w === undefined) state.budgetClose++;
+          if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+          setWidget(k, w, o);
+        };
         return { ctx, state };
       };
 
-      // /new: session_shutdown (reason "new") first, then the old ctx goes stale.
+      // /budget opens a panel with a 60 s close timer; then /new: session_shutdown("new"), the ctx goes stale.
       const p2 = makePi(); await mod.default(p2 as any);
       const a = staleCtx();
       await p2.emit("session_start", {}, a.ctx);
+      await p2.commands.get("budget")!.handler("", a.ctx);
       const seen = a.state.localHost;
       assert.ok(seen >= 1, "the footer was filled in at start");
       await p2.emit("session_shutdown", { reason: "new" }, a.ctx);
       a.state.stale = true;
-      mock.timers.tick(60_000);
-      assert.equal(a.state.localHost, seen, "no refresh after the session ended");
+      mock.timers.tick(120_000);
+      assert.equal(a.state.localHost, seen, "the Local Host timer stopped with the session");
+      assert.equal(a.state.budgetClose, 0, "the budget panel's close timer stopped with the session");
 
-      // Belt and braces: even if a tick lands on a stale ctx before shutdown, nothing throws.
+      // Belt and braces: a tick that lands on a stale ctx before shutdown throws nothing, and ends the watch.
       const p3 = makePi(); await mod.default(p3 as any);
       const b = staleCtx();
       await p3.emit("session_start", {}, b.ctx);
+      await p3.commands.get("budget")!.handler("", b.ctx);
       b.state.stale = true;
+      const before = b.state.localHost;
       assert.doesNotThrow(() => mock.timers.tick(60_000));
+      assert.equal(b.state.localHost, before + 1, "one stale tick, then the watch stopped itself");
       await p3.emit("session_shutdown", { reason: "quit" }, b.ctx);
     } finally {
       mock.timers.reset();

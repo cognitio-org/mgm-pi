@@ -206,6 +206,11 @@ export function saveDefault(provider: string, model: string) {
   try { noteOwnDefaultsWrite(); } catch {}
 }
 
+/** pi's error for a ctx used after its session was replaced or reloaded. */
+function isStaleCtxError(error: unknown): boolean {
+  return error instanceof Error && /ctx is stale after session replacement or reload/.test(error.message);
+}
+
 export default async function (pi: ExtensionAPI) {
   const litellmMeta = new Map<string, ModelMeta>();
   const lmstudioMeta = new Map<string, LmStudioMeta>();
@@ -550,28 +555,42 @@ export default async function (pi: ExtensionAPI) {
         invalidate() {},
       }), { placement: "aboveEditor" });
       if (panelTimer) clearTimeout(panelTimer);
-      panelTimer = setTimeout(() => { try { ctx.ui.setWidget("budget", undefined); } catch { /* session replaced */ } }, 60_000);
+      panelTimer = setTimeout(() => {
+        panelTimer = undefined;
+        try { ctx.ui.setWidget("budget", undefined); } catch { /* cosmetic; a throw from a timer would end pi */ }
+      }, 60_000);
       budgetStatus(ctx);
     },
   });
 
-  const seedKeySpend = async (ctx: any) => {
+  const seedKeySpend = async (ctx: any, gen: number) => {
     const key = (await litellmGet("/key/info"))?.info;
+    if (gen !== sessionGen) return;   // the session ended while /key/info was in flight
     if (key) { if (key.max_budget != null) keyMax = key.max_budget; if (key.spend != null) { spend.keySpend = key.spend; spend.keySpendStart ??= key.spend; } }
     budgetStatus(ctx);
   };
   let hostCtx: { ui: { setStatus(key: string, text: string | undefined): void } } | undefined;
   let hostWatch: ReturnType<typeof setInterval> | undefined;
+  let sessionGen = 0;   // bumped at session_shutdown, so late async work for an ended session is dropped
+  const stopLocalHostWatch = () => {
+    if (hostWatch) { clearInterval(hostWatch); hostWatch = undefined; }
+    hostCtx = undefined;
+  };
   // A footer refresh must never take pi down: after /new, /resume, /fork or /reload the old ctx is
-  // stale and every ui call throws. session_shutdown below stops the timers first; this is the net.
+  // stale and every ui call throws. session_shutdown below stops the timer first; this is the net.
+  // Only a stale ctx ends the watch; any other failure leaves the footer to the next tick.
   const refreshLocalHost = () => {
-    try { hostCtx?.ui.setStatus("local-host", sharingNow()); } catch { hostCtx = undefined; }
+    if (!hostCtx) return;
+    const text = sharingNow();
+    try { hostCtx.ui.setStatus("local-host", text); }
+    catch (error) { if (isStaleCtxError(error)) stopLocalHostWatch(); }
   };
   pi.on("session_start", async (_ev, ctx) => {
     // pi answers no RPC command until every session_start handler has returned, and this lookup only
     // feeds the footer, so a sandbox fills it in behind the first prompt instead of ahead of it.
-    if (inSandbox()) void seedKeySpend(ctx).catch(() => {});
-    else await seedKeySpend(ctx);
+    const gen = sessionGen;
+    if (inSandbox()) void seedKeySpend(ctx, gen).catch(() => {});
+    else await seedKeySpend(ctx, gen);
     const m = ctx.model;
     if (m && defs.some((d) => d.id === m.provider)) ctx.ui.setStatus("connect", `⇄ ${m.provider}/${m.id}`);
     // Quiet when this laptop isn't sharing. The file is the service's own state; the UI does not start a tunnel.
@@ -585,8 +604,8 @@ export default async function (pi: ExtensionAPI) {
   // Timers that hold a session's ctx end with that session: pi fires session_shutdown before /new,
   // /resume, /fork, /reload and quit, and a captured ctx throws once the session is replaced.
   pi.on("session_shutdown", async () => {
-    if (hostWatch) { clearInterval(hostWatch); hostWatch = undefined; }
-    hostCtx = undefined;
+    sessionGen++;
+    stopLocalHostWatch();
     if (panelTimer) { clearTimeout(panelTimer); panelTimer = undefined; }
   });
   pi.on("model_select", async (ev: any, ctx) => {

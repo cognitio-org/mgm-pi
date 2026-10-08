@@ -34,6 +34,8 @@ export interface Connection {
 }
 
 export const CONNECTIONS_CACHE_MS = 60_000;
+/** The Drive notice never holds GET /api/sessions/:id longer than this (§5). */
+export const NOTICE_BUDGET_MS = 1_500;
 
 /** The router's own connect page (§3): the router root, not the OpenAI-style /v1 base. */
 export function connectUrl(litellmBaseUrl: string): string {
@@ -61,7 +63,7 @@ function toConnection(server: ConnectableServer, row: McpUserCredential | undefi
 }
 
 export class McpConnections {
-  private readonly cache = new Map<string, { at: number; rows: McpUserCredential[] }>();
+  private readonly cache = new Map<string, { at: number; rows: McpUserCredential[] } | { at: number; error: unknown }>();
   private readonly keys: LitellmKeys;
   private readonly operators: readonly string[];
   private readonly now: () => number;
@@ -72,19 +74,44 @@ export class McpConnections {
     this.now = now;
   }
 
-  private async rows(email: string): Promise<McpUserCredential[]> {
+  /** A failure is cached too, so a router that is down costs one timeout a minute per person, not one
+   * per session page load. `fresh` (the Connections page) always asks the router. */
+  private async rows(email: string, fresh: boolean): Promise<McpUserCredential[]> {
     const userId = userIdFor(email);
     const cached = this.cache.get(userId);
-    if (cached && this.now() - cached.at < CONNECTIONS_CACHE_MS) return cached.rows;
-    const rows = await this.keys.mcpUserCredentials(userId);
-    this.cache.set(userId, { at: this.now(), rows });
-    return rows;
+    if (!fresh && cached && this.now() - cached.at < CONNECTIONS_CACHE_MS) {
+      if ("error" in cached) throw cached.error;
+      return cached.rows;
+    }
+    try {
+      const rows = await this.keys.mcpUserCredentials(userId);
+      this.cache.set(userId, { at: this.now(), rows });
+      return rows;
+    } catch (error) {
+      this.cache.set(userId, { at: this.now(), error });
+      throw error;
+    }
   }
 
   /** The servers this person may use, with their grant state. Throws when the router fails. */
-  async list(email: string): Promise<Connection[]> {
-    const rows = await this.rows(email);
+  async list(email: string, opts: { fresh?: boolean } = {}): Promise<Connection[]> {
+    const rows = await this.rows(email, opts.fresh === true);
     return visibleServers(email, this.operators).map((server) => toConnection(server, credentialFor(server.name, rows)));
+  }
+
+  /** MO-6: the Drive notice, or undefined when everything used is connected, the router fails, or it
+   * doesn't answer within `budgetMs` (the lookup keeps going and fills the cache for the next load). */
+  async noticeFor(email: string, used: readonly string[], budgetMs = NOTICE_BUDGET_MS): Promise<ReturnType<typeof connectionNotice>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), budgetMs);
+    });
+    const lookup = this.list(email).then((connections) => connectionNotice(connections, used), () => undefined);
+    try {
+      return await Promise.race([lookup, late]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Disconnects one server by name. "unknown" for a name this person can't see. */

@@ -59,7 +59,9 @@ Tokens never leave the router. Its list carries none, and the api passes on only
 `DELETE /api/me/connections/:name` answers 204. An unknown or hidden name gets 404
 `{error:"unknown_connection"}`. Router failure gets 502 as above.
 
-Answers are cached per person for 60 s. A disconnect drops that person's cache entry.
+Answers are cached per person for 60 s, failures included, so a router that is down costs one
+timeout a minute per person. `GET /api/me/connections` always reads the router (the page's Refresh
+follows a connect in another tab) and refills the cache. A disconnect drops that person's entry.
 
 ## 4. Web: `/connections`
 
@@ -81,8 +83,8 @@ the caller owns the session and a server the session's Drive uses is not `connec
 - **Text:** `"Sentry isn't connected: connect it in Connections."` For a dead grant: `"Sentry
   needs reconnecting: reconnect it in Connections."` With several servers, they are joined
   ("Sentry and Google Cloud aren't connected: …").
-- The notice is read from the same 60 s cache as §3. A router failure means no notice, never an
-  error. Nothing runs in the sandbox, nothing retries, and run start never waits on it.
+- The notice is read from the same 60 s cache as §3, with a 1.5 s budget: a router failure or a
+  slower answer means no notice, never an error or a slow page. Nothing runs in the sandbox, nothing retries, and run start never waits on it.
 - `SessionPage` shows it next to `mailNotice`, as a `dock-note is-warn` with a link.
 
 ## 6. Runbook and guards (MO-7)

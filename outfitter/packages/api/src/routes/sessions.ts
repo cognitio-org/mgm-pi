@@ -16,7 +16,6 @@ import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import { createSession, postUserMail } from "../session-create.ts";
 import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
-import { connectionNotice } from "../central/mcp-connections.ts";
 import { GCLOUD_MCP_SERVER, gcloudRun } from "../central/gcloud-mcp.ts";
 import { normalizeEmail } from "../central/user-id.ts";
 import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
@@ -734,8 +733,8 @@ export async function getSessionOr404(
   return session;
 }
 
-/** MO-6: shown to the session's owner only, since grants are personal. A router failure means no
- * notice, never an error, and nothing here touches the run. */
+/** MO-6: shown to the session's owner only, since grants are personal. A router failure or a slow
+ * answer means no notice, never an error or a slow page, and nothing here touches the run. */
 async function sessionConnectionNotice(
   ctx: RouteContext,
   session: Pick<Session, "ownerEmail" | "origin" | "a2aTokenId">,
@@ -745,10 +744,6 @@ async function sessionConnectionNotice(
   const owner = session.ownerEmail;
   if (!ctx.mcpConnections || !owner || !identity || identity.viaToken || normalizeEmail(identity.email) !== normalizeEmail(owner)) return {};
   const used = ["sentry", ...(gcloudRun(guru, owner, ctx.config.operators, isA2ASession(session)) ? [GCLOUD_MCP_SERVER] : [])];
-  try {
-    const notice = connectionNotice(await ctx.mcpConnections.list(owner), used);
-    return notice ? { connectionNotice: notice } : {};
-  } catch {
-    return {};
-  }
+  const notice = await ctx.mcpConnections.noticeFor(owner, used);
+  return notice ? { connectionNotice: notice } : {};
 }

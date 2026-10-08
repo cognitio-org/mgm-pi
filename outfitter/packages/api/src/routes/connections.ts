@@ -13,7 +13,8 @@ export async function registerConnectionRoutes(app: FastifyInstance, ctx: RouteC
     try {
       return {
         connectUrl: connectUrl(ctx.config.litellmBaseUrl),
-        connections: await ctx.mcpConnections.list(req.identity!.email),
+        // The page's Refresh follows a connect in another tab, so it always reads the router.
+        connections: await ctx.mcpConnections.list(req.identity!.email, { fresh: true }),
       };
     } catch (err) {
       req.log.warn({ err: err instanceof Error ? err.message : String(err) }, "connections read failed");

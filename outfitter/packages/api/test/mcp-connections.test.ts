@@ -87,6 +87,36 @@ describe("McpConnections", () => {
     assert.deepEqual(await connections.list(DEV), [{ name: "sentry", label: "Sentry", state: "not_connected" }]);
   });
 
+  test("a router that is down is asked once a minute, not on every read", async () => {
+    let now = 0;
+    const { fake, connections } = fixture(() => now);
+    fake.down = true;
+    await assert.rejects(connections.list(DEV));
+    await assert.rejects(connections.list(DEV));
+    assert.equal(fake.callsTo("/v1/mcp/user-credentials").length, 1);
+    fake.down = false;
+    now = 60_000;
+    assert.equal((await connections.list(DEV))[0].state, "not_connected");
+  });
+
+  test("a fresh read sees a grant made seconds ago, and refills the cache", async () => {
+    const { fake, connections } = fixture(() => 0);
+    assert.equal((await connections.list(DEV))[0].state, "not_connected");
+    fake.mcpCredentials.set(DEV_USER, [sentryRow()]);
+    assert.equal((await connections.list(DEV))[0].state, "not_connected", "the cached answer");
+    assert.equal((await connections.list(DEV, { fresh: true }))[0].state, "connected");
+    assert.equal((await connections.list(DEV))[0].state, "connected");
+  });
+
+  test("the Drive notice gives up after its budget instead of holding the page", async () => {
+    const { store } = fixture();
+    const hung = createLitellmKeys(CONFIG, store, { fetch: () => new Promise<Response>(() => {}) })!;
+    const connections = new McpConnections(hung, []);
+    const started = Date.now();
+    assert.equal(await connections.noticeFor(DEV, ["sentry"], 50), undefined);
+    assert.ok(Date.now() - started < 1_000, "returned within the budget");
+  });
+
   test("a server the person can't see is unknown and never reaches the router", async () => {
     const { fake, connections } = fixture();
     assert.equal(await connections.disconnect(DEV, "gcloud"), "unknown");
@@ -126,6 +156,16 @@ describe("/api/me/connections", () => {
 
     assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/me/connections/sentry" })).statusCode, 204);
     assert.equal((await app.fastify.inject({ method: "DELETE", url: "/api/me/connections/unknown" })).statusCode, 404);
+    await app.fastify.close();
+  });
+
+  test("the page's Refresh shows a grant made in another tab at once", async () => {
+    const { fake, store, keys } = fixture();
+    const app = await buildTestApp({}, { store, litellmKeys: keys });
+    const sentry = async () => (await app.fastify.inject({ method: "GET", url: "/api/me/connections" })).json().connections.find((c: Connection) => c.name === "sentry");
+    assert.equal((await sentry()).state, "not_connected");
+    fake.mcpCredentials.set(DEV_USER, [sentryRow()]);
+    assert.equal((await sentry()).state, "connected");
     await app.fastify.close();
   });
 

@@ -76,6 +76,8 @@ gcloud_exists secrets describe "${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PR
 gcloud_exists secrets describe "${CLIENT_SECRET_NAME}" --project="${PROJECT}" \
   || deploy_fail "secret ${CLIENT_SECRET_NAME} not found in ${PROJECT}; store the OAuth client secret first (docs/runbooks/gcloud-mcp.md)"
 
+# Never trace past this point: xtrace would print the secrets below (and curl's header).
+set +x
 MASTER="$(gcloud secrets versions access latest --secret="${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PROJECT}")"
 [[ -n "${MASTER}" ]] || deploy_fail "master key secret is empty"
 

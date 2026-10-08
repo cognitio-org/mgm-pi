@@ -39,7 +39,12 @@ CLIENT_ID="${GCLOUD_MCP_OAUTH_CLIENT_ID:-}"
 PRIMARY_ID="${GCLOUD_MCP_SERVER_ID:-gcloud}"
 TOOLSET_NAME="${GOOGLE_CLOUD_TOOLSET_NAME:-google_cloud}"
 OAUTH_PROJECT="${GCLOUD_MCP_OAUTH_PROJECT:-kernal-oauth}"
+# Unset: keep whatever Firestore tools the toolset already has (default none). Set, even to "": exactly that.
+FIRESTORE_SET=0; [[ -z "${GOOGLE_CLOUD_FIRESTORE_TOOLS+x}" ]] || FIRESTORE_SET=1
 FIRESTORE_TOOLS="${GOOGLE_CLOUD_FIRESTORE_TOOLS:-}"
+# The primary's real server_id (the router resolves grants and toolsets by server_id, not alias);
+# resolved from the listing, PRIMARY_ID (id or alias) until then.
+PRIMARY_SID="${PRIMARY_ID}"
 AUTHORIZATION_URL="https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent"
 TOKEN_URL="https://oauth2.googleapis.com/token"
 SCOPE="https://www.googleapis.com/auth/cloud-platform"
@@ -59,11 +64,10 @@ SECONDARIES=(
 # Curated tools (upstream names, from live tools/list 2026-10-08), as "server_id:tool,tool". The router
 # stores the bare upstream name in a toolset and serves it prefixed.
 TOOLS=(
-  "${PRIMARY_ID}:run_gcloud_command,run_bq_command"
+  "@primary:run_gcloud_command,run_bq_command"
   "cloudrun:get_service,list_services,deploy_service_from_image,deploy_service_from_archive,deploy_service_from_file_contents"
   "cloudlogging:list_log_entries,list_log_names"
   "cloudmonitoring:query_range,list_timeseries,list_alert_policies,list_alerts,list_metric_descriptors"
-  "firestore:${FIRESTORE_TOOLS}"
 )
 
 command -v jq >/dev/null || deploy_fail "jq is required"
@@ -85,8 +89,9 @@ fi
 tools_json() {
   local entry sid names t
   local -a arr
-  for entry in "${TOOLS[@]}"; do
+  for entry in "${TOOLS[@]}" "firestore:${FIRESTORE_TOOLS}"; do
     sid="${entry%%:*}"; names="${entry#*:}"
+    [[ "${sid}" != "@primary" ]] || sid="${PRIMARY_SID}"
     IFS=, read -ra arr <<<"${names}"
     for t in ${arr[@]+"${arr[@]}"}; do
       [[ -z "${t}" ]] || jq -nc --arg s "${sid}" --arg t "${t}" '{server_id: $s, tool_name: $t}'
@@ -121,6 +126,8 @@ gcloud_exists secrets describe "${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PR
 gcloud_exists secrets describe "${CLIENT_SECRET_NAME}" --project="${PROJECT}" \
   || deploy_fail "secret ${CLIENT_SECRET_NAME} not found in ${PROJECT}; store the OAuth client secret first (docs/runbooks/gcloud-mcp.md)"
 
+# Never trace past this point: xtrace would print the secrets below (and curl's header).
+set +x
 MASTER="$(gcloud secrets versions access latest --secret="${MASTER_KEY_SECRET}" --project="${MASTER_KEY_PROJECT}")"
 [[ -n "${MASTER}" ]] || deploy_fail "master key secret is empty"
 
@@ -166,8 +173,11 @@ list="$(api GET /v1/mcp/server)" || deploy_fail "couldn't list the router's MCP 
 jq -e 'type == "array" or type == "object"' <<<"${list}" >/dev/null 2>&1 \
   || deploy_fail "the router's MCP server list isn't JSON; nothing was changed"
 servers="$(rows <<<"${list}")"
-[[ -n "$(find_server "${PRIMARY_ID}" <<<"${servers}")" ]] \
+primary_row="$(find_server "${PRIMARY_ID}" <<<"${servers}")"
+[[ -n "${primary_row}" ]] \
   || deploy_fail "primary server ${PRIMARY_ID} isn't registered; run gcloud-mcp-router.sh first (nothing was changed)"
+PRIMARY_SID="$(jq -r '.server_id // empty' <<<"${primary_row}")"
+[[ -n "${PRIMARY_SID}" ]] || deploy_fail "the ${PRIMARY_ID} row has no server_id; nothing was changed"
 
 # Decide per secondary before reading the client secret: it is only needed when something is written.
 todo=()
@@ -189,7 +199,7 @@ fi
 
 # build ID URL DESCRIPTION -- the client secret reaches jq as a file (process substitution).
 build() {
-  jq -nc --arg id "$1" --arg url "$2" --arg desc "$3" --arg grant "${PRIMARY_ID}" \
+  jq -nc --arg id "$1" --arg url "$2" --arg desc "$3" --arg grant "${PRIMARY_SID}" \
     --arg au "${AUTHORIZATION_URL}" --arg tu "${TOKEN_URL}" --arg cid "${CLIENT_ID}" --arg scope "${SCOPE}" \
     --rawfile secret <(printf '%s' "${CLIENT_SECRET}") '{
       server_id: $id, server_name: $id, alias: $id,
@@ -205,7 +215,7 @@ build() {
 
 for row in "${todo[@]+"${todo[@]}"}"; do
   IFS='|' read -r sid url _ desc <<<"${row}"
-  [[ "${sid}" != "${PRIMARY_ID}" ]] || deploy_fail "refusing to edit the primary ${PRIMARY_ID}: that would purge everyone's grant"
+  [[ "${sid}" != "${PRIMARY_ID}" && "${sid}" != "${PRIMARY_SID}" ]] || deploy_fail "refusing to edit the primary ${PRIMARY_ID}: that would purge everyone's grant"
   existing="$(find_server "${sid}" <<<"${servers}")"
   if [[ -n "${existing}" ]]; then
     rid="$(jq -r '.server_id // empty' <<<"${existing}")"
@@ -224,6 +234,10 @@ tlist="$(api GET /v1/mcp/toolset)" || deploy_fail "couldn't list the router's to
 jq -e 'type == "array"' <<<"${tlist}" >/dev/null 2>&1 \
   || deploy_fail "the router's toolset list isn't a JSON array; the toolset wasn't touched"
 tid="$(jq -r --arg n "${TOOLSET_NAME}" 'map(select(.toolset_name == $n))[0].toolset_id // empty' <<<"${tlist}")"
+if (( FIRESTORE_SET == 0 )) && [[ -n "${tid}" ]]; then
+  FIRESTORE_TOOLS="$(jq -r --arg id "${tid}" 'map(select(.toolset_id == $id))[0].tools // [] | map(select(.server_id == "firestore") | .tool_name) | join(",")' <<<"${tlist}")"
+  [[ -z "${FIRESTORE_TOOLS}" ]] || echo "~ keeping the toolset's existing firestore tools: ${FIRESTORE_TOOLS}"
+fi
 tdesc="Google Cloud for operators: gcloud and bq, Cloud Run, Logging, Monitoring and Firestore, behind one sign-in."
 tools="$(tools_json)"
 if [[ -n "${tid}" ]]; then
@@ -245,7 +259,10 @@ if [[ "${ENABLE_APIS}" == 1 ]]; then
   done
 fi
 
-echo "Done. Servers sharing the ${PRIMARY_ID} grant:"
-api GET /v1/mcp/server | rows | jq -c --arg p "${PRIMARY_ID}" '.[] | select(.oauth_grant_server_id == $p) | {server_id, url, oauth_grant_server_id}'
 echo "toolset_id=${tid}"
 echo "Set OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=${tid} for Outfitter. Sysops sign in once with /mcp-auth ${TOOLSET_NAME} (docs/runbooks/gcloud-mcp.md)."
+echo "Servers sharing the ${PRIMARY_SID} grant:"
+# Verification only: the writes are done, so a failed read is a warning, never a failure.
+final="$(api GET /v1/mcp/server)" \
+  && { rows <<<"${final}" | jq -c --arg p "${PRIMARY_SID}" '.[] | select(.oauth_grant_server_id == $p) | {server_id, url, oauth_grant_server_id}' || true; } \
+  || echo "warning: couldn't re-read the server list to verify; the writes above succeeded" >&2

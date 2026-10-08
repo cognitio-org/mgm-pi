@@ -179,7 +179,8 @@ From `outfitter/deploy/`, after the `gcloud` server exists (one-time setup above
 
 - **A tool** (e.g. the Firestore names once verified with `tools/list`): rerun with
   `CONFIRM=1 GOOGLE_CLOUD_FIRESTORE_TOOLS="name1,name2" ./google-cloud-mcp.sh` (plus the client id).
-  The toolset is PUT in place with the full list; nobody signs in again. For other servers, add the
+  The toolset is PUT in place with the full list; nobody signs in again. A plain rerun with the
+  variable unset keeps the Firestore tools already in the toolset; set it to `""` to clear them. For other servers, add the
   names to the `TOOLS` array in the script and rerun.
 - **A server** (e.g. GKE, `https://container.googleapis.com/mcp`, GA): add a row to `SECONDARIES` and a
   `TOOLS` entry, enable its API in `kernal-oauth`, rerun. A new secondary needs no new sign-in. Check

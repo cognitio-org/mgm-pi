@@ -40,7 +40,8 @@ const log = process.env.ROUTER_LOG;
 const servers = new Map();
 const toolsets = new Map();
 let n = 0;
-if (!fs.existsSync(process.env.NO_PRIMARY)) servers.set("gcloud", { server_id: "gcloud", alias: "gcloud", url: "https://cloudcli.googleapis.com/mcp", auth_type: "oauth2" });
+const primarySid = fs.existsSync(process.env.UUID_PRIMARY) ? "uuid-1234" : "gcloud";
+if (!fs.existsSync(process.env.NO_PRIMARY)) servers.set(primarySid, { server_id: primarySid, alias: "gcloud", url: "https://cloudcli.googleapis.com/mcp", auth_type: "oauth2" });
 const srv = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
@@ -71,7 +72,7 @@ const srv = http.createServer((req, res) => {
 });
 srv.listen(0, "127.0.0.1", () => { fs.writeFileSync(process.env.PORT_FILE, String(srv.address().port)); });
 JS
-export ROUTER_LOG="${WORK}/router.log" PORT_FILE="${WORK}/port" FAIL_FILE="${WORK}/fail422" FAIL_GET="${WORK}/failget" NO_PRIMARY="${WORK}/noprimary"
+export ROUTER_LOG="${WORK}/router.log" PORT_FILE="${WORK}/port" FAIL_FILE="${WORK}/fail422" FAIL_GET="${WORK}/failget" NO_PRIMARY="${WORK}/noprimary" UUID_PRIMARY="${WORK}/uuidprimary"
 : >"${ROUTER_LOG}"
 ROUTER_PID=""
 start_router() { rm -f "${PORT_FILE}"; node "${WORK}/router.mjs" & ROUTER_PID=$!
@@ -163,6 +164,21 @@ grep -q '"toolset_id":"ts-1"' "${ROUTER_LOG}" || fail "toolset PUT lacks the id"
 grep -q '^toolset_id=ts-1$' "${WORK}/out" || fail "rerun lost the toolset_id"
 ! grep -q "client-secret" "${STATE}/gcloud-calls" || fail "rerun read the client secret for nothing"
 
+# The rerun had GOOGLE_CLOUD_FIRESTORE_TOOLS unset: the firestore tools added earlier are kept.
+grep '^PUT /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^PUT [^ ]* //' \
+  | jq -e '[.tools[] | select(.server_id == "firestore") | .tool_name] == ["get_document","list_documents"] and (.tools | length) == 16' >/dev/null \
+  || fail "a plain rerun dropped the firestore tools"
+grep -q "keeping the toolset's existing firestore tools" "${WORK}/out" || fail "no note about kept firestore tools"
+# toolset_id is printed before the verification read.
+[[ "$(grep -n '^toolset_id=' "${WORK}/out" | cut -d: -f1)" -lt "$(grep -n '^Servers sharing' "${WORK}/out" | cut -d: -f1)" ]] || fail "toolset_id not printed before verification"
+
+# Explicitly empty: exactly that, firestore tools removed.
+: >"${ROUTER_LOG}"
+CONFIRM=1 GOOGLE_CLOUD_FIRESTORE_TOOLS="" run
+grep '^PUT /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^PUT [^ ]* //' \
+  | jq -e '([.tools[] | select(.server_id == "firestore")] | length) == 0 and (.tools | length) == 14' >/dev/null \
+  || fail "an explicit empty list didn't clear the firestore tools"
+
 # FORCE_PURGE=1: the four secondaries are PUT; the primary never is.
 : >"${ROUTER_LOG}"
 CONFIRM=1 FORCE_PURGE=1 run
@@ -178,5 +194,17 @@ stop_router; touch "${NO_PRIMARY}"; start_router
 CONFIRM=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "ran without a primary"
 grep -q "gcloud-mcp-router.sh first" "${WORK}/out" || { cat "${WORK}/out"; fail "wrong message for a missing primary"; }
 [[ "$(count '^POST \|^PUT ')" == 0 ]] || fail "wrote without a primary"
+
+# Primary registered with alias gcloud but a UUID server_id: the real id is used for the grant link
+# and the toolset, never the alias.
+stop_router; rm -f "${NO_PRIMARY}"; touch "${UUID_PRIMARY}"; start_router
+CONFIRM=1 run
+[[ "$(count '^POST /v1/mcp/server ')" == 4 ]] || fail "uuid primary: expected four POSTs"
+grep '^POST /v1/mcp/server ' "${ROUTER_LOG}" | while read -r _ _ body; do
+  jq -e '.oauth_grant_server_id == "uuid-1234"' <<<"${body}" >/dev/null || exit 1
+done || fail "oauth_grant_server_id isn't the primary's real server_id"
+grep '^POST /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^POST [^ ]* //' \
+  | jq -e '[.tools[] | select(.server_id == "uuid-1234")] | length == 2' >/dev/null || fail "toolset gcloud tools don't use the real server_id"
+! grep '^POST /v1/mcp/toolset ' "${ROUTER_LOG}" | grep -q '"server_id":"gcloud"' || fail "toolset used the alias"
 
 echo "google-cloud-mcp.test.sh: ok"

@@ -1,0 +1,19 @@
+outfitter/docs/runbooks/gcloud-mcp.md
+  s_02bad6fff96068::t_7f94f974b43f4c 32-37,119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a04086f3b28690b738347b14e9ebe8fd45f05286",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

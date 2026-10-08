@@ -15,7 +15,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** Must match agentd/src/mcp-gate.ts, api central/gcloud-mcp.ts and image/render-mcp.sh (a test checks). */
-export const GATED_MCP_SERVERS: readonly string[] = ["gcloud"];
+export const GATED_MCP_SERVERS: readonly string[] = ["gcloud", "google_cloud"];
 
 export function applyLaptopMcpGate(agentDir: string | undefined, admitted: readonly string[] | undefined, log: (line: string) => void = () => {}): boolean {
   if (!agentDir) return false;
@@ -26,6 +26,10 @@ export function applyLaptopMcpGate(agentDir: string | undefined, admitted: reado
     const servers = config.mcpServers;
     if (!servers || typeof servers !== "object") return false;
     const wanted = new Set((admitted ?? []).filter((n) => GATED_MCP_SERVERS.includes(n)));
+    // google_cloud is the toolset that includes the gcloud CLI server: when it is delivered it replaces
+    // the standalone gcloud entry (one sign-in, no duplicate tools). gcloud stays the fallback for a key
+    // without the toolset (id not set yet, an older Outfitter, a device key not yet re-minted).
+    if (wanted.has("google_cloud")) wanted.delete("gcloud");
     let changed = false;
     for (const name of GATED_MCP_SERVERS) {
       const def = servers[name];

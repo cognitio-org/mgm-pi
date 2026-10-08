@@ -72,6 +72,12 @@ describe("loadConfig", () => {
     assert.equal(unset.gkeEndpoint, "");
   });
 
+  test("OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID defaults to empty (no toolset granted) and is trimmed", () => {
+    assert.equal(loadConfig({} as NodeJS.ProcessEnv).googleCloudToolsetId, "");
+    assert.equal(loadConfig({ OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID: " 0b9f6c2e-1111-4222-8333-444455556666 " } as NodeJS.ProcessEnv).googleCloudToolsetId, "0b9f6c2e-1111-4222-8333-444455556666");
+    assert.equal(loadConfig({ OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID: "abc" } as NodeJS.ProcessEnv).googleCloudToolsetId, "", "malformed: ignored");
+  });
+
   test("OUTFITTER_OPERATORS defaults to an empty list", () => {
     const config = loadConfig({} as NodeJS.ProcessEnv);
     assert.deepEqual(config.operators, []);

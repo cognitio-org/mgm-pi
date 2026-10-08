@@ -21,15 +21,20 @@ test("every skill loads with pi's own loader, with a short description", () => {
 
 test("GA-3 (#493): the gcloud skill carries the server's usage rules", () => {
   const text = readFileSync(`${root}skills/gcloud-mcp/SKILL.md`, "utf8");
-  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha"]) {
+  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha", "/mcp-auth google_cloud", "run_gcloud_command", "cloudrun-", "Secret Manager"]) {
     assert.ok(text.includes(rule), `missing: ${rule}`);
   }
 });
 
-test("GA-3 (#493): mcp.json routes gcloud through the router like sentry, lazily", () => {
+test("GB-4 (#540): mcp.json routes the google_cloud toolset through the router like sentry, lazily, replacing gcloud", () => {
   const { mcpServers } = JSON.parse(readFileSync(`${root}.pi/mcp.json`, "utf8"));
-  const { sentry, gcloud } = mcpServers;
-  assert.equal(gcloud.url, "https://router.kernal.one/gcloud/mcp");
+  const { sentry, google_cloud: gcloud } = mcpServers;
+  assert.equal(mcpServers.gcloud.url, "https://router.kernal.one/gcloud/mcp", "gcloud stays as the fallback until the toolset is delivered");
+  assert.equal(mcpServers.gcloud.disabled, true);
+  assert.equal(mcpServers.gcloud.approveTools, true);
+  assert.equal(gcloud.disabled, true);
+  assert.equal(gcloud.approveTools, true);
+  assert.equal(gcloud.url, "https://router.kernal.one/google_cloud/mcp");
   assert.equal(gcloud.auth, "oauth");
   assert.deepEqual(gcloud.headers, sentry.headers);
   assert.equal(gcloud.lifecycle, "lazy", "non-operators never connect at start-up; the router hides the server from them");

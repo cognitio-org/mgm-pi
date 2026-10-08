@@ -18,9 +18,9 @@ import { loadSubscriptionSecret, type SecretLookup } from "./client.ts";
 import { localVendorLogin } from "./local-login.ts";
 import { isVendor, type SubscriptionMode, type SubscriptionVendor } from "./vendors.ts";
 
-/** Router MCP, the two OAuth admin servers and gcloud. They are not handed to Claude. gcloud runs as
+/** Router MCP, the two OAuth admin servers, gcloud and the google_cloud toolset. They are not handed to Claude. They run as
  * the person through the router with Kernal's approval gate; a Claude child has neither. */
-export const EXCLUDED_MCP = new Set(["litellm", "google_admin", "augment_admin", "gcloud"]);
+export const EXCLUDED_MCP = new Set(["litellm", "google_admin", "augment_admin", "gcloud", "google_cloud"]);
 
 export type SubscriptionRunResult =
   | { kind: "ok"; vendor: SubscriptionVendor; text: string }

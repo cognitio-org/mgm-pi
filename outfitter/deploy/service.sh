@@ -40,6 +40,10 @@ fi
 
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+# GB-3 (#539): fail before any gcloud call on a malformed toolset id (config.env; empty is fine).
+if [[ -n "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID:-}" && ! "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}" =~ ^[0-9a-f-]{36}$ ]]; then
+  deploy_fail "OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID must be empty or a toolset UUID (got '${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}')"
+fi
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
 if [[ "${ROLE}" == "web" ]]; then
@@ -279,6 +283,9 @@ fi
 # parser also accepts ',' and whitespace for a locally-set env var, but this script must use ';'.
 # Defaults to the two current operators (config.env); override by exporting OUTFITTER_OPERATORS.
 ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
+# GB-3 (#539, config.env): the router's google_cloud toolset id, on BOTH roles for the same reason as the
+# operators (the link role mints the device and run keys). Only when set, so an unset id changes nothing.
+[[ -n "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID:-}" ]] && ENV_VARS="${ENV_VARS},OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}"
 # E9 Agent Engine (config.env): link role only, each var only when set. Not secret.
 if [[ "${ROLE}" == "link" ]]; then
   [[ -n "${AGENT_ENGINE_BASE_URL:-}" ]] && ENV_VARS="${ENV_VARS},AGENT_ENGINE_BASE_URL=${AGENT_ENGINE_BASE_URL}"

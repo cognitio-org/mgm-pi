@@ -186,6 +186,10 @@ export interface Config {
    * Empty by default: no one is an operator until this is set, except the dev identity (see
    * auth.ts's identityFromRequest). */
   operators: string[];
+  /** OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID: the router's `google_cloud` toolset id (a UUID, printed by the
+   * GB-2 router script). Operator keys get it in `object_permission.mcp_toolsets` (GB-3, #539). Empty
+   * (the default) grants no toolset and leaves every key as before. */
+  googleCloudToolsetId: string;
   /** CLOUD_TASKS_QUEUE: Cloud Tasks queue (in gcpProject/gcpRegion) that schedules a durable wake
    * per posted mail (E5.5, src/mail.ts). Empty disables it; the inline wake and /tick still run. */
   cloudTasksQueue: string;
@@ -438,6 +442,16 @@ export function agentEngineWarnings(config: Pick<Config, "agentEngine">, env: No
   return out;
 }
 
+/** OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID: a UUID or empty. A malformed value is ignored with a warning, so a
+ * typo never reaches the router as a key grant. */
+function envToolsetId(raw: string | undefined): string {
+  const id = (raw ?? "").trim();
+  if (id === "") return "";
+  if (/^[0-9a-f-]{36}$/i.test(id)) return id;
+  console.warn(`[config] OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=${JSON.stringify(id)} isn't a UUID; no toolset is granted`);
+  return "";
+}
+
 function envOperators(name: string, env: NodeJS.ProcessEnv): string[] {
   const raw = env[name];
   if (!raw) return [];
@@ -560,6 +574,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     providerPollMs: envInt("PROVIDER_POLL_MS", 5 * 60_000, env),
     linkOrigin: env.OUTFITTER_LINK_ORIGIN ?? "",
     operators: envOperators("OUTFITTER_OPERATORS", env),
+    googleCloudToolsetId: envToolsetId(env.OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID),
     cloudTasksQueue: env.CLOUD_TASKS_QUEUE ?? "",
     tasksSaEmail: env.TASKS_SA_EMAIL ?? "",
     agentSocketGraceMs: envInt("AGENT_SOCKET_GRACE_MS", 60_000, env),

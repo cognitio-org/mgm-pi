@@ -8,7 +8,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { DriveAdmin } from "../src/admin/drive.ts";
 import { decideApproval } from "../src/admin/approvals.ts";
 import { registerAdminOp, runAdminOp } from "../src/admin/ops.ts";
-import { NOTE_LIMIT_PER_HOUR, gcloudArgs } from "../src/admin/gcloud-ops.ts";
+import { NOTE_LIMIT_PER_HOUR, gcloudArgs, gcloudTitle } from "../src/admin/gcloud-ops.ts";
 
 const models = { list: async () => [] };
 const fast = { pollMs: 5, timeoutMs: 2_000 };
@@ -86,6 +86,56 @@ describe("gcloud.run from a Drive", () => {
 
   test("a missing command is refused", () => {
     assert.deepEqual(gcloudArgs({ project: "p" }), { error: "command is required" });
+  });
+
+  // GB-5 (#541): Google's product tools (Cloud Run deploys, ...) ask through the same op.
+  test("a product tool keeps its name and gets its own card title, then is audited", async () => {
+    const { store, admin } = await fixture();
+    const args = { tool: "deploy_service_from_image", project: "projects/p1", command: '{"service":"projects/p1/locations/us-central1/services/web","image":"gcr.io/p1/web"}' };
+    const result = admin.handle("r1", "gcloud.run", args);
+    const held = await pending(store);
+    assert.equal(held.title, "Allow the agent to run cloudrun deploy_service_from_image?");
+    assert.match(held.message, /deploy_service_from_image/);
+    assert.match(held.message, /gcr\.io\/p1\/web/);
+    await decideApproval(store, "r1", held.id, { email: OWNER }, true);
+    assert.deepEqual(await result, { ok: true, text: "approved" });
+    const [row] = await store.adminAudit.listRecent(1);
+    assert.match(row.target ?? "", /^deploy_service_from_image projects\/p1 :: /);
+  });
+
+  test("gcloudArgs: known and unknown product tools are kept, commands tools unchanged, junk refused", () => {
+    const base = { project: "p", command: "x" };
+    assert.equal((gcloudArgs({ ...base, tool: "run_bq_command" }) as { tool: string }).tool, "run_bq_command");
+    assert.equal((gcloudArgs({ ...base, tool: "deploy_service_from_archive" }) as { tool: string }).tool, "deploy_service_from_archive");
+    assert.equal((gcloudArgs({ ...base, tool: "create_document" }) as { tool: string }).tool, "create_document");
+    assert.equal((gcloudArgs({ ...base }) as { tool: string }).tool, "run_gcloud_command");
+    // A tool name that is not plainly a name is refused, never relabelled as a gcloud command.
+    for (const tool of ["bad tool\n; rm", "x".repeat(200), "ok‮name", "a​b", "-lead"]) {
+      assert.deepEqual(gcloudArgs({ ...base, tool }), { error: "the tool name is not recognised; not asked" }, JSON.stringify(tool));
+    }
+  });
+
+  test("a several-projects warning in the project field reaches the card", async () => {
+    const { store, admin } = await fixture();
+    const result = admin.handle("r1", "gcloud.run", { tool: "deploy_service_from_image", project: "⚠ arguments name several projects: safe, evil", command: "{}" });
+    const held = await pending(store);
+    assert.match(held.message, /⚠ arguments name several projects: safe, evil/);
+    await decideApproval(store, "r1", held.id, { email: OWNER }, false);
+    await result;
+  });
+
+  test("gcloudTitle names the command tools and the product tools", () => {
+    assert.equal(gcloudTitle("run_gcloud_command"), "Allow the agent to run a gcloud command?");
+    assert.equal(gcloudTitle("run_bq_command"), "Allow the agent to run a bq command?");
+    assert.equal(gcloudTitle("deploy_service_from_file_contents"), "Allow the agent to run cloudrun deploy_service_from_file_contents?");
+    assert.equal(gcloudTitle("create_document"), "Allow the agent to run create_document?");
+  });
+
+  test("an unknown tool's title does not claim to be gcloud, and hidden characters in the arguments are refused", async () => {
+    const { store, admin } = await fixture();
+    const r = await admin.handle("r1", "gcloud.run", { tool: "create_document", project: "p", command: "{}‮" });
+    assert.equal(r.ok, false);
+    assert.equal(await store.adminApprovals.get("r1"), null);
   });
 });
 

@@ -20,18 +20,41 @@ import { registerAdminOp, type AdminResult } from "./ops.ts";
 
 const MAX_COMMAND = 4000;
 const MAX_PROJECT = 200;
-const TOOLS = ["run_gcloud_command", "run_bq_command"] as const;
+/**
+ * Google's product tools (GB-5, #541) and the router server each belongs to, for the card's title.
+ * Kernal sends the tool's base name; `command` is then a one-line summary of its arguments.
+ */
+export const PRODUCT_TOOLS: Readonly<Record<string, string>> = {
+  get_service: "cloudrun", list_services: "cloudrun",
+  deploy_service_from_image: "cloudrun", deploy_service_from_archive: "cloudrun", deploy_service_from_file_contents: "cloudrun",
+  list_log_entries: "cloudlogging", list_log_names: "cloudlogging", get_bucket: "cloudlogging", list_buckets: "cloudlogging", get_view: "cloudlogging", list_views: "cloudlogging",
+  list_timeseries: "cloudmonitoring", query_range: "cloudmonitoring", get_alert_policy: "cloudmonitoring", list_alert_policies: "cloudmonitoring", get_alert: "cloudmonitoring",
+  list_alerts: "cloudmonitoring", list_metric_descriptors: "cloudmonitoring", list_dashboards: "cloudmonitoring", get_dashboard: "cloudmonitoring",
+};
+/** A tool name we have no table entry for (a Firestore tool, a new Google tool): shown as sent, once it is plainly a name. */
+const OTHER_TOOL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
 
 /** `project` and `command` as sent, or the reason they can't be asked about. */
 export function gcloudArgs(args: Record<string, unknown>): { project: string; command: string; tool: string } | { error: string } {
   const project = typeof args.project === "string" ? args.project.trim() : "";
   const command = typeof args.command === "string" ? args.command.trim() : "";
-  const tool = typeof args.tool === "string" && (TOOLS as readonly string[]).includes(args.tool) ? args.tool : "run_gcloud_command";
+  const sent = typeof args.tool === "string" ? args.tool.trim() : "";
+  // No tool: an older Kernal's gcloud command. A name that is not plainly a tool name is refused, not relabelled.
+  if (sent && (!OTHER_TOOL.test(sent) || hasHidden(sent))) return { error: "the tool name is not recognised; not asked" };
+  const tool = sent || "run_gcloud_command";
   if (!command) return { error: "command is required" };
   if (command.length > MAX_COMMAND) return { error: `command is longer than ${MAX_COMMAND} characters` };
   if (project.length > MAX_PROJECT) return { error: "project is too long" };
   if (hasHidden(command) || hasHidden(project)) return { error: "the command has hidden characters; not asked" };
   return { project, command, tool };
+}
+
+/** The card's question: a command tool is "a gcloud command"; a product tool is named with its server. */
+export function gcloudTitle(tool: string): string {
+  if (tool === "run_bq_command") return "Allow the agent to run a bq command?";
+  if (tool === "run_gcloud_command") return "Allow the agent to run a gcloud command?";
+  const product = Object.hasOwn(PRODUCT_TOOLS, tool) ? `${PRODUCT_TOOLS[tool]} ` : "";
+  return `Allow the agent to run ${product}${tool}?`;
 }
 
 /** What the audit row's `target` holds: tool, project and command, flattened and clipped. */
@@ -50,8 +73,11 @@ registerAdminOp("gcloud.run", {
     const a = gcloudArgs(args);
     if ("error" in a) return { title: "Allow a gcloud command?", message: a.error };
     return {
-      title: `Allow the agent to run a ${a.tool === "run_bq_command" ? "bq" : "gcloud"} command?`,
-      message: `The agent in this session asked Google's gcloud server to run this. It acts as you. Project: ${a.project || "(none)"}. Command (the agent's text): ${clip(a.command, 600)}`,
+      title: gcloudTitle(a.tool),
+      message:
+        a.tool === "run_gcloud_command" || a.tool === "run_bq_command"
+          ? `The agent in this session asked Google's gcloud server to run this. It acts as you. Project: ${a.project || "(none)"}. Command (the agent's text): ${clip(a.command, 600)}`
+          : `The agent in this session asked Google Cloud to run ${a.tool}. It acts as you. Project: ${a.project || "(none)"}. Arguments (the agent's text): ${clip(a.command, 600)}`,
     };
   },
   async run(_ctx, caller, args): Promise<AdminResult & { target?: string }> {

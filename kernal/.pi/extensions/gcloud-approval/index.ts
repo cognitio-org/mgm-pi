@@ -16,7 +16,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { personHere } from "../_shared/person.ts";
 import { adminTransport, hasAdminCapability } from "../outfitter-admin/transport.ts";
-import { checkConfigFiles } from "./config-check.ts";
+import { checkConfigFiles, googleServersFromFiles } from "./config-check.ts";
 import { decide, isGated, type Ways } from "./hook.ts";
 
 /** pi-mcp-adapter's MCP_TOOL_APPROVAL_REQUEST_EVENT (its export is a string literal). */
@@ -43,6 +43,8 @@ export interface Deps {
 export default function (pi: ExtensionAPI, deps?: Deps) {
   // The adapter's request carries no pi context; the last one any event gave us is the TUI's.
   let ctx: any;
+  // Servers configured at the router's Google path under another name (the request carries no URL).
+  let googleServers = new Set<string>();
   const remember = (_event: unknown, c: any) => {
     ctx = c;
   };
@@ -56,6 +58,7 @@ export default function (pi: ExtensionAPI, deps?: Deps) {
     ctx = c;
     const dirs = deps?.configDirs ? deps.configDirs(c) : { agentDir: safeAgentDir(), cwd: c?.cwd };
     for (const w of checkConfigFiles(dirs)) warn(w, c);
+    googleServers = googleServersFromFiles(dirs);
   }) as any);
   pi.on("before_agent_start", remember as any);
   pi.on("tool_call", remember as any);
@@ -76,7 +79,7 @@ export default function (pi: ExtensionAPI, deps?: Deps) {
   pi.events.on(APPROVAL_REQUEST_EVENT, (data: unknown) => {
     const req = data as Request;
     if (!req || typeof req.claim !== "function") return;
-    const call = { serverName: String(req.serverName), tool: String(req.originalToolName), args: req.args ?? {} };
+    const call = { serverName: String(req.serverName), tool: String(req.originalToolName), args: req.args ?? {}, googleServer: googleServers.has(String(req.serverName)) };
     if (!isGated(call)) return;
     const claimed = req.claim(() => decide(call, waysFor(ctx), req.signal));
     if (!claimed) {

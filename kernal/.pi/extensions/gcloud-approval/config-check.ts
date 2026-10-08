@@ -6,13 +6,28 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { GCLOUD_SERVER } from "./hook.ts";
+import { GCLOUD_SERVER, GOOGLE_CLOUD_SERVER } from "./hook.ts";
 
 /** A server entry that is, or points at, Google's gcloud MCP (through the router or directly). */
 export function looksLikeGcloud(name: string, def: any): boolean {
-  if (name === GCLOUD_SERVER || name.endsWith(`__${GCLOUD_SERVER}`)) return true;
+  for (const server of [GCLOUD_SERVER, GOOGLE_CLOUD_SERVER]) {
+    if (name === server || name.endsWith(`__${server}`)) return true;
+  }
   const url = typeof def?.url === "string" ? def.url : "";
-  return url.includes("/gcloud/mcp") || url.includes("cloudcli.googleapis.com");
+  return url.includes("/gcloud/mcp") || url.includes("/google_cloud/mcp") || url.includes("cloudcli.googleapis.com");
+}
+
+/** A server whose configured URL is the router's Google path (`/google_cloud/mcp`, `/gcloud/mcp`) on any host, or Google's cloudcli. */
+export function hasGoogleUrl(def: any): boolean {
+  const url = typeof def?.url === "string" ? def.url : "";
+  return url.includes("/gcloud/mcp") || url.includes("/google_cloud/mcp") || url.includes("cloudcli.googleapis.com");
+}
+
+/** Names of the servers in `config` (an mcp.json) that point at the router's Google path, whatever they are called. */
+export function googleServerNames(config: any): string[] {
+  const servers = config && typeof config === "object" ? config.mcpServers : undefined;
+  if (!servers || typeof servers !== "object") return [];
+  return Object.entries<any>(servers).filter(([, def]) => hasGoogleUrl(def)).map(([name]) => name);
 }
 
 /** One warning per gcloud-looking server in `config` (an mcp.json) that lacks `approveTools: true`. */
@@ -29,15 +44,31 @@ export function configWarnings(config: any, source: string): string[] {
   return out;
 }
 
-/** Reads the usual mcp.json locations (best effort) and returns every warning. */
-export function checkConfigFiles(dirs: { agentDir?: string; cwd?: string }): string[] {
-  const files = [
+function configFiles(dirs: { agentDir?: string; cwd?: string }): string[] {
+  return [
     dirs.agentDir && join(dirs.agentDir, "mcp.json"),
     dirs.cwd && join(dirs.cwd, ".pi", "mcp.json"),
     dirs.cwd && join(dirs.cwd, ".mcp.json"),
   ].filter((f): f is string => !!f);
+}
+
+/** Server names configured at the router's Google path in the usual mcp.json locations (best effort). */
+export function googleServersFromFiles(dirs: { agentDir?: string; cwd?: string }): Set<string> {
+  const out = new Set<string>();
+  for (const file of configFiles(dirs)) {
+    try {
+      if (existsSync(file)) for (const n of googleServerNames(JSON.parse(readFileSync(file, "utf8")))) out.add(n);
+    } catch {
+      // Unreadable or not JSON: the adapter will say so.
+    }
+  }
+  return out;
+}
+
+/** Reads the usual mcp.json locations (best effort) and returns every warning. */
+export function checkConfigFiles(dirs: { agentDir?: string; cwd?: string }): string[] {
   const out: string[] = [];
-  for (const file of files) {
+  for (const file of configFiles(dirs)) {
     try {
       if (existsSync(file)) out.push(...configWarnings(JSON.parse(readFileSync(file, "utf8")), file));
     } catch {

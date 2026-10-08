@@ -1,0 +1,26 @@
+kernal/.pi/extensions/_shared/default-sync.ts
+  s_0c22637abb3b43::t_fc821c2ce22a22 197-198,211-212
+kernal/.pi/extensions/connect/index.ts
+  s_0c22637abb3b43::t_5b91e1802a48ba 560
+  s_0c22637abb3b43::t_fc821c2ce22a22 209-213,558-559,561,566,568,574-578,580-581,583-586,591-593,607-608
+kernal/tests/extensions.test.ts
+  s_0c22637abb3b43::t_5b91e1802a48ba 501,506-507,510,512-513,515-520,525,529,534-536,538,542,544,546
+kernal/.pi/extensions/kernal-codebase-index/index.ts
+  s_0c22637abb3b43::t_fc821c2ce22a22 543-544
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "b2f5bc5e8ce424b0a1e89154d619ef4441d3991f",
+  "prompts": {},
+  "sessions": {
+    "s_0c22637abb3b43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "49aca729-6f5c-461c-99f2-b26ac7e08e84",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

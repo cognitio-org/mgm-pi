@@ -93,7 +93,7 @@ The runner is Kernal code. It does not edit `pi-subagents` and it does not widen
 - One `claude -p` invocation. No `--resume`. No session id stored.
 - The child environment drops `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`. When an account secret exists, set `CLAUDE_CODE_OAUTH_TOKEN` to it. Otherwise leave the local Claude login alone.
 - Sandboxed: read-only / plan mode, no shell, empty strict MCP config, user settings only.
-- Full on a laptop: `--setting-sources user,project`, the CLI's own approval prompts, and a generated MCP config for servers that are a URL or a local command. Do not pass the router MCP server or the OAuth servers `google_admin` and `augment_admin`. Prepend an Agent Engine memory brief to the prompt when the coordinator already has one. Do not give the child Outfitter memory credentials.
+- Full on a laptop: `--setting-sources user,project`, the CLI's own approval prompts, and a generated MCP config for servers that are a URL or a local command. Do not pass the router MCP server, `gcloud`, or any direct OAuth server. Prepend an Agent Engine memory brief to the prompt when the coordinator already has one. Do not give the child Outfitter memory credentials.
 - If the mode is not `off` and there is no account secret and no local login, the runner returns a short "connect Claude" result and does not spawn `claude`.
 - If Claude exits because the plan window is spent, the runner says so. The coordinator walks `subscriptions.prefer` and then uses the router. It does not export an API key to retry.
 

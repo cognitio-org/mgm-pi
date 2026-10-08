@@ -4,7 +4,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import register, { APPROVAL_REQUEST_EVENT } from "../.pi/extensions/gcloud-approval/index.ts";
-import { decide, isGated, isGcloudServer, needsApproval, shown, type Call, type Ways } from "../.pi/extensions/gcloud-approval/hook.ts";
+import { baseTool, decide, isGated, isGcloudServer, needsApproval, shown, type Call, type Ways } from "../.pi/extensions/gcloud-approval/hook.ts";
 import type { AdminReply, AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -153,6 +153,39 @@ describe("decide", () => {
 
   test("an unknown tool on the server asks", () => {
     assert.equal(needsApproval({ ...read, tool: "run_something_new" }), true);
+  });
+});
+
+describe("router-prefixed tool names", () => {
+  // The router names upstream tools `<server>-<tool>` (seen live 2026-10-08: gcloud-run_gcloud_command).
+  test("baseTool strips a server prefix and nothing else", () => {
+    assert.equal(baseTool("run_gcloud_command"), "run_gcloud_command");
+    assert.equal(baseTool("gcloud-run_gcloud_command"), "run_gcloud_command");
+    assert.equal(baseTool("gcloud-run_bq_command"), "run_bq_command");
+    assert.equal(baseTool("gcp_run_gcloud_command"), "run_gcloud_command");
+    assert.equal(baseTool("acme.gcloud:run_bq_command"), "run_bq_command");
+    assert.equal(baseTool("xrun_gcloud_command"), "xrun_gcloud_command");
+    assert.equal(baseTool("run_gcloud_command_v2"), "run_gcloud_command_v2");
+  });
+
+  test("on the gcloud server, a prefixed read runs and a prefixed write asks", async () => {
+    const r = { ...read, tool: "gcloud-run_gcloud_command" };
+    const w = { ...write, tool: "gcloud-run_gcloud_command" };
+    assert.equal(needsApproval(r), false);
+    assert.equal(needsApproval(w), true);
+    assert.equal(await decide(r, { drive: false, confirm: async () => false }), "allow_once");
+    assert.equal(await decide(w, { drive: false, confirm: async () => false }), "deny");
+  });
+
+  test("a renamed server pointing at the router's gcloud is still gated", () => {
+    const renamed = { serverName: "gcp", tool: "gcloud-run_gcloud_command", args: write.args };
+    assert.equal(isGated(renamed), true);
+    assert.equal(needsApproval(renamed), true);
+    assert.equal(needsApproval({ ...renamed, args: read.args }), false);
+  });
+
+  test("an unknown tool on the gcloud server still asks", () => {
+    assert.equal(needsApproval({ serverName: "gcloud", tool: "gcloud-something_else", args: read.args }), true);
   });
 });
 

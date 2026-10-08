@@ -45,18 +45,32 @@ export function isGcloudServer(name: string): boolean {
 export const GCLOUD_TOOLS: ReadonlySet<string> = new Set(["run_gcloud_command", "run_bq_command"]);
 
 /**
+ * The command tool behind a name, or the name unchanged. The router prefixes every upstream tool
+ * with its server (`gcloud-run_gcloud_command`), and a server registered under another name gets
+ * another prefix, so the base name is what identifies the tool. Only a prefix that ends in `-`,
+ * `_`, `.` or `:` counts, so a lookalike such as `xrun_gcloud_command` stays unknown (and asks).
+ */
+export function baseTool(name: string): string {
+  for (const tool of GCLOUD_TOOLS) {
+    if (name === tool) return tool;
+    if (name.endsWith(tool) && /[-_.:]$/.test(name.slice(0, -tool.length))) return tool;
+  }
+  return name;
+}
+
+/**
  * Whether this call is ours to judge: the gcloud server by name, or either command tool on any
  * server. A cloned repo's `.mcp.json` can name a server anything and point it at the same router
  * URL, so the tool name counts too.
  */
 export function isGated(call: Call): boolean {
-  return isGcloudServer(call.serverName) || GCLOUD_TOOLS.has(call.tool);
+  return isGcloudServer(call.serverName) || GCLOUD_TOOLS.has(baseTool(call.tool));
 }
 
 /** Whether this call needs an answer from a person before it runs. */
 export function needsApproval(call: Call): boolean {
   if (!isGated(call)) return false;
-  return classifyCommand(call.tool, call.args?.command) === "write";
+  return classifyCommand(baseTool(call.tool), call.args?.command) === "write";
 }
 
 const MAX_SHOWN = 800;

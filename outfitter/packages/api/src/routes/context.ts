@@ -25,6 +25,7 @@ import type { AgentEngine } from "../agentengine/index.ts";
 import type { FleetSettingsCache } from "../fleet-settings.ts";
 import type { DeviceLifecycle } from "../central/device-lifecycle.ts";
 import type { LitellmKeys } from "../central/litellm-keys.ts";
+import type { McpConnections } from "../central/mcp-connections.ts";
 import type { LocalHostEvents } from "../local-hosts/events.ts";
 import type { NgrokApi } from "../ngrok-api.ts";
 
@@ -86,6 +87,8 @@ export interface RouteContext {
   deviceLifecycle: DeviceLifecycle;
   /** CA-5: LiteLLM key minting and spend; undefined while LITELLM_ADMIN_KEY is unset. */
   litellmKeys?: LitellmKeys;
+  /** MO-5/MO-6 (docs/specs/mcp-connections.md): the person's OAuth MCP grants; with litellmKeys. */
+  mcpConnections?: McpConnections;
   /** #378 Local Host (docs/specs/local-host.md §5): the registry (task A) announces host changes
    * here; the router reconciliation (task B) listens. The tick runs its sweep. */
   localHostEvents: LocalHostEvents;

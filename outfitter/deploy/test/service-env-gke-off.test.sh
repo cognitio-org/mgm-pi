@@ -79,6 +79,8 @@ export GCLOUD_CALLS="${WORK}/gcloud-calls" OUTFITTER_LINK_ORIGIN=https://outfitt
 # GITHUB_REF_NAME/OUTFITTER_RELEASE too: in the release workflow the ref is the outfitter-v* tag, and
 # service.sh would add OUTFITTER_RELEASE to the baseline list below (the release case sets it itself).
 unset GITHUB_REF_NAME OUTFITTER_RELEASE
+# The cases below start with the google_cloud toolset grant off; one case checks the shipped default.
+export OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=""
 unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW ALLOW_ORIGIN_CHANGE GKE_CLUSTER \
   CLOUD_TASKS_QUEUE TASKS_SA_EMAIL DEPLOY_ALL_COMMIT
 : >"${GCLOUD_CALLS}"
@@ -240,6 +242,17 @@ if [[ "${LINK_ENV}" != *"GOOGLE_CLOUD_TOOLSET"* ]]; then
   echo "ok: no toolset id on link when unset"
 else
   echo "FAIL: toolset id present on link although unset"
+  fails=$((fails + 1))
+fi
+
+# With the variable truly unset, config.env's live toolset id reaches the link role.
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && env -u OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID ./service.sh link 2>&1)" || true
+DEFAULT_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${DEFAULT_ENV}" == *",OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=7fa58a73-990f-4de4-9005-ee0772d5811d"* ]]; then
+  echo "ok: the shipped toolset id reaches the link role when the variable is unset"
+else
+  echo "FAIL: expected config.env's toolset id on link; got: ${DEFAULT_ENV:-<no deploy call>}"
   fails=$((fails + 1))
 fi
 

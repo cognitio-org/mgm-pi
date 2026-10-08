@@ -194,7 +194,8 @@ export function registerDefaultSync(pi: { on: (ev: string, h: (ev: any, ctx: any
   let chain: Promise<unknown> = Promise.resolve();
   const run = (ctx?: any): Promise<SyncResult> => {
     const next = chain.then(() => syncDefaults(deps)).then((r) => {
-      if (r.notice && ctx?.hasUI) { try { ctx.ui.notify(r.notice.msg, r.notice.level); } catch {} }
+      // ctx may belong to a session that ended while the sync ran: its getters throw, so read it inside the try.
+      if (r.notice) { try { if (ctx?.hasUI) ctx.ui.notify(r.notice.msg, r.notice.level); } catch {} }
       deps.onSynced?.(r);
       return r;
     });
@@ -207,6 +208,8 @@ export function registerDefaultSync(pi: { on: (ev: string, h: (ev: any, ctx: any
     timer = setTimeout(() => { timer = undefined; void run(ctx); }, deps.settleMs ?? SETTLE_MS);
     (timer as any).unref?.();
   };
+  // The settle timer holds the selecting session's ctx: it ends with that session.
+  pi.on("session_shutdown", () => { if (timer) { clearTimeout(timer); timer = undefined; } });
   pi.on("model_select", soon);
   pi.on("thinking_level_select", soon);
   // Not awaited: a turn never waits on Outfitter.

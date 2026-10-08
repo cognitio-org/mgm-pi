@@ -5,6 +5,7 @@ outfitter/packages/api/src/routes/sessions.ts
   s_fe1c4322a69a90::t_36f9264f9d2966 744
 outfitter/packages/api/test/mongo-sessions.test.ts
   s_fe1c4322a69a90::t_a914cee01e76be 92-99,101-105,232-235,238
+  s_fe1c4322a69a90::t_4cd1e84d810dbc 100,236-237
 outfitter/packages/web/src/lib/entry-view.ts
   s_fe1c4322a69a90::t_82993eb8cc5768 41-43,182
 outfitter/docs/protocol.md
@@ -29,11 +30,13 @@ outfitter/packages/web/src/pages/SessionPage.tsx
 outfitter/packages/api/src/store/mongo.ts
   s_fe1c4322a69a90::t_ebe5b1b73ee1a6 74
   s_fe1c4322a69a90::t_ae8f5780c8b138 9,111-115,192-195,200-202,205-206,208,211,218,225,233,1931-1932
+  s_fe1c4322a69a90::t_4db1f621497828 10,196-197,199,203-204,207
 outfitter/packages/web/test/autofix-client.test.ts
   s_fe1c4322a69a90::t_1822853fd8b1a2 24-35
 outfitter/packages/api/src/store/memory.ts
   s_fe1c4322a69a90::t_ae8f5780c8b138 9,170-173,176-177,181-182,184-191,197,202,210
   s_fe1c4322a69a90::t_ebe5b1b73ee1a6 72
+  s_fe1c4322a69a90::t_4db1f621497828 178-179,183
 outfitter/packages/web/src/api/client.ts
   s_fe1c4322a69a90::t_82993eb8cc5768 99-122,177-179,988-991
   s_fe1c4322a69a90::t_ab0f4f3d849751 992-993

@@ -26,6 +26,10 @@ export function applyLaptopMcpGate(agentDir: string | undefined, admitted: reado
     const servers = config.mcpServers;
     if (!servers || typeof servers !== "object") return false;
     const wanted = new Set((admitted ?? []).filter((n) => GATED_MCP_SERVERS.includes(n)));
+    // google_cloud is the toolset that includes the gcloud CLI server: when it is delivered it replaces
+    // the standalone gcloud entry (one sign-in, no duplicate tools). gcloud stays the fallback for a key
+    // without the toolset (id not set yet, an older Outfitter, a device key not yet re-minted).
+    if (wanted.has("google_cloud")) wanted.delete("gcloud");
     let changed = false;
     for (const name of GATED_MCP_SERVERS) {
       const def = servers[name];

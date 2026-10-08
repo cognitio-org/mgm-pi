@@ -40,6 +40,10 @@ fi
 
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+# GB-3 (#539): fail before any gcloud call on a malformed toolset id (config.env; empty is fine).
+if [[ -n "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID:-}" && ! "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}" =~ ^[0-9a-f-]{36}$ ]]; then
+  deploy_fail "OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID must be empty or a toolset UUID (got '${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}')"
+fi
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
 if [[ "${ROLE}" == "web" ]]; then

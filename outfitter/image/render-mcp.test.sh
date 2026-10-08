@@ -55,6 +55,9 @@ node -e '
   const bad = Object.entries(c.mcpServers).filter(([, d]) => d && d.auth === "oauth").map(([n]) => n);
   if (bad.length) { console.error("client OAuth left in: " + bad); process.exit(1); }
   if (!c.mcpServers.google_cloud || c.mcpServers.google_cloud.disabled !== true) { console.error("google_cloud must be kept and disabled in the image"); process.exit(1); }
+  for (const n of ["gcloud", "google_cloud"]) {
+    if (!c.mcpServers[n] || c.mcpServers[n].disabled !== true || c.mcpServers[n].approveTools !== true) { console.error(n + " must be kept, disabled, with approveTools"); process.exit(1); }
+  }
   if (c.mcpServers.sentry && c.mcpServers.sentry.disabled) { console.error("sentry must stay enabled"); process.exit(1); }
   if (c.mcpServers.google_cloud.approveTools !== true) { console.error("google_cloud must keep approveTools"); process.exit(1); }
   if (!c.mcpServers.litellm) { console.error("litellm MCP server was dropped"); process.exit(1); }

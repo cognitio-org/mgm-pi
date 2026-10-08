@@ -88,6 +88,7 @@ export async function reconcileOperatorKeys(
   if (!keys || operators.length === 0) return undefined;
   const result = { revoked: 0, failed: 0 };
   try {
+    // Each query is capped at `limit`, so one tick looks at up to twice that; the rest wait for the next tick.
     const live = [
       ...(await store.routerKeys.listActiveDeviceKeysWithMcpServer(GCLOUD_MCP_SERVER, limit)),
       ...(await store.routerKeys.listActiveDeviceKeysWithMcpToolsets(limit)),

@@ -96,3 +96,13 @@ test("GB-4: google_cloud is gated like gcloud: off by default, on when listed, a
   assert.equal(s.google_cloud!.disabled, undefined);
   assert.equal(s.google_cloud!.approveTools, true);
 });
+
+test("rollout: only the requested entry flips; gcloud and google_cloud never both come on", async () => {
+  const both = () => dirWith({ mcpServers: { gcloud: { url: "https://router.test/gcloud/mcp", disabled: true }, google_cloud: { url: "https://router.test/google_cloud/mcp", disabled: true } } });
+  let dir = await both();
+  assert.deepEqual(await applyMcpGate(dir, ["gcloud"]), { enabled: ["gcloud"], disabled: ["google_cloud"] });
+  assert.equal((await servers(dir)).google_cloud!.disabled, true);
+  dir = await both();
+  assert.deepEqual(await applyMcpGate(dir, ["google_cloud"]), { enabled: ["google_cloud"], disabled: ["gcloud"] });
+  assert.equal((await servers(dir)).gcloud!.disabled, true);
+});

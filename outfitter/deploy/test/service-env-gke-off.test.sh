@@ -99,7 +99,7 @@ if [[ -z "${DEPLOY_CALL}" ]]; then
   echo "FAIL: no 'gcloud run deploy outfitter-api ...' call was recorded"
   echo "${OUT}" | sed 's/^/    /'
   fails=$((fails + 1))
-echo "${fails} failed"
+  echo "${fails} failed"
   exit 1
 fi
 echo "ok: gcloud run deploy outfitter-api was called"
@@ -212,7 +212,7 @@ else
   fails=$((fails + 1))
 fi
 
-  # GB-3 (#539): the google_cloud toolset id reaches BOTH roles when set (the link role mints the keys);
+# GB-3 (#539): the google_cloud toolset id reaches BOTH roles when set (the link role mints the keys);
 # unset, neither role carries it (the exact web string above proves the web side).
 for ROLE_UNDER_TEST in web link; do
   : >"${GCLOUD_CALLS}"
@@ -226,6 +226,16 @@ for ROLE_UNDER_TEST in web link; do
     fails=$((fails + 1))
   fi
 done
+# A malformed id fails the deploy before any gcloud call (finding: validate the UUID).
+: >"${GCLOUD_CALLS}"
+status=0
+OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=not-a-uuid ./service.sh link 2>&1)" || status=$?
+if [[ ${status} -ne 0 && "${OUT}" == *"OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID"* ]] && ! grep -q '^run deploy' "${GCLOUD_CALLS}"; then
+  echo "ok: a malformed toolset id fails the deploy"
+else
+  echo "FAIL: a malformed toolset id should fail service.sh (exit ${status})"
+  fails=$((fails + 1))
+fi
 if [[ "${LINK_ENV}" != *"GOOGLE_CLOUD_TOOLSET"* ]]; then
   echo "ok: no toolset id on link when unset"
 else

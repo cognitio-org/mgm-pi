@@ -11,7 +11,9 @@ import { applyLaptopMcpGate } from "../.pi/extensions/_shared/mcp-gate.ts";
 const root = new URL("..", import.meta.url).pathname;
 const shipped = JSON.parse(readFileSync(`${root}.pi/mcp.json`, "utf8"));
 
-test("the shipped gcloud entry is disabled and asks before every call", () => {
+test("both shipped entries (gcloud, google_cloud) are disabled and ask before every call", () => {
+  assert.equal(shipped.mcpServers.gcloud.disabled, true);
+  assert.equal(shipped.mcpServers.gcloud.approveTools, true);
   assert.equal(shipped.mcpServers.google_cloud.disabled, true);
   assert.equal(shipped.mcpServers.google_cloud.approveTools, true);
 });
@@ -23,6 +25,7 @@ test("Claude children never get gcloud, nor any disabled server", () => {
     on: { url: "https://y.test/mcp" },
   });
   assert.deepEqual(Object.keys(out), ["on"]);
+  assert.equal("gcloud" in claudeMcpServers(shipped.mcpServers), false);
   assert.equal("google_cloud" in claudeMcpServers(shipped.mcpServers), false);
   assert.equal("google_cloud" in claudeMcpServers({ google_cloud: { url: "https://router.kernal.one/google_cloud/mcp" } }), false, "enabled or not");
   // Even enabled (an operator's gate switched it on), the exclusion holds.
@@ -36,6 +39,7 @@ function agentDir(): string {
   writeFileSync(join(dir, "mcp.json"), JSON.stringify(shipped));
   return dir;
 }
+const entryOf = (dir: string, name: string) => JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers[name];
 const gcloudOf = (dir: string) => JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.google_cloud;
 
 test("a key that lists google_cloud switches it on; nothing else changes; no temp files are left", () => {
@@ -47,6 +51,27 @@ test("a key that lists google_cloud switches it on; nothing else changes; no tem
   assert.deepEqual(after.mcpServers.sentry, shipped.mcpServers.sentry);
   assert.deepEqual(readdirSync(dir), ["mcp.json"]);
   assert.equal(applyLaptopMcpGate(dir, ["google_cloud"]), false, "already on: no rewrite");
+});
+
+test("rollout: a key delivering only gcloud turns on gcloud, not google_cloud", () => {
+  const dir = agentDir();
+  assert.equal(applyLaptopMcpGate(dir, ["ce_knowledge_base", "gcloud"]), true);
+  assert.equal(entryOf(dir, "gcloud").disabled, undefined);
+  assert.equal(entryOf(dir, "gcloud").approveTools, true);
+  assert.equal(entryOf(dir, "google_cloud").disabled, true);
+});
+
+test("a key delivering google_cloud (with gcloud) turns on google_cloud and leaves gcloud off", () => {
+  const dir = agentDir();
+  assert.equal(applyLaptopMcpGate(dir, ["gcloud", "google_cloud"]), true);
+  assert.equal(entryOf(dir, "google_cloud").disabled, undefined);
+  assert.equal(entryOf(dir, "gcloud").disabled, true);
+  // A device that was on gcloud moves to google_cloud once its key is re-minted with the toolset.
+  const other = agentDir();
+  applyLaptopMcpGate(other, ["gcloud"]);
+  applyLaptopMcpGate(other, ["gcloud", "google_cloud"]);
+  assert.equal(entryOf(other, "gcloud").disabled, true);
+  assert.equal(entryOf(other, "google_cloud").disabled, undefined);
 });
 
 test("a non-operator key, an older Outfitter, or no key leaves google_cloud off; an ex-operator's is switched off again", () => {

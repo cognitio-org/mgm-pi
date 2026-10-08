@@ -88,8 +88,9 @@ Decisions (confirmed with the owner):
 ## Changes since the plan (GB-3/GB-4: the `google_cloud` toolset, #539/#540, epic #544)
 - **One toolset, one sign-in.** The router serves `gcloud` plus Cloud Run, Logging, Monitoring and
   Firestore product servers as the toolset `google_cloud` at `/google_cloud/mcp`. `kernal/.pi/mcp.json`
-  now ships one `google_cloud` entry (disabled, `approveTools`) in place of `gcloud`; sign in once with
-  `/mcp-auth google_cloud`. Tools are named `<server>-<tool>`. The `gcloud-mcp` skill says when to use a
+  ships a `google_cloud` entry (disabled, `approveTools`) next to `gcloud`, which stays as the fallback
+  for a key without the toolset (id unset, an older Outfitter, a device key not yet re-minted).
+  The gates prefer `google_cloud` and then leave `gcloud` off; sign in once with `/mcp-auth google_cloud`. Tools are named `<server>-<tool>`. The `gcloud-mcp` skill says when to use a
   product tool and when `run_gcloud_command`.
 - **Grant by id.** The router answers 403 on a toolset path unless the key lists the toolset's id in
   `object_permission.mcp_toolsets`. Inside toolset scope the toolset's servers replace the key's
@@ -106,7 +107,7 @@ Decisions (confirmed with the owner):
   (a test compares the four lists). A Drive's `run.spec.mcp.enable` is `["google_cloud"]` when the
   toolset is granted, else `["gcloud"]` (an image whose `mcp.json` has no such entry ignores it).
 - **Rollout:** set the id from the GB-2 script's output before the Outfitter release; operators re-login
-  (`kernal login`) so the device key is re-minted with the toolset. Claude-subscription children exclude
+  (`kernal login`, after the id is set) so the device key is re-minted with the toolset. Claude-subscription children exclude
   `google_cloud` (`EXCLUDED_MCP`).
 
 ## gcloud MCP approval cards (GA-4, #494)

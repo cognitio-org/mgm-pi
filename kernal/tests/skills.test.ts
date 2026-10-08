@@ -29,7 +29,9 @@ test("GA-3 (#493): the gcloud skill carries the server's usage rules", () => {
 test("GB-4 (#540): mcp.json routes the google_cloud toolset through the router like sentry, lazily, replacing gcloud", () => {
   const { mcpServers } = JSON.parse(readFileSync(`${root}.pi/mcp.json`, "utf8"));
   const { sentry, google_cloud: gcloud } = mcpServers;
-  assert.equal(mcpServers.gcloud, undefined, "one entry, one sign-in");
+  assert.equal(mcpServers.gcloud.url, "https://router.kernal.one/gcloud/mcp", "gcloud stays as the fallback until the toolset is delivered");
+  assert.equal(mcpServers.gcloud.disabled, true);
+  assert.equal(mcpServers.gcloud.approveTools, true);
   assert.equal(gcloud.disabled, true);
   assert.equal(gcloud.approveTools, true);
   assert.equal(gcloud.url, "https://router.kernal.one/google_cloud/mcp");

@@ -12,6 +12,10 @@ Don't fall back to a local `gcloud` in a Drive. A missing or expired grant is a 
 bug: on a laptop run `/mcp-auth google_cloud` (once covers every tool below); in a Drive tell the
 person to connect Google under Connections in the web app.
 
+If only the older `gcloud` entry is listed (`mcp({ server: "gcloud" })`; the toolset isn't delivered to
+this key yet), use `run_gcloud_command` there and say that the product tools need `kernal login` after
+the operator's key is re-minted with the toolset.
+
 ## Product tools first, the CLI for the rest
 
 Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<tool>`,

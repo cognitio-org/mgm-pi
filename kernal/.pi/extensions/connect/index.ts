@@ -550,7 +550,7 @@ export default async function (pi: ExtensionAPI) {
         invalidate() {},
       }), { placement: "aboveEditor" });
       if (panelTimer) clearTimeout(panelTimer);
-      panelTimer = setTimeout(() => ctx.ui.setWidget("budget", undefined), 60_000);
+      panelTimer = setTimeout(() => { try { ctx.ui.setWidget("budget", undefined); } catch { /* session replaced */ } }, 60_000);
       budgetStatus(ctx);
     },
   });
@@ -562,7 +562,11 @@ export default async function (pi: ExtensionAPI) {
   };
   let hostCtx: { ui: { setStatus(key: string, text: string | undefined): void } } | undefined;
   let hostWatch: ReturnType<typeof setInterval> | undefined;
-  const refreshLocalHost = () => hostCtx?.ui.setStatus("local-host", sharingNow());
+  // A footer refresh must never take pi down: after /new, /resume, /fork or /reload the old ctx is
+  // stale and every ui call throws. session_shutdown below stops the timers first; this is the net.
+  const refreshLocalHost = () => {
+    try { hostCtx?.ui.setStatus("local-host", sharingNow()); } catch { hostCtx = undefined; }
+  };
   pi.on("session_start", async (_ev, ctx) => {
     // pi answers no RPC command until every session_start handler has returned, and this lookup only
     // feeds the footer, so a sandbox fills it in behind the first prompt instead of ahead of it.
@@ -577,6 +581,13 @@ export default async function (pi: ExtensionAPI) {
       hostWatch = setInterval(refreshLocalHost, 15_000);
       hostWatch.unref?.();
     }
+  });
+  // Timers that hold a session's ctx end with that session: pi fires session_shutdown before /new,
+  // /resume, /fork, /reload and quit, and a captured ctx throws once the session is replaced.
+  pi.on("session_shutdown", async () => {
+    if (hostWatch) { clearInterval(hostWatch); hostWatch = undefined; }
+    hostCtx = undefined;
+    if (panelTimer) { clearTimeout(panelTimer); panelTimer = undefined; }
   });
   pi.on("model_select", async (ev: any, ctx) => {
     budgetStatus(ctx);

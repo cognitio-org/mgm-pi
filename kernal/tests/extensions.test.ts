@@ -1,5 +1,5 @@
 /** Drives the real extension entry points through a fake pi/ctx (see harness.ts). */
-import { test, describe, beforeEach } from "node:test";
+import { test, describe, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -494,6 +494,50 @@ describe("connect extension", async () => {
       delete process.env.KERNAL_AUTH_BACKEND;
       delete (globalThis as any)[Symbol.for("kernal.outfitterCredentials")];
       rmSync(join(tmp, ".kernal"), { recursive: true, force: true });
+    }
+  });
+
+  // pi crashed on /new: the 15 s Local Host footer timer called setStatus on the replaced session's
+  // ctx, which throws "This extension ctx is stale after session replacement".
+  test("timers holding a session's ctx stop at session_shutdown, and a stale ctx never takes pi down", async () => {
+    const restore = stubFetch({});
+    mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+    try {
+      const staleCtx = () => {
+        const ctx = makeCtx({ hasUI: true }) as any;
+        const state = { stale: false, localHost: 0 };
+        const { setStatus, setWidget } = ctx.ui;
+        const guard = (fn: (...a: any[]) => void) => (...a: any[]) => {
+          if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+          if (a[0] === "local-host") state.localHost++;
+          fn(...a);
+        };
+        ctx.ui.setStatus = guard(setStatus);
+        ctx.ui.setWidget = guard(setWidget);
+        return { ctx, state };
+      };
+
+      // /new: session_shutdown (reason "new") first, then the old ctx goes stale.
+      const p2 = makePi(); await mod.default(p2 as any);
+      const a = staleCtx();
+      await p2.emit("session_start", {}, a.ctx);
+      const seen = a.state.localHost;
+      assert.ok(seen >= 1, "the footer was filled in at start");
+      await p2.emit("session_shutdown", { reason: "new" }, a.ctx);
+      a.state.stale = true;
+      mock.timers.tick(60_000);
+      assert.equal(a.state.localHost, seen, "no refresh after the session ended");
+
+      // Belt and braces: even if a tick lands on a stale ctx before shutdown, nothing throws.
+      const p3 = makePi(); await mod.default(p3 as any);
+      const b = staleCtx();
+      await p3.emit("session_start", {}, b.ctx);
+      b.state.stale = true;
+      assert.doesNotThrow(() => mock.timers.tick(60_000));
+      await p3.emit("session_shutdown", { reason: "quit" }, b.ctx);
+    } finally {
+      mock.timers.reset();
+      restore();
     }
   });
 });

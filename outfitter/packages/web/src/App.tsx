@@ -47,6 +47,8 @@ const DeviceApprovePage = lazyRoute(() => import("./pages/DeviceApprovePage.tsx"
 const AccountPage = lazyRoute(() => import("./pages/AccountPage.tsx").then((m) => ({ default: m.AccountPage })));
 // docs/specs/subscriptions.md §4. Beside Account, not operator-only.
 const SubscriptionsPage = lazyRoute(() => import("./pages/SubscriptionsPage.tsx").then((m) => ({ default: m.SubscriptionsPage })));
+// MO-5 (docs/specs/mcp-connections.md §4). Beside Account, for everyone.
+const ConnectionsPage = lazyRoute(() => import("./pages/ConnectionsPage.tsx").then((m) => ({ default: m.ConnectionsPage })));
 const LocalModelsPage = lazyRoute(() => import("./pages/LocalModelsPage.tsx").then((m) => ({ default: m.LocalModelsPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
@@ -244,6 +246,7 @@ export function App() {
             <Route path="/devices" element={<DevicesPage />} />
             <Route path="/device" element={<DeviceApprovePage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
             <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}

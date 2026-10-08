@@ -9,7 +9,11 @@ import {
   BASE_MCP_SERVERS,
   GATED_MCP_SERVERS,
   GCLOUD_MCP_SERVER,
+  deliveredMcpServers,
   deviceKeyMcpServers,
+  deviceKeyMcpToolsets,
+  mcpEnableList,
+  runKeyMcpToolsets,
   gcloudRun,
   mcpEnableFor,
   reconcileOperatorKeys,
@@ -95,6 +99,73 @@ describe("run keys", () => {
 
   test("any other run's key carries no MCP list", async () => {
     for (const flag of [false, undefined]) assert.ok(!("object_permission" in (await mint(flag))));
+  });
+});
+
+describe("GB-3 google_cloud toolset", () => {
+  const TOOLSET = "0b9f6c2e-1111-4222-8333-444455556666";
+  const ENTRY = "google_cloud";
+  const OP_CONFIG = { litellmBaseUrl: CONFIG.litellmBaseUrl, operators: OPERATORS, googleCloudToolsetId: TOOLSET };
+
+  test("helpers: toolset only for operators and gcloud runs, only when configured", () => {
+    assert.deepEqual(deviceKeyMcpToolsets(OPERATOR, OPERATORS, TOOLSET), [TOOLSET]);
+    assert.equal(deviceKeyMcpToolsets(PERSON, OPERATORS, TOOLSET), undefined);
+    assert.equal(deviceKeyMcpToolsets(OPERATOR, OPERATORS, ""), undefined);
+    assert.equal(deviceKeyMcpToolsets(OPERATOR, OPERATORS, undefined), undefined);
+    assert.deepEqual(runKeyMcpToolsets(true, ` ${TOOLSET} `), [TOOLSET]);
+    assert.equal(runKeyMcpToolsets(false, TOOLSET), undefined);
+    assert.deepEqual(mcpEnableList([TOOLSET]), [ENTRY]);
+    assert.deepEqual(mcpEnableList(undefined), [GCLOUD_MCP_SERVER], "no toolset: the legacy entry name");
+    assert.deepEqual(deliveredMcpServers(WITH_GCLOUD, [TOOLSET]), [...WITH_GCLOUD, ENTRY]);
+    assert.deepEqual(deliveredMcpServers(WITH_GCLOUD, undefined), WITH_GCLOUD);
+    assert.ok(GATED_MCP_SERVERS.includes(ENTRY));
+  });
+
+  test("an operator device key lists the toolset next to the servers; the delivery names google_cloud; the record stores the grant", async () => {
+    const fake = new FakeLitellm();
+    const store = new MemoryStore();
+    const keys = createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
+    const delivered = await mintDeviceRouterKey(keys, device(OPERATOR), OP_CONFIG, routerKeyLimits(defaultFleetSettings()).device);
+    assert.deepEqual(fake.callsTo("/key/generate")[0]!.body.object_permission, { mcp_servers: WITH_GCLOUD, mcp_toolsets: [TOOLSET] });
+    assert.deepEqual(delivered.mcpServers, [...WITH_GCLOUD, ENTRY]);
+    const record = await store.routerKeys.findByAlias("kernal-device-dev_aaaabbbbccccdddd");
+    assert.deepEqual(record?.mcpServers, WITH_GCLOUD);
+    assert.deepEqual(record?.mcpToolsets, [TOOLSET]);
+  });
+
+  test("a non-operator's key never gets the toolset, nor does an operator's without a configured id", async () => {
+    for (const [email, config] of [[PERSON, OP_CONFIG], [OPERATOR, { ...OP_CONFIG, googleCloudToolsetId: "" }]] as const) {
+      const fake = new FakeLitellm();
+      const keys = createLitellmKeys(CONFIG, new MemoryStore(), { fetch: fake.fetch })!;
+      const delivered = await mintDeviceRouterKey(keys, device(email), config, routerKeyLimits(defaultFleetSettings()).device);
+      const body = fake.callsTo("/key/generate")[0]!.body;
+      assert.ok(!JSON.stringify(body).includes("mcp_toolsets"));
+      assert.ok(!(delivered.mcpServers ?? []).includes(ENTRY));
+    }
+  });
+
+  test("a gcloud run's key lists the toolset; any other run's key does not", async () => {
+    for (const [gcloud, id] of [[true, TOOLSET], [true, ""], [false, TOOLSET]] as const) {
+      const fake = new FakeLitellm();
+      const store = new MemoryStore();
+      const keys = createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
+      const runKeys = new RunKeys({ keys, store, config: { runKeyFallback: false }, limits: async () => routerKeyLimits(defaultFleetSettings()) });
+      await runKeys.keyForRun({ run: { id: "r1", state: "provisioning" }, session: { id: "s1", ownerEmail: OPERATOR }, specSent: "no", sharedKey: "sk-shared", a2a: false, gcloud, googleCloudToolsetId: id });
+      const op = fake.callsTo("/key/generate")[0]!.body.object_permission;
+      if (gcloud && id) assert.deepEqual(op, { mcp_servers: WITH_GCLOUD, mcp_toolsets: [TOOLSET] });
+      else if (gcloud) assert.deepEqual(op, { mcp_servers: WITH_GCLOUD });
+      else assert.equal(op, undefined);
+    }
+  });
+
+  test("reconcileOperatorKeys revokes a former operator's toolset key even without the gcloud server on its record", async () => {
+    const fake = new FakeLitellm();
+    const store = new MemoryStore();
+    const keys = createLitellmKeys(CONFIG, store, { fetch: fake.fetch })!;
+    await keys.ensureLitellmUser({ userId: "u_x", email: "former@example.com" });
+    await keys.mintDeviceKey({ userId: "u_x", email: "former@example.com", deviceId: "dev_toolsetonly0000", deviceName: "x", mcpToolsets: [TOOLSET] });
+    assert.deepEqual(await reconcileOperatorKeys(keys, store, OPERATORS), { revoked: 1, failed: 0 });
+    assert.ok((await store.routerKeys.findByAlias("kernal-device-dev_toolsetonly0000"))?.deletedAt);
   });
 });
 

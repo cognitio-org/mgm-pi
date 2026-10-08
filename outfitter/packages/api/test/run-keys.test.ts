@@ -258,6 +258,27 @@ describe("run.spec over the agent socket", () => {
     }
   });
 
+  test("GB-3: with a toolset id configured, an operator run's key carries it and run.spec enables google_cloud", async () => {
+    const TOOLSET = "0b9f6c2e-1111-4222-8333-444455556666";
+    const { app: a, fake } = await app({ env: { OUTFITTER_OPERATORS: OWNER, OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID: TOOLSET } });
+    try {
+      await seedGuru(a.store, { id: "tape-x", adminTools: "operator" });
+      const { session, runId, runToken } = await makeRunningSession(a, { guruId: "tape-x", ownerEmail: OWNER });
+      const agent = await openAgentSocket(a, runId);
+      sendHello(agent, runId, session.id, runToken);
+      const spec = await agent.nextMessage();
+      const [gen] = fake.callsTo("/key/generate");
+      assert.deepEqual(spec.mcp, { enable: ["google_cloud"] });
+      const op = gen!.body.object_permission as { mcp_servers: string[]; mcp_toolsets: string[] };
+      assert.ok(op.mcp_servers.includes("gcloud"));
+      assert.deepEqual(op.mcp_toolsets, [TOOLSET]);
+      agent.send({ t: "bye", reason: "idle" });
+      await agent.nextClose();
+    } finally {
+      await close(a);
+    }
+  });
+
   test("GA-2/GA-3: gcloud reaches the run key and run.spec only for an operator tape with an operator owner", async () => {
     const cases: Array<{ name: string; adminTools: "operator" | "manage"; owner: string; gcloud: boolean }> = [
       { name: "operator tape, operator owner", adminTools: "operator", owner: OWNER, gcloud: true },

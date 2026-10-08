@@ -37,7 +37,7 @@ import { metrics } from "../sentry.ts";
 
 /** A Dongle (an `outf_` token: viaToken without a device) never reads or writes keys (§3.5, decision
  * 12); a person under IAP or a signed-in Kernal may. */
-function refuseDongle(req: FastifyRequest, reply: FastifyReply): boolean {
+export function refuseDongle(req: FastifyRequest, reply: FastifyReply): boolean {
   if (req.identity?.viaToken && !req.identity.deviceId) {
     reply.code(403).send({ error: "device_login_required" });
     return true;

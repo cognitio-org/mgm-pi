@@ -912,6 +912,14 @@ export function SessionPage() {
                     </button>
                   </p>
                 )}
+                {session?.connectionNotice && (
+                  <p className="dock-note is-warn connection-note" role="status">
+                    <span>{session.connectionNotice.text}</span>
+                    <Link className="btn btn-small" to={session.connectionNotice.href}>
+                      {vocabulary.connection.many}
+                    </Link>
+                  </p>
+                )}
                 {archived && (
                   <p className="dock-note archived-note" role="status">
                     <span>This floppy is archived: it can't run or take messages until it's restored.</span>

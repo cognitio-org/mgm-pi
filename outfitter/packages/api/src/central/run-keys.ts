@@ -24,7 +24,7 @@ import type { FleetSettings } from "../fleet-settings.ts";
 import type { RouterKey } from "../store/keys.ts";
 import type { Run, Session, Store } from "../store/types.ts";
 import { runKeyAlias, type LitellmKeys, type RouterKeyLimitsSource } from "./litellm-keys.ts";
-import { runKeyMcpServers } from "./gcloud-mcp.ts";
+import { runKeyMcpServers, runKeyMcpToolsets } from "./gcloud-mcp.ts";
 import { resolveConfig } from "./settings-resolver.ts";
 import type { SettingValue, ValueSource } from "./settings-schema.ts";
 import { userIdFor } from "./user-id.ts";
@@ -78,6 +78,8 @@ export interface RunKeyRequest {
   /** GA-2: the tape has `adminTools: operator` and the owner is an operator (gcloud-mcp.ts gcloudRun),
    * so the key is admitted to the router's `gcloud` MCP server. Absent means no. */
   gcloud?: boolean;
+  /** GB-3: the router `google_cloud` toolset id to grant with `gcloud` (empty or absent: none). */
+  googleCloudToolsetId?: string;
 }
 
 export interface RunKeysOptions {
@@ -159,6 +161,7 @@ export class RunKeys {
         durationSeconds: RUN_KEY_DURATION_SECONDS,
         mint,
         mcpServers: runKeyMcpServers(req.gcloud === true),
+        mcpToolsets: runKeyMcpToolsets(req.gcloud === true, req.googleCloudToolsetId),
       });
       return { key: minted.key, source: "run", alias: minted.alias };
     } catch (err) {

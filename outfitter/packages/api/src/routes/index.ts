@@ -24,6 +24,7 @@ import { registerLaptopApprovalRoutes } from "./laptop-approvals.ts";
 import { registerDeviceRoutes } from "./device.ts";
 import { registerConfigRoutes } from "./config.ts";
 import { registerKeyRoutes } from "./keys.ts";
+import { registerConnectionRoutes } from "./connections.ts";
 import { registerLocalHostRoutes } from "./local-hosts.ts";
 
 export type { RouteContext } from "./context.ts";
@@ -55,6 +56,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: RouteContext): P
     await registerAdminRoutes(app, ctx);
     // E9.9: the approval widget's list and answer, for a person under IAP (never on link).
     await registerLaptopApprovalRoutes(app, ctx);
+    // MO-5 (#487, docs/specs/mcp-connections.md): the person's OAuth MCP grants.
+    await registerConnectionRoutes(app, ctx);
     // #424: the shell allows browser profiling while the fleet settings ask for web profiles.
     await registerStaticRoutes(app, { profiling: () => profilingWanted(ctx.fleetSettings.peek()?.telemetry.sentry) });
   } else {

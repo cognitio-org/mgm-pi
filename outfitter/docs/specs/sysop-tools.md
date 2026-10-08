@@ -85,6 +85,31 @@ Decisions (confirmed with the owner):
   is tracked; `/mcp enable gcloud` there). Claude-subscription children never get gcloud
   (`EXCLUDED_MCP`), nor any `disabled` server. Usage rules are in the `gcloud-mcp` skill.
 
+## Changes since the plan (GB-3/GB-4: the `google_cloud` toolset, #539/#540, epic #544)
+- **One toolset, one sign-in.** The router serves `gcloud` plus Cloud Run, Logging, Monitoring and
+  Firestore product servers as the toolset `google_cloud` at `/google_cloud/mcp`. `kernal/.pi/mcp.json`
+  ships a `google_cloud` entry (disabled, `approveTools`) next to `gcloud`, which stays as the fallback
+  for a key without the toolset (id unset, an older Outfitter, a device key not yet re-minted).
+  The gates prefer `google_cloud` and then leave `gcloud` off; sign in once with `/mcp-auth google_cloud`. Tools are named `<server>-<tool>`. The `gcloud-mcp` skill says when to use a
+  product tool and when `run_gcloud_command`.
+- **Grant by id.** The router answers 403 on a toolset path unless the key lists the toolset's id in
+  `object_permission.mcp_toolsets`. Inside toolset scope the toolset's servers replace the key's
+  `mcp_servers`, so the secondary servers are not listed on the key; `gcloud` and the base servers stay
+  in `mcp_servers` as before. The id (a UUID) is `OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID` (config.env, both
+  roles in `service.sh`, only when set). Empty grants nothing and changes no key. No new admin route:
+  `/key/generate` already takes `object_permission`, so no admin-key rotation.
+- **Who:** the same two tests as `gcloud`: operator device keys, and run keys of `adminTools: operator`
+  tapes with an operator owner. `RouterKey.mcpToolsets` records the grant, and `reconcileOperatorKeys`
+  revokes a former operator's key whether it carries `gcloud`, a toolset, or both.
+- **Client-side entry name.** `routerKey.mcpServers` delivered to Kernal gets `google_cloud` appended when
+  the toolset was granted. It is Kernal's entry name, not a router server name (never sent to the
+  router). Kernal's gate, agentd's gate and `render-mcp.sh` gate both `gcloud` and `google_cloud`
+  (a test compares the four lists). A Drive's `run.spec.mcp.enable` is `["google_cloud"]` when the
+  toolset is granted, else `["gcloud"]` (an image whose `mcp.json` has no such entry ignores it).
+- **Rollout:** set the id from the GB-2 script's output before the Outfitter release; operators re-login
+  (`kernal login`, after the id is set) so the device key is re-minted with the toolset. Claude-subscription children exclude
+  `google_cloud` (`EXCLUDED_MCP`).
+
 ## gcloud MCP approval cards (GA-4, #494)
 - **Not an admin tool, but the same approval flow.** Google's remote gcloud MCP server (`gcloud`) is
   reached through the router, so its calls never pass the API. Kernal's `gcloud-approval` extension

@@ -16,6 +16,8 @@ import { SessionArchivedError, SessionFormattedError } from "../runs.ts";
 import { createSession, postUserMail } from "../session-create.ts";
 import { isModelId, MODEL_ID_MAX, switchSessionModel } from "../session-model.ts";
 import type { Identity } from "../auth.ts";
+import { GCLOUD_MCP_SERVER, gcloudRun } from "../central/gcloud-mcp.ts";
+import { normalizeEmail } from "../central/user-id.ts";
 import { lastPush, sessionForWire } from "../checkpoint-wire.ts";
 import { loadSessionChanges } from "../session-changes.ts";
 import { AUTOFIX_MAX_PER_OWNER, autofixView } from "../autofix.ts";
@@ -253,6 +255,8 @@ export async function registerTeleportRoutes(app: FastifyInstance, ctx: RouteCon
       lastPush: lastPush(session.checkpoint),
       // #172: a hold for a run failure (a GitHub credential problem) says what's wrong instead.
       ...(heldMail > 0 ? { mailNotice: mailHeldNotice(await ctx.store.mail.heldDetail(session.id)) } : {}),
+      // MO-6 (#488, docs/specs/mcp-connections.md §5): an OAuth MCP server this Drive uses isn't connected.
+      ...(await sessionConnectionNotice(ctx, session, guru, req.identity)),
       github: {
         repo: session.repo ?? null,
         branch: session.branch ?? null,
@@ -727,4 +731,19 @@ export async function getSessionOr404(
     return undefined;
   }
   return session;
+}
+
+/** MO-6: shown to the session's owner only, since grants are personal. A router failure or a slow
+ * answer means no notice, never an error or a slow page, and nothing here touches the run. */
+async function sessionConnectionNotice(
+  ctx: RouteContext,
+  session: Pick<Session, "ownerEmail" | "origin" | "a2aTokenId">,
+  guru: Parameters<typeof gcloudRun>[0],
+  identity: Identity | undefined,
+): Promise<{ connectionNotice?: { text: string; href: "/connections" } }> {
+  const owner = session.ownerEmail;
+  if (!ctx.mcpConnections || !owner || !identity || identity.viaToken || normalizeEmail(identity.email) !== normalizeEmail(owner)) return {};
+  const used = ["sentry", ...(gcloudRun(guru, owner, ctx.config.operators, isA2ASession(session)) ? [GCLOUD_MCP_SERVER] : [])];
+  const notice = await ctx.mcpConnections.noticeFor(owner, used);
+  return notice ? { connectionNotice: notice } : {};
 }

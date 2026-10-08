@@ -1,0 +1,48 @@
+kernal/docs/architecture.md
+  s_02bad6fff96068::t_2315b284ff5e6e 215
+outfitter/packages/api/src/central/gcloud-mcp.ts
+  s_02bad6fff96068::t_7b350abcefcd78 91
+outfitter/packages/agentd/test/mcp-gate.test.ts
+  s_02bad6fff96068::t_fc36daf09e33d4 99-108
+outfitter/deploy/service.sh
+  s_02bad6fff96068::t_50530889e37728 43-46
+outfitter/packages/api/test/config.test.ts
+  s_02bad6fff96068::t_7b350abcefcd78 77-78
+kernal/.pi/mcp.json
+  s_02bad6fff96068::t_b3829f2ccc5cad 20-32
+kernal/tests/skills.test.ts
+  s_02bad6fff96068::t_fc36daf09e33d4 32-34
+kernal/skills/gcloud-mcp/SKILL.md
+  s_02bad6fff96068::t_2315b284ff5e6e 15-17
+  s_02bad6fff96068::t_b22f2a9d1612d3 14
+kernal/tests/gcloud-gate.test.ts
+  s_02bad6fff96068::t_fc36daf09e33d4 14-16,28,42,56-75
+  s_02bad6fff96068::t_2d976550ed0063 76
+outfitter/docs/specs/sysop-tools.md
+  s_02bad6fff96068::t_2315b284ff5e6e 91-93,110
+outfitter/image/render-mcp.test.sh
+  s_02bad6fff96068::t_fc36daf09e33d4 58-60
+outfitter/deploy/test/service-env-gke-off.test.sh
+  s_02bad6fff96068::t_50530889e37728 233,236
+  s_02bad6fff96068::t_7b350abcefcd78 102,215,229-232,234-235,237-238
+kernal/.pi/extensions/_shared/mcp-gate.ts
+  s_02bad6fff96068::t_b3829f2ccc5cad 29-32
+outfitter/packages/api/src/config.ts
+  s_02bad6fff96068::t_7b350abcefcd78 445-454,577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "48a330e5f29cacd6c63671d2b3af6c0757efa21b",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

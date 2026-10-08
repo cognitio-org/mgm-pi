@@ -15,6 +15,8 @@ import { classifyCommand } from "./classify.ts";
 import type { AdminTransport } from "../outfitter-admin/transport.ts";
 
 export const GCLOUD_SERVER = "gcloud";
+/** The router's combined toolset (GB-5, #541): cloudcli + Cloud Run + Logging + Monitoring + Firestore. */
+export const GOOGLE_CLOUD_SERVER = "google_cloud";
 
 export type Decision = "abstain" | "allow_once" | "deny";
 
@@ -36,41 +38,86 @@ export interface Ways {
   notify?: (message: string) => void;
 }
 
-/** True for the MCP server this hook guards: `gcloud`, or a plugin-prefixed `<plugin>__gcloud`. */
+/** True for an MCP server this hook guards: `gcloud` or `google_cloud`, or a plugin-prefixed `<plugin>__<name>`. */
 export function isGcloudServer(name: string): boolean {
-  return name === GCLOUD_SERVER || name.endsWith(`__${GCLOUD_SERVER}`);
+  for (const server of [GCLOUD_SERVER, GOOGLE_CLOUD_SERVER]) {
+    if (name === server || name.endsWith(`__${server}`)) return true;
+  }
+  return false;
 }
 
 /** The gcloud server's two command tools, whatever the MCP server is called. */
 export const GCLOUD_TOOLS: ReadonlySet<string> = new Set(["run_gcloud_command", "run_bq_command"]);
 
 /**
- * The command tool behind a name, or the name unchanged. The router prefixes every upstream tool
- * with its server (`gcloud-run_gcloud_command`), and a server registered under another name gets
- * another prefix, so the base name is what identifies the tool. Only a prefix that ends in `-`,
- * `_`, `.` or `:` counts, so a lookalike such as `xrun_gcloud_command` stays unknown (and asks).
+ * Google's product tools (Cloud Run, Logging, Monitoring; Firestore below), by the tool's own name.
+ * READ is the static allow-list, taken from `readOnlyHint` in Google's tools/list (2026-10-08): only
+ * these run without asking. Anything else, known or not, asks.
+ */
+export const PRODUCT_READ_TOOLS: ReadonlySet<string> = new Set([
+  // cloudrun
+  "get_service", "list_services",
+  // cloudlogging
+  "list_log_entries", "list_log_names", "get_bucket", "list_buckets", "get_view", "list_views",
+  // cloudmonitoring
+  "list_timeseries", "query_range", "get_alert_policy", "list_alert_policies", "get_alert", "list_alerts",
+  "list_metric_descriptors", "list_dashboards", "get_dashboard",
+]);
+
+/** Product tools whose readOnlyHint is false (Cloud Run deploys). Known so they are gated on any server. */
+export const PRODUCT_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "deploy_service_from_image", "deploy_service_from_archive", "deploy_service_from_file_contents",
+]);
+
+/**
+ * Firestore tool names verified read-only. Empty on purpose: the names were not available when this
+ * was written, so every firestore tool asks until its name is added here after checking Google's
+ * tools/list. (A firestore tool is gated by the server name `google_cloud`.)
+ */
+export const FIRESTORE_READ_TOOLS: ReadonlySet<string> = new Set<string>();
+
+const PRODUCT_READ_ALL: ReadonlySet<string> = new Set([...PRODUCT_READ_TOOLS, ...FIRESTORE_READ_TOOLS]);
+/** Longest first, so a name never matches as the tail of a longer one. */
+const KNOWN_TOOLS: string[] = [...GCLOUD_TOOLS, ...PRODUCT_READ_ALL, ...PRODUCT_WRITE_TOOLS].sort((a, b) => b.length - a.length);
+
+/**
+ * The known tool behind a name, or the name unchanged. The router prefixes every upstream tool with
+ * its server (`gcloud-run_gcloud_command`, `cloudrun-deploy_service_from_image`), and a server
+ * registered under another name gets another prefix, so the base name is what identifies the tool.
+ * Only a prefix that ends in `-`, `_`, `.` or `:` counts, so a lookalike such as `xrun_gcloud_command`
+ * stays unknown (and asks). Tool names themselves contain underscores, so the match is on the known
+ * name as a suffix, not on the first separator.
  */
 export function baseTool(name: string): string {
-  for (const tool of GCLOUD_TOOLS) {
+  for (const tool of KNOWN_TOOLS) {
     if (name === tool) return tool;
     if (name.endsWith(tool) && /[-_.:]$/.test(name.slice(0, -tool.length))) return tool;
   }
   return name;
 }
 
+/** Whether a tool name (any prefix) is one of Google's product tools, read or write. */
+export function isProductTool(name: string): boolean {
+  const base = baseTool(name);
+  return PRODUCT_READ_ALL.has(base) || PRODUCT_WRITE_TOOLS.has(base);
+}
+
 /**
- * Whether this call is ours to judge: the gcloud server by name, or either command tool on any
- * server. A cloned repo's `.mcp.json` can name a server anything and point it at the same router
- * URL, so the tool name counts too.
+ * Whether this call is ours to judge: the gcloud / google_cloud server by name, or any known Google
+ * tool on any server. A cloned repo's `.mcp.json` can name a server anything and point it at the
+ * same router URL, so the tool name counts too.
  */
 export function isGated(call: Call): boolean {
-  return isGcloudServer(call.serverName) || GCLOUD_TOOLS.has(baseTool(call.tool));
+  return isGcloudServer(call.serverName) || GCLOUD_TOOLS.has(baseTool(call.tool)) || isProductTool(call.tool);
 }
 
 /** Whether this call needs an answer from a person before it runs. */
 export function needsApproval(call: Call): boolean {
   if (!isGated(call)) return false;
-  return classifyCommand(baseTool(call.tool), call.args?.command) === "write";
+  const base = baseTool(call.tool);
+  if (GCLOUD_TOOLS.has(base)) return classifyCommand(base, call.args?.command) === "write";
+  // A product tool: only the static read-only list runs unasked; deploys and unknown tools ask.
+  return !PRODUCT_READ_ALL.has(base);
 }
 
 const MAX_SHOWN = 800;
@@ -83,10 +130,30 @@ export function shown(text: unknown, max = MAX_SHOWN): string {
 
 const NOTE_TIMEOUT_MS = 10_000;
 
+const MAX_SUMMARY = 600;
+
+/** `projects/X` found in the argument values (`name`, `parent`, ...), or "". */
+function projectFromArgs(args: Record<string, unknown>): string {
+  for (const value of Object.values(args)) {
+    const m = typeof value === "string" ? /(?:^|\/)projects\/([^/\s]+)/.exec(value) : null;
+    if (m) return `projects/${m[1]}`;
+  }
+  return "";
+}
+
+/** What the card and the audit row get: the base tool name, the project, and the command (or, for a product tool, its arguments as one clipped line). */
 function fields(call: Call): { project: string; command: string; tool: string } {
-  const project = typeof call.args?.project === "string" ? call.args.project : "";
-  const command = typeof call.args?.command === "string" ? call.args.command : "";
-  return { project, command, tool: baseTool(call.tool) };
+  const tool = baseTool(call.tool);
+  const args = call.args && typeof call.args === "object" ? call.args : {};
+  const own = typeof args.project === "string" ? args.project : "";
+  if (GCLOUD_TOOLS.has(tool)) return { project: own, command: typeof args.command === "string" ? args.command : "", tool };
+  let json: string;
+  try {
+    json = JSON.stringify(args) ?? "";
+  } catch {
+    json = "(arguments could not be shown)";
+  }
+  return { project: own || projectFromArgs(args), command: shown(json === "{}" ? "(no arguments)" : json, MAX_SUMMARY), tool };
 }
 
 /** Records a laptop decision in Outfitter's audit log. Never throws and never blocks for long. */
@@ -104,7 +171,7 @@ export async function decide(call: Call, ways: Ways, signal?: AbortSignal): Prom
   // A read is allowed explicitly, so the adapter's own `approveTools` gate (set on the server) is the
   // fallback only when this extension is absent or broken.
   if (!needsApproval(call)) return "allow_once";
-  const { project, command } = fields(call);
+  const { project, command, tool } = fields(call);
 
   if (ways.drive) {
     // The owner's web card is the only yes in a Drive; no socket means no way to ask.
@@ -131,8 +198,10 @@ export async function decide(call: Call, ways: Ways, signal?: AbortSignal): Prom
     return "deny";
   }
   const yes = await ways.confirm(
-    "gcloud: run this command?",
-    `The agent wants Google's gcloud server to run a command that may change something.\n\nProject: ${shown(project || "(none)", 200)}\nCommand: ${shown(command)}\n\nIt acts as you.`,
+    GCLOUD_TOOLS.has(tool) ? "gcloud: run this command?" : `gcloud: run ${shown(tool, 80)}?`,
+    GCLOUD_TOOLS.has(tool)
+      ? `The agent wants Google's gcloud server to run a command that may change something.\n\nProject: ${shown(project || "(none)", 200)}\nCommand: ${shown(command)}\n\nIt acts as you.`
+      : `The agent wants to call the Google Cloud tool ${shown(tool, 80)}, which may change something.\n\nProject: ${shown(project || "(none)", 200)}\nArguments: ${shown(command)}\n\nIt acts as you.`,
     signal,
   );
   await note(ways.transport, call, yes);

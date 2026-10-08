@@ -6,13 +6,15 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { GCLOUD_SERVER } from "./hook.ts";
+import { GCLOUD_SERVER, GOOGLE_CLOUD_SERVER } from "./hook.ts";
 
 /** A server entry that is, or points at, Google's gcloud MCP (through the router or directly). */
 export function looksLikeGcloud(name: string, def: any): boolean {
-  if (name === GCLOUD_SERVER || name.endsWith(`__${GCLOUD_SERVER}`)) return true;
+  for (const server of [GCLOUD_SERVER, GOOGLE_CLOUD_SERVER]) {
+    if (name === server || name.endsWith(`__${server}`)) return true;
+  }
   const url = typeof def?.url === "string" ? def.url : "";
-  return url.includes("/gcloud/mcp") || url.includes("cloudcli.googleapis.com");
+  return url.includes("/gcloud/mcp") || url.includes("/google_cloud/mcp") || url.includes("cloudcli.googleapis.com");
 }
 
 /** One warning per gcloud-looking server in `config` (an mcp.json) that lacks `approveTools: true`. */

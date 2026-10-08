@@ -335,7 +335,7 @@ describe("Google product tools (GB-5, #541)", () => {
   test("every read tool runs unasked when prefixed with its own product, on google_cloud and on a renamed server", async () => {
     for (const [server, tools] of Object.entries(READS)) {
       for (const t of tools) {
-        for (const call of [prod(`${server}-${t}`), prod(`${server}-${t}`, {}, "gcp"), prod(`${server}_${t}`, {}, "whatever")]) {
+        for (const call of [prod(`${server}-${t}`), prod(`${server}-${t}`, {}, "gcp"), prod(`acme__${server}-${t}`, {}, "whatever"), prod(` ${server.toUpperCase()}-${t} `, {}, "gcp")]) {
           assert.equal(isGated(call), true, call.tool);
           assert.equal(needsApproval(call), false, call.tool);
           assert.equal(await decide(call, { drive: false }), "allow_once", call.tool);
@@ -362,21 +362,54 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(sent.args.command, JSON.stringify(args));
   });
 
-  test("an explicit project arg wins; parent is parsed; a long summary is clipped on one line", async () => {
+  const sentArgs = async (call: Call) => {
     const d = transport("drive");
-    await decide(prod("cloudrun-deploy_service_from_file_contents", { project: "p9", parent: "projects/p1/locations/x", files: "a".repeat(5000) }), { drive: true, transport: d.t });
-    const a = d.calls[0].args as { project: string; command: string };
-    assert.equal(a.project, "p9");
-    assert.ok(a.command.length <= 600);
-    assert.ok(a.command.endsWith("…"));
-    assert.ok(!a.command.includes("\n"));
-    const d2 = transport("drive");
-    await decide(prod("cloudrun-deploy_service_from_archive", { parent: "projects/p2/locations/x" }), { drive: true, transport: d2.t });
-    assert.equal((d2.calls[0].args as { project: string }).project, "projects/p2");
-    const d3 = transport("drive");
-    await decide(prod("cloudrun-deploy_service_from_archive", {}), { drive: true, transport: d3.t });
-    assert.equal((d3.calls[0].args as { project: string; command: string }).project, "");
-    assert.equal((d3.calls[0].args as { command: string }).command, "(no arguments)");
+    await decide(call, { drive: true, transport: d.t });
+    return d.calls[0]?.args as { project: string; command: string; tool: string } | undefined;
+  };
+
+  test("project: one id (any source) is shown; none is empty", async () => {
+    assert.equal((await sentArgs(prod("cloudrun-deploy_service_from_archive", { parent: "projects/p2/locations/x" })))!.project, "projects/p2");
+    assert.equal((await sentArgs(prod("cloudrun-deploy_service_from_archive", { project: "p9", parent: "projects/p9/x" })))!.project, "projects/p9");
+    const none = (await sentArgs(prod("cloudrun-deploy_service_from_archive", {})))!;
+    assert.equal(none.project, "");
+    assert.equal(none.command, "(no arguments)");
+  });
+
+  test("project spoof: padding plus a decoy project, a nested decoy, and several ids are all flagged", async () => {
+    const padded = (await sentArgs(prod("cloudrun-deploy_service_from_image", { name: "projects/safe/locations/x/services/web", pad: "a".repeat(2000), more: "projects/evil/x" })));
+    assert.equal(padded, undefined); // clipped: denied, so no card; the flag is covered by the next cases
+    const nested = (await sentArgs(prod("cloudrun-deploy_service_from_image", { name: "projects/safe/services/web", service: { template: { containers: [{ env: [{ value: "projects/evil/y" }] }] } } })))!;
+    assert.match(nested.project, /⚠ arguments name several projects: safe, evil/);
+    const key = (await sentArgs(prod("cloudrun-deploy_service_from_image", { parent: "projects/safe/x", nested: { project: "evil" } })))!;
+    assert.match(key.project, /safe, evil/);
+    assert.equal(needsApproval(prod("cloudrun-deploy_service_from_image", {})), true);
+  });
+
+  test("the summary puts resource fields first", async () => {
+    const a = (await sentArgs(prod("cloudrun-deploy_service_from_image", { zzz: 1, image: "i", name: "projects/p/services/s" })))!;
+    assert.ok(a.command.startsWith('{"name":"projects/p/services/s","image":"i","zzz":1}'));
+  });
+
+  test("a clipped write is denied, not asked; one that fits is asked", async () => {
+    const d = transport("drive");
+    const notes: string[] = [];
+    const long = prod("cloudrun-deploy_service_from_file_contents", { name: "projects/p/services/s", files: "a".repeat(3000) });
+    assert.equal(await decide(long, { drive: true, transport: d.t, notify: (m) => notes.push(m) }), "deny");
+    assert.equal(d.calls.length, 0);
+    assert.match(notes[0], /too long to show/);
+    let asked = 0;
+    assert.equal(await decide(long, { drive: false, confirm: async () => (asked++, true) }), "deny");
+    assert.equal(asked, 0);
+    assert.equal(await decide(prod("firestore-delete_document", { x: "a".repeat(3000) }), { drive: true, transport: d.t }), "deny");
+    assert.equal(d.calls.length, 0);
+    const fit = await sentArgs(prod("cloudrun-deploy_service_from_file_contents", { files: "a".repeat(400) }));
+    assert.ok(fit && !/more characters not shown/.test(fit.command));
+  });
+
+  test("projectsIn finds ids in nested values, arrays and project keys", async () => {
+    const { projectsIn } = await import("../.pi/extensions/gcloud-approval/hook.ts");
+    assert.deepEqual([...projectsIn({ a: ["projects/x/y", { b: "projects/z" }], project: "projects/q" })].sort(), ["q", "x", "z"]);
   });
 
   test("laptop: the confirm names the tool and arguments, and the audit note carries them", async () => {
@@ -437,7 +470,8 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(baseTool("cloudrun-deploy_service_from_image"), "deploy_service_from_image");
     assert.equal(baseTool("cloudmonitoring-list_alert_policies"), "list_alert_policies");
     assert.equal(baseTool("cloudlogging-get_view"), "get_view");
-    assert.equal(baseTool("google_cloud.cloudrun:get_service"), "get_service");
+    assert.equal(baseTool("acme__cloudrun-get_service"), "get_service");
+    assert.equal(baseTool("google_cloud.cloudrun:get_service"), "google_cloud.cloudrun:get_service");
     assert.equal(baseTool("get_service"), "get_service");
     assert.equal(baseTool("cloudlogging-get_service"), "cloudlogging-get_service");
     assert.equal(baseTool("forget_service"), "forget_service");
@@ -451,6 +485,43 @@ describe("Google product tools (GB-5, #541)", () => {
     const d = transport("drive");
     await decide({ ...write, serverName: "google_cloud", tool: "gcloud-run_gcloud_command" }, { drive: true, transport: d.t });
     assert.deepEqual(d.calls[0].args, { project: "projects/p1", command: write.args.command, tool: "run_gcloud_command" });
+  });
+
+  test("over-claiming: the prefix must start the name and use the router's dash", async () => {
+    for (const t of ["x-cloudrun-list_services", "deploy_service_from_image_cloudrun_get_service", "firestore_get_documents", "save_gcloud_notes", "cloudrun_get_service", "my.cloudrun-get_service", "xfirestore-get_document"]) {
+      const call = prod(t, {}, "other");
+      assert.equal(isGated(call), false, t);
+      assert.equal(await decide(call, { drive: false }), "abstain", t);
+    }
+    assert.equal(isGated(prod("acme__firestore-get_document", {}, "other")), true);
+  });
+
+  test("a renamed server at the router's Google URL is claimed; unknown tools there ask", async () => {
+    const call = { serverName: "gcp", tool: "mystery", args: {}, googleServer: true };
+    assert.equal(isGated(call), true);
+    assert.equal(await decide(call, { drive: false }), "deny");
+    assert.equal(await decide({ ...call, tool: "cloudrun-list_services" }, { drive: false }), "allow_once");
+    assert.equal(isGated({ ...call, googleServer: false }), false);
+  });
+
+  test("wiring: server names at /google_cloud/mcp or /gcloud/mcp (any host) are learned at session start", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gc-"));
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: {
+      gcp: { url: "https://example.org/google_cloud/mcp", approveTools: true },
+      gcp2: { url: "https://other.example/gcloud/mcp", approveTools: true },
+      grafana: { url: "https://g.example/mcp" },
+    } }));
+    const pi = makePi();
+    register(pi as any, { ways: () => ({ drive: false }), warn: () => {}, configDirs: () => ({ agentDir: dir }) });
+    await pi.emit("session_start", {}, {});
+    const answer = async (serverName: string, tool: string) => {
+      let handler: any;
+      pi.events.emit(APPROVAL_REQUEST_EVENT, { serverName, originalToolName: tool, args: {}, claim: (h: any) => ((handler = h), true) });
+      return handler ? await handler() : "unclaimed";
+    };
+    assert.equal(await answer("gcp", "whatever_new"), "deny");
+    assert.equal(await answer("gcp2", "cloudrun-list_services"), "allow_once");
+    assert.equal(await answer("grafana", "get_dashboard"), "unclaimed");
   });
 
   test("wiring: the adapter's request for a cloudrun deploy is claimed and denied headless; a read is allowed", async () => {

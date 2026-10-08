@@ -40,7 +40,9 @@ export function gcloudArgs(args: Record<string, unknown>): { project: string; co
   const project = typeof args.project === "string" ? args.project.trim() : "";
   const command = typeof args.command === "string" ? args.command.trim() : "";
   const sent = typeof args.tool === "string" ? args.tool.trim() : "";
-  const tool = (TOOLS as readonly string[]).includes(sent) || Object.hasOwn(PRODUCT_TOOLS, sent) || OTHER_TOOL.test(sent) ? sent : "run_gcloud_command";
+  // No tool: an older Kernal's gcloud command. A name that is not plainly a tool name is refused, not relabelled.
+  if (sent && (!OTHER_TOOL.test(sent) || hasHidden(sent))) return { error: "the tool name is not recognised; not asked" };
+  const tool = sent || "run_gcloud_command";
   if (!command) return { error: "command is required" };
   if (command.length > MAX_COMMAND) return { error: `command is longer than ${MAX_COMMAND} characters` };
   if (project.length > MAX_PROJECT) return { error: "project is too long" };

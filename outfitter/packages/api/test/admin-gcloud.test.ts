@@ -103,14 +103,25 @@ describe("gcloud.run from a Drive", () => {
     assert.match(row.target ?? "", /^deploy_service_from_image projects\/p1 :: /);
   });
 
-  test("gcloudArgs: known and unknown product tools are kept, commands tools unchanged, junk relabelled", () => {
+  test("gcloudArgs: known and unknown product tools are kept, commands tools unchanged, junk refused", () => {
     const base = { project: "p", command: "x" };
     assert.equal((gcloudArgs({ ...base, tool: "run_bq_command" }) as { tool: string }).tool, "run_bq_command");
     assert.equal((gcloudArgs({ ...base, tool: "deploy_service_from_archive" }) as { tool: string }).tool, "deploy_service_from_archive");
     assert.equal((gcloudArgs({ ...base, tool: "create_document" }) as { tool: string }).tool, "create_document");
     assert.equal((gcloudArgs({ ...base }) as { tool: string }).tool, "run_gcloud_command");
-    assert.equal((gcloudArgs({ ...base, tool: "bad tool\n; rm" }) as { tool: string }).tool, "run_gcloud_command");
-    assert.equal((gcloudArgs({ ...base, tool: "x".repeat(200) }) as { tool: string }).tool, "run_gcloud_command");
+    // A tool name that is not plainly a name is refused, never relabelled as a gcloud command.
+    for (const tool of ["bad tool\n; rm", "x".repeat(200), "ok‮name", "a​b", "-lead"]) {
+      assert.deepEqual(gcloudArgs({ ...base, tool }), { error: "the tool name is not recognised; not asked" }, JSON.stringify(tool));
+    }
+  });
+
+  test("a several-projects warning in the project field reaches the card", async () => {
+    const { store, admin } = await fixture();
+    const result = admin.handle("r1", "gcloud.run", { tool: "deploy_service_from_image", project: "⚠ arguments name several projects: safe, evil", command: "{}" });
+    const held = await pending(store);
+    assert.match(held.message, /⚠ arguments name several projects: safe, evil/);
+    await decideApproval(store, "r1", held.id, { email: OWNER }, false);
+    await result;
   });
 
   test("gcloudTitle names the command tools and the product tools", () => {

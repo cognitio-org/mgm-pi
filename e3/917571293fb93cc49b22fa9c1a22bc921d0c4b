@@ -1,0 +1,22 @@
+kernal/tests/gcloud-approval.test.ts
+  s_02bad6fff96068::t_faef5f0c321c14 327,333,427-428
+  s_02bad6fff96068::t_11ea925f4ba070 480-481
+kernal/.pi/extensions/gcloud-approval/hook.ts
+  s_02bad6fff96068::t_faef5f0c321c14 67-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e3917571293fb93cc49b22fa9c1a22bc921d0c4b",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

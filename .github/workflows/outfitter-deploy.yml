@@ -70,6 +70,7 @@ jobs:
           bash deploy/test/heredoc-backticks.test.sh
           bash deploy/test/gcloud-mcp-iam.test.sh
           bash deploy/test/gcloud-mcp-router.test.sh
+          bash deploy/test/google-cloud-mcp.test.sh
 
   deploy:
     needs: test

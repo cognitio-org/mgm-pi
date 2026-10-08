@@ -30,6 +30,9 @@
   are owner-run without `DRY_RUN=1`: the first grants `roles/mcp.toolUser` and writes an IAM deny
   policy; the second reads the router master key and registers the server (`CONFIRM=1`; editing an
   existing one purges every user's grant, `FORCE_PURGE=1`). `DRY_RUN=1` reads no secret.
+- `google-cloud-mcp.sh` (google_cloud toolset, epic #544) is owner-run without `DRY_RUN=1`: it reads the
+  router master key, registers the Google product servers and the toolset (`CONFIRM=1`), and with
+  `ENABLE_APIS=1` enables APIs in kernal-oauth. It never edits `gcloud`. `DRY_RUN=1` reads no secret.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector
   index makes Atlas embed every chunk through Voyage (billed). `DRY_RUN=1` is safe.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`

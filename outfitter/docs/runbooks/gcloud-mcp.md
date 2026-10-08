@@ -131,15 +131,69 @@ On a laptop, the local CLI always works: `gcloud --configuration=outfitter <comm
 inside a Drive (the model could read it), or admin roles on `outfitter-agent` (the pod can reach
 the metadata server).
 
+## google_cloud toolset
+
+Epic #544 (GB-2 #538, GB-6 #542). One toolset, `google_cloud`, bundles `gcloud` with Google's
+product MCP servers behind **one sign-in**: `/mcp-auth google_cloud` once, and every member works.
+The product servers are router rows with `oauth_grant_server_id: "gcloud"` (router-litellm #49), so
+the stored grant lives on `gcloud` and the others reuse it. Needs router-litellm #49 live first
+(check the live release before rolling).
+
+| Server | URL | Curated tools in the toolset |
+|---|---|---|
+| `gcloud` | `https://cloudcli.googleapis.com/mcp` | `run_gcloud_command`, `run_bq_command` |
+| `cloudrun` | `https://run.googleapis.com/mcp` | `get_service`, `list_services`, `deploy_service_from_image`, `deploy_service_from_archive`, `deploy_service_from_file_contents` |
+| `cloudlogging` | `https://logging.googleapis.com/mcp` | `list_log_entries`, `list_log_names` |
+| `cloudmonitoring` | `https://monitoring.googleapis.com/mcp` | `query_range`, `list_timeseries`, `list_alert_policies`, `list_alerts`, `list_metric_descriptors` |
+| `firestore` | `https://firestore.googleapis.com/mcp` | none yet: the names are added once verified live |
+
+Tool names in a toolset are the upstream (bare) names; the router serves them prefixed.
+
+### Owner steps, in order
+
+From `outfitter/deploy/`, after the `gcloud` server exists (one-time setup above, step 4).
+
+1. **Dry run:** `DRY_RUN=1 ./google-cloud-mcp.sh` prints the servers, the tool count and the plan; it reads no secret.
+2. **Enable each API in `kernal-oauth`.** Calls with a person's token are billed to the OAuth client's
+   project, so a missing API gives 403 and the server shows **0 tools**. Either
+   `ENABLE_APIS=1` in step 3 does it, or by hand:
+   `gcloud --configuration=outfitter services enable run.googleapis.com logging.googleapis.com monitoring.googleapis.com firestore.googleapis.com --project=kernal-oauth`.
+   The APIs must also be on in the projects being worked on (Firestore already is in `outfitter-509211`
+   and `kernal-oauth`), and each person needs the usual IAM (`roles/mcp.toolUser`, plus the product
+   roles) there. The deny policy's client id check passes because the client is the same.
+3. **Register and create the toolset:**
+   `CONFIRM=1 ENABLE_APIS=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./google-cloud-mcp.sh`.
+   It POSTs the four secondary servers (existing ones are only shown), creates or updates the toolset by
+   name, and prints `toolset_id=...`. It never edits `gcloud`. Secrets come from Secret Manager as in
+   step 4 above and are never printed.
+4. **Give Outfitter the id:** set `OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=<toolset_id>` (`config.env`), then release by tag as usual.
+
+### Shared grant: what it means
+
+- One sign-in covers every member. **Revoking one revokes all** (the grant is a single row on `gcloud`).
+- **Editing `gcloud` purges everyone's grant**, as before (url, endpoints, client id/secret or scopes). The script never does it.
+- **Editing a secondary purges nothing** (it owns no credential rows), so `FORCE_PURGE=1` on this script is safe: it only re-PUTs the four secondaries.
+- A secondary must use the same client id and scopes as `gcloud`; the router answers 400 otherwise.
+
+### Adding a tool or server later
+
+- **A tool** (e.g. the Firestore names once verified with `tools/list`): rerun with
+  `CONFIRM=1 GOOGLE_CLOUD_FIRESTORE_TOOLS="name1,name2" ./google-cloud-mcp.sh` (plus the client id).
+  The toolset is PUT in place with the full list; nobody signs in again. For other servers, add the
+  names to the `TOOLS` array in the script and rerun.
+- **A server** (e.g. GKE, `https://container.googleapis.com/mcp`, GA): add a row to `SECONDARIES` and a
+  `TOOLS` entry, enable its API in `kernal-oauth`, rerun. A new secondary needs no new sign-in. Check
+  https://docs.cloud.google.com/mcp/supported-products for the endpoint first.
+
+### Live verification (as a sysop)
+
+1. `/mcp-auth google_cloud`, once, with your own Google account.
+2. `tools/list` on the toolset shows every member's tools and `server_outcomes` is all ok. A `forbidden`
+   or 0-tool server means its API isn't enabled in `kernal-oauth`.
+3. A read from each service runs without asking (e.g. `list_services`, `list_log_names`,
+   `list_alert_policies`, a Firestore get), and a Cloud Run deploy raises an approval card (GA-4).
+4. Repeat after more than an hour to confirm refresh. Tick #542 only after that.
+
 ## Follow-ons
 
-Google's per-service remote MCP servers give structured tools instead of shell-like commands, and
-can reuse this OAuth client, the router mode and the deny policy (same client id), one router row each (grants are per server, so each needs its own sign-in):
-- Cloud Logging, `https://logging.googleapis.com/mcp`
-- Cloud Monitoring, `https://monitoring.googleapis.com/mcp`
-- Cloud Run, `https://run.googleapis.com/mcp`
-- GKE, `https://container.googleapis.com/mcp` (GA)
-
-Each also needs its API-side MCP enabled and `roles/mcp.toolUser`. The exact endpoints and enablement
-are unverified here; check https://docs.cloud.google.com/mcp/supported-products before registering,
-and note that adding a server is a new router row, so existing grants are untouched.
+GKE (`https://container.googleapis.com/mcp`, GA) is not registered yet; see "Adding a tool or server later".

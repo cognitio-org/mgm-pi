@@ -92,6 +92,22 @@ export interface LitellmKeys {
   userSpend(userId: string, month: string): Promise<UserSpend>;
   /** Every user's total for the month, for operators (§8). */
   allUsersSpend(month: string): Promise<Array<{ userId: string; email?: string; total: number }>>;
+  /** The person's OAuth MCP grants, wherever the router stores them (docs/specs/mcp-connections.md §2).
+   * No tokens: the router's list carries none. */
+  mcpUserCredentials(userId: string): Promise<McpUserCredential[]>;
+  /** Disconnects the person's grant for one router MCP server id. Gone already counts as done. */
+  deleteMcpUserCredential(userId: string, serverId: string): Promise<void>;
+}
+
+/** One row of the router's GET /v1/mcp/user-credentials, reduced to what Outfitter uses. */
+export interface McpUserCredential {
+  serverId: string;
+  serverName?: string;
+  alias?: string;
+  connectedAt?: string;
+  reconnectRequired: boolean;
+  reconnectRequiredAt?: string;
+  reconnectReason?: string;
 }
 
 // §5.2 / decision 5: a device key lives 90 days (Kernal re-mints before then), 50 USD per 30 days,
@@ -328,7 +344,7 @@ class HttpLitellmKeys implements LitellmKeys {
 
   /** One management call. Resolves with the status and parsed body (also for an error status, so
    * callers can tell "gone" or "exists" apart); throws a LitellmError only when nothing came back. */
-  private async call(method: "GET" | "POST", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
+  private async call(method: "GET" | "POST" | "DELETE", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
     const url = new URL(this.root + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
     let res: Response;
@@ -358,7 +374,7 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   /** The call's body when it succeeded, else a LitellmError naming the route. */
-  private async ok(method: "GET" | "POST", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
+  private async ok(method: "GET" | "POST" | "DELETE", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
     const res = await this.call(method, path, opts);
     if (res.ok) return res.body;
     throw this.failure(path, res.status, res.body);
@@ -528,6 +544,28 @@ class HttpLitellmKeys implements LitellmKeys {
     }
     this.teams.set(teamAlias, teamId);
     return teamId;
+  }
+
+  async mcpUserCredentials(userId: string): Promise<McpUserCredential[]> {
+    const body = await this.ok("GET", "/v1/mcp/user-credentials", { query: { user_id: userId } });
+    return (Array.isArray(body) ? body : []).flatMap((row: Record<string, unknown>) => {
+      const serverId = str(row?.server_id);
+      if (!serverId) return [];
+      return [{
+        serverId,
+        ...optional("serverName", str(row.server_name)),
+        ...optional("alias", str(row.alias)),
+        ...optional("connectedAt", str(row.connected_at)),
+        reconnectRequired: row.reconnect_required === true,
+        ...optional("reconnectRequiredAt", str(row.reconnect_required_at)),
+        ...optional("reconnectReason", str(row.reconnect_reason)),
+      }];
+    });
+  }
+
+  async deleteMcpUserCredential(userId: string, serverId: string): Promise<void> {
+    const res = await this.call("DELETE", `/v1/mcp/user-credentials/${encodeURIComponent(serverId)}`, { query: { user_id: userId } });
+    if (!res.ok && res.status !== 404) throw this.failure("/v1/mcp/user-credentials", res.status, res.body);
   }
 
   async userSpend(userId: string, month: string): Promise<UserSpend> {
@@ -720,4 +758,12 @@ export async function sweepRouterKeys(
     }
   }
   return result;
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function optional<K extends string>(key: K, value: string | undefined): { [P in K]?: string } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: string };
 }

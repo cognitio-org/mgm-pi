@@ -50,6 +50,7 @@ import { FleetSettingsCache } from "./fleet-settings.ts";
 import { DeviceLifecycle } from "./central/device-lifecycle.ts";
 import { isPublicDevicePath } from "./central/device-tokens.ts";
 import { createLitellmKeys, registerLitellmDeviceHooks, routerKeyLimits, type LitellmKeys } from "./central/litellm-keys.ts";
+import { McpConnections } from "./central/mcp-connections.ts";
 import { localHostRouterListener } from "./local-hosts/router-sync.ts";
 
 export interface BuildAppOptions {
@@ -372,6 +373,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<App> {
     github,
     deviceLifecycle,
     ...(litellmKeys ? { litellmKeys } : {}),
+    ...(litellmKeys ? { mcpConnections: new McpConnections(litellmKeys, config.operators) } : {}),
     localHostEvents,
     ...(localHostNgrok ? { localHostNgrok } : {}),
     autofix,

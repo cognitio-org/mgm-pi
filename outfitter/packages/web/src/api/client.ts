@@ -142,6 +142,9 @@ export interface SessionDetail {
   /** When heldMail > 0: "Deploy mismatch: messages held until the service is redeployed", or
    * "Messages held: <reason>. Press Retry once that's fixed." for a run failure (#172). */
   mailNotice?: string;
+  /** MO-6 (docs/specs/mcp-connections.md §5): to the owner, when an OAuth MCP server this Drive uses
+   * isn't connected ("Sentry isn't connected: connect it in Connections."). */
+  connectionNotice?: { text: string; href: string };
   /** #503 Auto-fix CI: when on, a failed check on the floppy's pull request is sent to the agent. */
   autofixCi?: boolean;
   autofix?: AutofixState;

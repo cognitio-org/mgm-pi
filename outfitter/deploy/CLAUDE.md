@@ -30,6 +30,8 @@
   are owner-run without `DRY_RUN=1`: the first grants `roles/mcp.toolUser` and writes an IAM deny
   policy; the second reads the router master key and registers the server (`CONFIRM=1`; editing an
   existing one purges every user's grant, `FORCE_PURGE=1`). `DRY_RUN=1` reads no secret.
+- `mcp-identity-check.sh` (MO-7 #489, docs/runbooks/mcp-grants.md) is read-only but owner-run without
+  `DRY_RUN=1`: it reads Outfitter's scoped admin key to list router users. `DRY_RUN=1` reads no secret.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector
   index makes Atlas embed every chunk through Voyage (billed). `DRY_RUN=1` is safe.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`

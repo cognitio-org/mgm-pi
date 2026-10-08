@@ -332,10 +332,10 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(FIRESTORE_READ_TOOLS.size, 0);
   });
 
-  test("every read tool runs unasked, bare and prefixed, on google_cloud and on a renamed server", async () => {
+  test("every read tool runs unasked when prefixed with its own product, on google_cloud and on a renamed server", async () => {
     for (const [server, tools] of Object.entries(READS)) {
       for (const t of tools) {
-        for (const call of [prod(t), prod(`${server}-${t}`), prod(`${server}-${t}`, {}, "gcp"), prod(`${server}_${t}`, {}, "whatever")]) {
+        for (const call of [prod(`${server}-${t}`), prod(`${server}-${t}`, {}, "gcp"), prod(`${server}_${t}`, {}, "whatever")]) {
           assert.equal(isGated(call), true, call.tool);
           assert.equal(needsApproval(call), false, call.tool);
           assert.equal(await decide(call, { drive: false }), "allow_once", call.tool);
@@ -346,7 +346,7 @@ describe("Google product tools (GB-5, #541)", () => {
 
   test("deploys ask, on any server, and the Drive gets the base tool, project and a summary", async () => {
     for (const t of PRODUCT_WRITE_TOOLS) {
-      for (const call of [prod(`cloudrun-${t}`), prod(`cloudrun-${t}`, {}, "gcp"), prod(t, {}, "anything")]) {
+      for (const call of [prod(`cloudrun-${t}`), prod(`cloudrun-${t}`, {}, "gcp"), prod(t, {}), prod(`cloudrun-${t}`, {}, "anything")]) {
         assert.equal(isGated(call), true);
         assert.equal(needsApproval(call), true);
         assert.equal(await decide(call, { drive: false }), "deny");
@@ -408,9 +408,29 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(isGcloudServer("acme__google_cloud"), true);
     assert.equal(isGcloudServer("xgoogle_cloud"), false);
     assert.equal(isGated(prod("something_new", {}, "acme__google_cloud")), true);
+    assert.equal(isGated(prod("xcloudrun-get_service", {}, "github")), false);
     assert.equal(isGated(prod("xget_service", {}, "github")), false);
     assert.equal(isGated(prod("get_services", {}, "github")), false);
     assert.equal(isGated(prod("create_issue", {}, "github")), false);
+  });
+
+  test("a bare generic name on another server is not ours: abstain, that server's own approveTools applies", async () => {
+    for (const t of [...PRODUCT_READ_TOOLS, ...PRODUCT_WRITE_TOOLS]) {
+      const call = prod(t, {}, "grafana");
+      assert.equal(isGated(call), false, t);
+      assert.equal(needsApproval(call), false, t);
+      assert.equal(await decide(call, { drive: false }), "abstain", t);
+    }
+    assert.equal(await decide(prod("get_dashboard", {}, "grafana"), { drive: false }), "abstain");
+  });
+
+  test("router prefix on a renamed server: own-product reads allow, other products' names ask", async () => {
+    assert.equal(await decide(prod("cloudrun-get_service", {}, "gcp"), { drive: false }), "allow_once");
+    assert.equal(await decide(prod("cloudlogging-get_service", {}, "gcp"), { drive: false }), "deny");
+    assert.equal(await decide(prod("cloudlogging-list_services", {}), { drive: false }), "deny");
+    assert.equal(await decide(prod("cloudrun-get_dashboard", {}), { drive: false }), "deny");
+    assert.equal(await decide(prod("get_service", {}), { drive: false }), "deny"); // bare on google_cloud: unverifiable, asks
+    assert.equal(await decide(prod("firestore-get_service", {}, "gcp"), { drive: false }), "deny");
   });
 
   test("baseTool: product names with underscores, only the known tool after a boundary", () => {
@@ -419,6 +439,7 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(baseTool("cloudlogging-get_view"), "get_view");
     assert.equal(baseTool("google_cloud.cloudrun:get_service"), "get_service");
     assert.equal(baseTool("get_service"), "get_service");
+    assert.equal(baseTool("cloudlogging-get_service"), "cloudlogging-get_service");
     assert.equal(baseTool("forget_service"), "forget_service");
     assert.equal(baseTool("get_service_v2"), "get_service_v2");
     assert.equal(baseTool("firestore-get_document"), "firestore-get_document");

@@ -45,7 +45,7 @@ RUN npm ci --omit=dev \
   && { [ -e pi-ai ] || ln -s pi-coding-agent/node_modules/@earendil-works/pi-ai pi-ai; } \
   && test -f pi-ai/dist/utils/transcript.js
 COPY kernal/bin/ ./bin/
-# Direct OAuth (google_admin, augment_admin) is dropped from the image's mcp.json: a sandbox has
+# Direct OAuth (a server without the router header) is dropped from the image's mcp.json: a sandbox has
 # no browser and no keychain, those probes failed on every start, and pi-mcp-adapter holds the
 # first prompt until start-up connections settle. Gateway OAuth (sentry) stays with client OAuth
 # off: the router already holds that person's token and the run key is the same user

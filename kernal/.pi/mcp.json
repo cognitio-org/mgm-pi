@@ -29,21 +29,6 @@
       "oauth": {
         "clientName": "kernal"
       }
-    },
-    "google_admin": {
-      "url": "https://gcs-admin-mcp-ucpy26yrfa-uc.a.run.app/mcp",
-      "auth": "oauth",
-      "oauth": {
-        "clientName": "kernal agent"
-      }
-    },
-    "augment_admin": {
-      "url": "https://l.augment-code.support/mcp",
-      "auth": "oauth",
-      "oauth": {
-        "clientName": "kernal agent"
-      },
-      "directTools": false
     }
   }
 }

@@ -3,7 +3,7 @@
 #
 # A sandbox cannot open a browser or an OS keychain, and pi-mcp-adapter holds the first prompt
 # until its start-up connections settle (docs/reports/startup-trim.md). A server whose only login
-# is that browser flow (google_admin, augment_admin) is removed: it failed on every start after
+# is that browser flow (direct OAuth, no router header) is removed: it failed on every start after
 # two network probes, and it can never succeed here.
 #
 # A gateway OAuth server is different. It already sends x-litellm-api-key, and LiteLLM vaults the

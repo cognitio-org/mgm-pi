@@ -184,6 +184,13 @@ describe("router-prefixed tool names", () => {
     assert.equal(needsApproval({ ...renamed, args: read.args }), false);
   });
 
+  test("the Drive card and audit get the base tool name, so a bq write is labelled bq", async () => {
+    const d = transport("drive");
+    const bq = { serverName: "gcloud", tool: "gcloud-run_bq_command", args: { project: "projects/p1", command: "bq rm -f ds.t" } };
+    assert.equal(await decide(bq, { drive: true, transport: d.t }), "allow_once");
+    assert.equal((d.calls[0] as { args: { tool: string } }).args.tool, "run_bq_command");
+  });
+
   test("an unknown tool on the gcloud server still asks", () => {
     assert.equal(needsApproval({ serverName: "gcloud", tool: "gcloud-something_else", args: read.args }), true);
   });

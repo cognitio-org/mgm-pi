@@ -86,7 +86,7 @@ const NOTE_TIMEOUT_MS = 10_000;
 function fields(call: Call): { project: string; command: string; tool: string } {
   const project = typeof call.args?.project === "string" ? call.args.project : "";
   const command = typeof call.args?.command === "string" ? call.args.command : "";
-  return { project, command, tool: call.tool };
+  return { project, command, tool: baseTool(call.tool) };
 }
 
 /** Records a laptop decision in Outfitter's audit log. Never throws and never blocks for long. */

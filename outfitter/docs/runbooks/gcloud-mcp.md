@@ -29,9 +29,12 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
      redirect URI `https://router.kernal.one/callback` (the router builds its MCP OAuth callback as
      `<base url>/callback`). Copy the client ID and secret.
 
-   A client from another project works for any project's APIs; the token's quota and IAM are
-   checked on the project each command names. Only the client lives in the new project. The
-   secret, the router row and the deny policy all stay as below.
+   A client from another project works for any project's APIs: IAM is checked on the project each
+   command names. **But the call itself is billed to the client's project**, so enable the API
+   there too, or Google answers 403 and the router shows `gcloud` with 0 tools (seen 2026-10-08):
+   `gcloud --configuration=outfitter services enable cloudcli.googleapis.com --project=kernal-oauth`.
+   Each follow-on server below needs its API enabled in `kernal-oauth` as well. Only the client
+   lives in the new project. The secret, the router row and the deny policy all stay as below.
 3. **Store the client secret** in `outfitter-509211`'s Secret Manager as `outfitter-gcloud-mcp-oauth-client-secret`,
    straight from the console download or clipboard, never into a file in the repo:
    `pbpaste | gcloud --configuration=outfitter secrets create outfitter-gcloud-mcp-oauth-client-secret --data-file=-`
@@ -113,6 +116,7 @@ page does not list it.) Anything else is subject to your IAM and org policy. Too
 | Symptom | Cause and fix |
 |---|---|
 | Works for an hour, then "sign in again" | No refresh token: the router didn't send `access_type=offline` and `prompt=consent` (GA-1 #491), or the client is External/Testing (7-day expiry). Fix the router, then `/mcp-auth gcloud` again. |
+| `gcloud` connects with **0 tools** (`server_outcomes` says `forbidden`, 403) | The cloudcli API isn't enabled in the OAuth client's project (`kernal-oauth`), which the call is billed to. Enable it there (step 2), then reconnect. |
 | 403 `mcp.tools.call` denied | Missing `roles/mcp.toolUser` (rerun `gcloud-mcp-iam.sh`), or the deny policy rejected the client: the router must use exactly the client id given to `gcloud-mcp-iam.sh`. Propagation takes a few minutes. |
 | 403 "API not enabled" | `cloudcli.googleapis.com` is off: rerun `gcloud-mcp-iam.sh`. |
 | Everyone asked to sign in again | The server row was edited (`FORCE_PURGE=1`) or recreated; the router purges all grants on any identity change (url, endpoints, client id/secret, scopes). Reconnect once each. |

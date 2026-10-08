@@ -21,7 +21,7 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
-import { deviceKeyMcpServers } from "./gcloud-mcp.ts";
+import { deliveredMcpServers as delivered, deviceKeyMcpServers, deviceKeyMcpToolsets } from "./gcloud-mcp.ts";
 import { LOCAL_HOST_ACCESS_GROUP } from "../local-hosts/contract.ts";
 import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
@@ -51,6 +51,9 @@ export interface KeyLimits {
   /** The MCP servers the router admits this key to (`object_permission.mcp_servers`); absent means
    * the key carries no list and sees only the servers open to every key (GA-2, gcloud-mcp.ts). */
   mcpServers?: string[];
+  /** Router toolset ids (`object_permission.mcp_toolsets`), e.g. `google_cloud` (GB-3). A toolset
+   * path needs the key to list the toolset's id, whatever its mcp_servers say. */
+  mcpToolsets?: string[];
 }
 
 export interface SpendRow {
@@ -436,7 +439,7 @@ class HttpLitellmKeys implements LitellmKeys {
         budget_duration: budgetDuration,
         rpm_limit: args.rpmLimit ?? DEVICE_KEY_RPM_LIMIT,
         ...(args.models ? { models: args.models } : {}),
-        ...(args.mcpServers?.length ? { object_permission: { mcp_servers: args.mcpServers } } : {}),
+        ...objectPermission(args),
         metadata: { outfitter: "device", deviceId: args.deviceId, deviceName: args.deviceName },
       },
       {
@@ -447,6 +450,7 @@ class HttpLitellmKeys implements LitellmKeys {
         deviceId: args.deviceId,
         ...(args.models ? { models: args.models } : {}),
         ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
+        ...(args.mcpToolsets?.length ? { mcpToolsets: args.mcpToolsets } : {}),
         maxBudget,
         budgetDuration,
       },
@@ -471,7 +475,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ...(args.budgetDuration ? { budget_duration: args.budgetDuration } : {}),
         ...(args.rpmLimit ? { rpm_limit: args.rpmLimit } : {}),
         ...(args.models ? { models: args.models } : {}),
-        ...(args.mcpServers?.length ? { object_permission: { mcp_servers: args.mcpServers } } : {}),
+        ...objectPermission(args),
         metadata: { outfitter: "run", runId: args.runId, sessionId: args.sessionId },
       },
       {
@@ -482,6 +486,7 @@ class HttpLitellmKeys implements LitellmKeys {
         runId: args.runId,
         ...(args.models ? { models: args.models } : {}),
         ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
+        ...(args.mcpToolsets?.length ? { mcpToolsets: args.mcpToolsets } : {}),
         maxBudget,
         ...(args.budgetDuration ? { budgetDuration: args.budgetDuration } : {}),
       },
@@ -643,24 +648,34 @@ export function createLitellmKeys(
   return new HttpLitellmKeys(config.litellmBaseUrl, config.litellmAdminKey, store.routerKeys, opts);
 }
 
+/** The key body's `object_permission`: the servers and toolsets the router admits the key to. */
+function objectPermission(args: Pick<KeyLimits, "mcpServers" | "mcpToolsets">): { object_permission?: { mcp_servers?: string[]; mcp_toolsets?: string[] } } {
+  const mcp_servers = args.mcpServers?.length ? args.mcpServers : undefined;
+  const mcp_toolsets = args.mcpToolsets?.length ? args.mcpToolsets : undefined;
+  return mcp_servers || mcp_toolsets ? { object_permission: { ...(mcp_servers ? { mcp_servers } : {}), ...(mcp_toolsets ? { mcp_toolsets } : {}) } } : {};
+}
+
 /** A device's router key, freshly minted (the user first, then the key, which replaces the old one),
  * in the shape the device receives (§1.3 `delivery.routerKey`, §5.5). */
 export async function mintDeviceRouterKey(
   keys: LitellmKeys,
   device: Pick<LifecycleDevice, "id" | "userId" | "ownerEmail" | "name">,
-  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[] },
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[]; googleCloudToolsetId?: string },
   limits: DeviceKeyLimits,
 ): Promise<NonNullable<DeviceDelivery["routerKey"]>> {
   await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
   const mcpServers = deviceKeyMcpServers(device.ownerEmail, config.operators);
-  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers });
+  const mcpToolsets = deviceKeyMcpToolsets(device.ownerEmail, config.operators, config.googleCloudToolsetId);
+  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers, mcpToolsets });
   return {
     key: minted.key,
     baseUrl: config.litellmBaseUrl,
     alias: minted.alias,
     ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}),
     // Which MCP servers the router admits this key to, so Kernal can switch on the gated ones (GA-3).
-    ...(mcpServers ? { mcpServers } : {}),
+    // `google_cloud` is Kernal's mcp.json entry name, appended when the toolset is granted (not a router
+    // server name; the router sees only the toolset id).
+    ...(mcpServers ? { mcpServers: delivered(mcpServers, mcpToolsets) } : {}),
   };
 }
 
@@ -669,7 +684,7 @@ export async function mintDeviceRouterKey(
 export function registerLitellmDeviceHooks(
   lifecycle: DeviceLifecycle,
   keys: LitellmKeys | undefined,
-  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[] },
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[]; googleCloudToolsetId?: string },
   limits: RouterKeyLimitsSource,
 ): void {
   if (!keys) return;

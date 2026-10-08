@@ -25,7 +25,7 @@ DEST="${2:?dest mcp.json}"
 node -e '
   const fs = require("fs");
   const c = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const GATED = ["gcloud"];
+  const GATED = ["gcloud", "google_cloud"];
   const dropped = [];
   const kept = [];
   for (const [name, def] of Object.entries(c.mcpServers || {})) {

@@ -1,15 +1,29 @@
 ---
 name: gcloud-mcp
-description: Run gcloud commands through the router's `gcloud` MCP server (Google's remote gcloud, as the signed-in person). Only for Sysop operators; use it when the gcloud MCP tools are available, otherwise say so and stop.
+description: Operate Google Cloud through the router's `google_cloud` toolset (Cloud Run, Logging, Monitoring and Firestore product tools, plus run_gcloud_command), as the signed-in person. Only for Sysop operators; use it when those tools are available, otherwise say so and stop.
 ---
 
-# gcloud through MCP
+# Google Cloud through MCP
 
-The `gcloud` MCP server runs gcloud on Google's side as the signed-in person, with their normal IAM
-and audit logs. It is for Sysop operators. If its tools aren't listed (`mcp({ server: "gcloud" })`),
-this laptop or Drive has no access: say so and stop. Don't fall back to a local `gcloud` in a Drive.
-A missing or expired grant is a connect problem, not a bug: on a laptop run `/mcp-auth gcloud`; in a
-Drive tell the person to connect Google under Connections in the web app.
+The `google_cloud` MCP entry is one router toolset with one Google sign-in. It runs on Google's side
+as the signed-in person, with their normal IAM and audit logs. It is for Sysop operators. If its tools
+aren't listed (`mcp({ server: "google_cloud" })`), this laptop or Drive has no access: say so and stop.
+Don't fall back to a local `gcloud` in a Drive. A missing or expired grant is a connect problem, not a
+bug: on a laptop run `/mcp-auth google_cloud` (once covers every tool below); in a Drive tell the
+person to connect Google under Connections in the web app.
+
+## Product tools first, the CLI for the rest
+
+Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<tool>`,
+`cloudmonitoring-<tool>`, `firestore-<tool>`, and `gcloud-run_gcloud_command` for the CLI.
+
+- **Prefer a product tool** for Cloud Run (services, revisions, deploys), Cloud Logging (reads),
+  Cloud Monitoring (metrics, PromQL `query_range`) and Firestore (document reads and writes). They are
+  typed and mark read-only tools, and do things gcloud can't (Firestore documents, PromQL ranges).
+- **Use `run_gcloud_command`** for everything without a product server: Domains, DNS, Secret Manager,
+  Cloud Build, Artifact Registry, IAM reads and the rest. The rules below apply to it.
+- **Approvals:** read-only tools run; anything that changes something (a deploy, a write, a delete)
+  shows the person an approval card first. Say what it will do and why before you call it.
 
 ## Rules
 

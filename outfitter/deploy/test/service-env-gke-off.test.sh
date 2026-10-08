@@ -99,7 +99,7 @@ if [[ -z "${DEPLOY_CALL}" ]]; then
   echo "FAIL: no 'gcloud run deploy outfitter-api ...' call was recorded"
   echo "${OUT}" | sed 's/^/    /'
   fails=$((fails + 1))
-  echo "${fails} failed"
+echo "${fails} failed"
   exit 1
 fi
 echo "ok: gcloud run deploy outfitter-api was called"
@@ -209,6 +209,27 @@ if [[ "${LINK_ENV}" == *",OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,"* ]]; t
   echo "ok: the link role gets OUTFITTER_OPERATORS"
 else
   echo "FAIL: expected OUTFITTER_OPERATORS on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+
+  # GB-3 (#539): the google_cloud toolset id reaches BOTH roles when set (the link role mints the keys);
+# unset, neither role carries it (the exact web string above proves the web side).
+for ROLE_UNDER_TEST in web link; do
+  : >"${GCLOUD_CALLS}"
+  status=0
+  OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=11111111-2222-3333-4444-555555555555 ./service.sh "${ROLE_UNDER_TEST}" 2>&1)" || status=$?
+  TS_ENV="$(grep "^run deploy outfitter-$([[ "${ROLE_UNDER_TEST}" == web ]] && echo api || echo link)" "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+  if [[ ${status} -eq 0 && "${TS_ENV}" == *",OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=11111111-2222-3333-4444-555555555555,"* ]]; then
+    echo "ok: the ${ROLE_UNDER_TEST} role gets OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID"
+  else
+    echo "FAIL: expected OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID on ${ROLE_UNDER_TEST} (exit ${status}); got: ${TS_ENV:-<no deploy call>}"
+    fails=$((fails + 1))
+  fi
+done
+if [[ "${LINK_ENV}" != *"GOOGLE_CLOUD_TOOLSET"* ]]; then
+  echo "ok: no toolset id on link when unset"
+else
+  echo "FAIL: toolset id present on link although unset"
   fails=$((fails + 1))
 fi
 

@@ -12,8 +12,8 @@ const root = new URL("..", import.meta.url).pathname;
 const shipped = JSON.parse(readFileSync(`${root}.pi/mcp.json`, "utf8"));
 
 test("the shipped gcloud entry is disabled and asks before every call", () => {
-  assert.equal(shipped.mcpServers.gcloud.disabled, true);
-  assert.equal(shipped.mcpServers.gcloud.approveTools, true);
+  assert.equal(shipped.mcpServers.google_cloud.disabled, true);
+  assert.equal(shipped.mcpServers.google_cloud.approveTools, true);
 });
 
 test("Claude children never get gcloud, nor any disabled server", () => {
@@ -23,7 +23,8 @@ test("Claude children never get gcloud, nor any disabled server", () => {
     on: { url: "https://y.test/mcp" },
   });
   assert.deepEqual(Object.keys(out), ["on"]);
-  assert.equal("gcloud" in claudeMcpServers(shipped.mcpServers), false);
+  assert.equal("google_cloud" in claudeMcpServers(shipped.mcpServers), false);
+  assert.equal("google_cloud" in claudeMcpServers({ google_cloud: { url: "https://router.kernal.one/google_cloud/mcp" } }), false, "enabled or not");
   // Even enabled (an operator's gate switched it on), the exclusion holds.
   assert.equal("gcloud" in claudeMcpServers({ gcloud: { url: "https://router.kernal.one/gcloud/mcp" } }), false);
 });
@@ -35,26 +36,26 @@ function agentDir(): string {
   writeFileSync(join(dir, "mcp.json"), JSON.stringify(shipped));
   return dir;
 }
-const gcloudOf = (dir: string) => JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.gcloud;
+const gcloudOf = (dir: string) => JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.google_cloud;
 
-test("a key that lists gcloud switches it on; nothing else changes; no temp files are left", () => {
+test("a key that lists google_cloud switches it on; nothing else changes; no temp files are left", () => {
   const dir = agentDir();
-  assert.equal(applyLaptopMcpGate(dir, ["ce_knowledge_base", "gcloud"]), true);
+  assert.equal(applyLaptopMcpGate(dir, ["ce_knowledge_base", "gcloud", "google_cloud"]), true);
   const after = JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8"));
-  assert.equal(after.mcpServers.gcloud.disabled, undefined);
-  assert.equal(after.mcpServers.gcloud.approveTools, true, "approval stays on");
+  assert.equal(after.mcpServers.google_cloud.disabled, undefined);
+  assert.equal(after.mcpServers.google_cloud.approveTools, true, "approval stays on");
   assert.deepEqual(after.mcpServers.sentry, shipped.mcpServers.sentry);
   assert.deepEqual(readdirSync(dir), ["mcp.json"]);
-  assert.equal(applyLaptopMcpGate(dir, ["gcloud"]), false, "already on: no rewrite");
+  assert.equal(applyLaptopMcpGate(dir, ["google_cloud"]), false, "already on: no rewrite");
 });
 
-test("a non-operator key, an older Outfitter, or no key leaves gcloud off; an ex-operator's is switched off again", () => {
+test("a non-operator key, an older Outfitter, or no key leaves google_cloud off; an ex-operator's is switched off again", () => {
   const dir = agentDir();
   for (const admitted of [undefined, [], ["sentry"]]) {
     assert.equal(applyLaptopMcpGate(dir, admitted), false);
     assert.equal(gcloudOf(dir).disabled, true);
   }
-  applyLaptopMcpGate(dir, ["gcloud"]);
+  applyLaptopMcpGate(dir, ["google_cloud"]);
   assert.equal(applyLaptopMcpGate(dir, []), true);
   assert.equal(gcloudOf(dir).disabled, true);
 });
@@ -62,14 +63,14 @@ test("a non-operator key, an older Outfitter, or no key leaves gcloud off; an ex
 test("a source checkout (agent dir beside .git), a missing dir and a broken file are left alone and never throw", () => {
   const dir = agentDir();
   mkdirSync(join(dir, "..", ".git"));
-  assert.equal(applyLaptopMcpGate(dir, ["gcloud"]), false);
+  assert.equal(applyLaptopMcpGate(dir, ["google_cloud"]), false);
   assert.equal(gcloudOf(dir).disabled, true);
 
-  assert.equal(applyLaptopMcpGate(undefined, ["gcloud"]), false);
+  assert.equal(applyLaptopMcpGate(undefined, ["google_cloud"]), false);
   const bad = join(mkdtempSync(join(tmpdir(), "gate-")), ".pi");
   mkdirSync(bad);
   writeFileSync(join(bad, "mcp.json"), "{nope");
   const logs: string[] = [];
-  assert.equal(applyLaptopMcpGate(bad, ["gcloud"], (l) => logs.push(l)), false);
+  assert.equal(applyLaptopMcpGate(bad, ["google_cloud"], (l) => logs.push(l)), false);
   assert.equal(logs.length, 1);
 });

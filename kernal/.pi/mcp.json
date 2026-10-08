@@ -17,8 +17,8 @@
         "clientName": "kernal"
       }
     },
-    "gcloud": {
-      "url": "https://router.kernal.one/gcloud/mcp",
+    "google_cloud": {
+      "url": "https://router.kernal.one/google_cloud/mcp",
       "auth": "oauth",
       "lifecycle": "lazy",
       "disabled": true,

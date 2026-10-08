@@ -15,7 +15,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** Must match agentd/src/mcp-gate.ts, api central/gcloud-mcp.ts and image/render-mcp.sh (a test checks). */
-export const GATED_MCP_SERVERS: readonly string[] = ["gcloud"];
+export const GATED_MCP_SERVERS: readonly string[] = ["gcloud", "google_cloud"];
 
 export function applyLaptopMcpGate(agentDir: string | undefined, admitted: readonly string[] | undefined, log: (line: string) => void = () => {}): boolean {
   if (!agentDir) return false;

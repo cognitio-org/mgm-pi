@@ -44,6 +44,9 @@ case "${KEY}" in
     # litellm-keys.ts, providers-status.ts, models.ts. Mounted on both roles, the public link
     # service included, so nothing beyond these: no /key/update, /key/list, /key/block or any
     # /model/new|update|delete (those are the local-hosts key's).
+    # /v1/mcp/user-credentials (MO-5, docs/specs/mcp-connections.md §2): a person's OAuth MCP grant
+    # state and disconnect, by prefix. Never anything under /v1/mcp/server: editing a server there
+    # purges every user's grant.
     ADMIN_SECRET="outfitter-litellm-admin"
     ALIAS_PREFIX="outfitter-admin"
     PURPOSE="device/run key minting, router probe"
@@ -54,7 +57,8 @@ case "${KEY}" in
       "/team/new", "/team/list",
       "/spend/logs",
       "/model/info",
-      "/health/liveliness"
+      "/health/liveliness",
+      "/v1/mcp/user-credentials"
     ]'
     ;;
   local-hosts)

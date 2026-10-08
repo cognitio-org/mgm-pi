@@ -22,6 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/local-models", label: vocabulary.modem.many, hint: vocabulary.modem.hint },
   { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint },
   { to: "/account", label: vocabulary.account.one, hint: vocabulary.account.hint },
+  { to: "/connections", label: vocabulary.connection.many, hint: vocabulary.connection.hint },
   { to: "/subscriptions", label: vocabulary.subscription.many, hint: vocabulary.subscription.hint },
   { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
 ];

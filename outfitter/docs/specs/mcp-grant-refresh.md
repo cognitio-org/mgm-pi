@@ -51,10 +51,11 @@ both redeem. Fix this only if a dead grant is ever traced to it. The fix is to k
 1. **Sentry:** the first real refresh is due about 2026-11-05 (#484). Check the router log that
    day: does it succeed, and does Sentry rotate the refresh token (a new `refresh_token` in the
    response)?
-2. **Google (gcloud, #497):** is the OAuth consent screen *Internal* or *External: In production*?
-   An *External: Testing* app's refresh tokens die after 7 days **however often they're used**. A
-   keep-alive job can't help there, and publishing the app is the fix. Otherwise Google only revokes
-   refresh tokens unused for 6 months.
+2. **Google (gcloud, #497):** answered. `deploy/gcloud-mcp-router.sh` registers an *Internal* Web
+   client, so the 7-day limit for *External: Testing* apps (which applies however often a token is
+   used, and which no keep-alive could fix) doesn't apply. Google then only revokes refresh tokens
+   unused for 6 months, or on a password change or admin action, and MO-4 shows those as
+   "reconnect".
 3. For any new OAuth MCP server: its refresh-token idle lifetime and whether it rotates.
 
 Build §5 only if a server's refresh tokens die when idle within a span people plausibly go without

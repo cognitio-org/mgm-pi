@@ -1,0 +1,94 @@
+outfitter/packages/api/src/routes/sessions.ts
+  s_fe1c4322a69a90::t_903a51008138d2 21-22,235-236,238,490,494-498,501,503,505-508,511-516,518-520,718-750,753-755
+  s_fe1c4322a69a90::t_36f9264f9d2966 756
+  s_fe1c4322a69a90::t_2872b19a8805ef 613,670-684
+  s_fe1c4322a69a90::t_decd6b5794becf 237,499-500,502,504,510,517
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_fe1c4322a69a90::t_a914cee01e76be 92-99,101-105,248-251,254
+  s_fe1c4322a69a90::t_76f6b8bc1d6102 114-119,121,261
+outfitter/packages/web/src/lib/entry-view.ts
+  s_fe1c4322a69a90::t_82993eb8cc5768 41-43,182
+outfitter/docs/protocol.md
+  s_fe1c4322a69a90::t_ed5ba9ee6a9f42 564
+  s_fe1c4322a69a90::t_235c4f73a2d078 566,567
+outfitter/packages/api/src/autofix.ts
+  s_fe1c4322a69a90::t_b8ff050191cb38 74-75,100-101,109-110,113-114,118,164-168,170-189,241-248,259-268,294-299,301-303,305-306,374,392-395,407-411,413-424,430-432,473-474,482-483,506-507,508,556,573,583,586,593-594
+  s_fe1c4322a69a90::t_decd6b5794becf 78-79,111-112,115-117,169,278-296,300,304,347,375,425-429,433-470
+  s_fe1c4322a69a90::t_358dbf69a90ff9 471-472
+outfitter/packages/api/src/routes/browser.ts
+  s_fe1c4322a69a90::t_f3a51de6672fe9 11
+  s_fe1c4322a69a90::t_29689222f0eab2 116-119,122,129
+outfitter/packages/api/src/store/types.ts
+  s_fe1c4322a69a90::t_ae8f5780c8b138 99-101,107,162-163,928-929,933,936-937,939-940,950,952-957
+  s_fe1c4322a69a90::t_6e19d2210436d9 958-959
+  s_fe1c4322a69a90::t_decd6b5794becf 104-106,177-180,951
+outfitter/packages/web/src/components/ChangesPane.tsx
+  s_fe1c4322a69a90::t_434b760212b024 258-265,266-268,271-285,287,291-294,323-335,338-339,343,350,363,371-374,381-382,507,515
+  s_fe1c4322a69a90::t_0493e60db61cc2 4,295-322,375-378,508,516,601
+outfitter/packages/web/test/entry-view.test.ts
+  s_fe1c4322a69a90::t_1822853fd8b1a2 161-168
+outfitter/packages/api/src/session-note.ts
+  s_fe1c4322a69a90::t_494c5947e2d3ca 22,25
+  s_fe1c4322a69a90::t_13bd0067b4cb91 1-21,23-24,26-50
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_fe1c4322a69a90::t_434b760212b024 648-659,663-671
+  s_fe1c4322a69a90::t_0493e60db61cc2 660-662,672-689
+  s_fe1c4322a69a90::t_df5123a5dd45bc 690-694
+outfitter/packages/api/src/store/mongo.ts
+  s_fe1c4322a69a90::t_ebe5b1b73ee1a6 75
+  s_fe1c4322a69a90::t_ae8f5780c8b138 9,112-116,193-195,201-203,206-207,213,216,223,241,1939-1940
+  s_fe1c4322a69a90::t_decd6b5794becf 1941
+outfitter/packages/web/test/autofix-client.test.ts
+  s_fe1c4322a69a90::t_1822853fd8b1a2 24-35
+outfitter/packages/api/src/store/memory.ts
+  s_fe1c4322a69a90::t_ae8f5780c8b138 9,171-173,177-178,182-183,190-195,202,207,217
+  s_fe1c4322a69a90::t_ebe5b1b73ee1a6 73
+  s_fe1c4322a69a90::t_decd6b5794becf 188-191
+outfitter/packages/web/src/api/client.ts
+  s_fe1c4322a69a90::t_82993eb8cc5768 99-106,128-132,134-139,141-144,199-200,203,1014-1015,1017
+  s_fe1c4322a69a90::t_ab0f4f3d849751 1018-1019
+  s_fe1c4322a69a90::t_0493e60db61cc2 119-129,133,140,201-202,1016
+outfitter/packages/api/src/server.ts
+  s_fe1c4322a69a90::t_5b73843544afbd 194-195
+  s_fe1c4322a69a90::t_edc03b8a7b5f31 38
+  s_fe1c4322a69a90::t_decd6b5794becf 39,197-200
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_fe1c4322a69a90::t_82993eb8cc5768 4,169-174
+  s_fe1c4322a69a90::t_0bec2feccb7b97 175-177
+outfitter/packages/web/test/changes-pane.test.tsx
+  s_fe1c4322a69a90::t_1822853fd8b1a2 6-7,9-10,12-14,75,82,86-94,96-97,262-271,273-283,285-286,293-294,296-298,299-300
+  s_fe1c4322a69a90::t_a37dd0cacd681c 301
+  s_fe1c4322a69a90::t_0493e60db61cc2 8,11,76,83,95,302-319
+  s_fe1c4322a69a90::t_e8f602f7abdeaf 320-321
+outfitter/packages/api/test/autofix.test.ts
+  s_fe1c4322a69a90::t_64e33cc5d8bab8 18,30-31,951-957,967-968,970,972,985-986,988,990,992-993,995-997,999-1003,1004-1005,1006-1009,1072-1074,1088-1093,1105-1106,1108-1113,1116-1118,1127-1157,1165-1171,1184-1205,1209-1214,1216-1220
+  s_fe1c4322a69a90::t_d817b1a3f03561 90-91,115-119,156,168-170
+  s_fe1c4322a69a90::t_76f6b8bc1d6102 17,29,1221-1305,1307-1311,1314-1374
+  s_fe1c4322a69a90::t_7108613fb01549 96-97,120-123,157,174-177,180,194,340,670
+  s_fe1c4322a69a90::t_daa2d196b42cd0 1158-1162,1164
+  s_fe1c4322a69a90::t_be15ba454f53ed 1375
+outfitter/packages/api/src/github-broker.ts
+  s_fe1c4322a69a90::t_56b8c1b9113200 716-741
+  s_fe1c4322a69a90::t_d5540c07a2d283 1872-1881
+outfitter/packages/api/src/routes/hooks.ts
+  s_fe1c4322a69a90::t_ec6be17cb13253 140
+outfitter/packages/api/test/github-session-pr.test.ts
+  s_fe1c4322a69a90::t_3b6c38eb9c8b8c 56,78,101,252-267
+  s_fe1c4322a69a90::t_ad76973b3533fc 268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "796829c9626d035c868a3aff7b0d9c4302610c20",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -49,6 +49,11 @@ It takes two required arguments, and both matter:
   is refused, so you can't read one. If the person didn't name a project, ask, or list them with
   `project: "projects/outfitter-509211"` and `command: "gcloud projects list --project=outfitter-509211 --format=value(projectId)"`.
 
+**When these tools are listed, don't fall back to the local `gcloud` CLI** (bash) after an error.
+An argument error means fix the arguments; the local CLI skips the approval card and the audit trail,
+and runs as whatever gcloud configuration happens to be active. Use bash `gcloud` only when the
+`google_cloud`/`gcloud` MCP tools aren't listed at all, on a laptop, and say so.
+
 Product tools take their own typed parameters; read the tool's schema rather than guessing. For
 example `cloudrun-list_services` is `{"project": "outfitter-509211", "region": "us-central1"}`
 (a bare project id, not `projects/...`).

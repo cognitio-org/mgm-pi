@@ -21,7 +21,7 @@ test("every skill loads with pi's own loader, with a short description", () => {
 
 test("GA-3 (#493): the gcloud skill carries the server's usage rules", () => {
   const text = readFileSync(`${root}skills/gcloud-mcp/SKILL.md`, "utf8");
-  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha", "/mcp-auth google_cloud", "run_gcloud_command", "cloudrun-", "Secret Manager"]) {
+  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha", "/mcp-auth google_cloud", "run_gcloud_command", "cloudrun-", "Secret Manager", "must start with `gcloud`", "also put `--project=<id>` in the command", "`projects/-` returns 403"]) {
     assert.ok(text.includes(rule), `missing: ${rule}`);
   }
 });

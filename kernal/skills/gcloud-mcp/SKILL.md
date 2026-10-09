@@ -29,11 +29,35 @@ Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<too
 - **Approvals:** read-only tools run; anything that changes something (a deploy, a write, a delete)
   shows the person an approval card first. Say what it will do and why before you call it.
 
+## Calling `gcloud-run_gcloud_command` (verified live)
+
+It takes two required arguments, and both matter:
+
+```json
+{
+  "project": "projects/outfitter-509211",
+  "command": "gcloud run services list --project=outfitter-509211 --region=us-central1 --format=json --limit=20"
+}
+```
+
+- **`command` must start with `gcloud`** (or `bq` for `run_bq_command`); `run services list` alone
+  is rejected.
+- **`project` (`projects/<id>`) only picks the project for Google's quota and API enablement.** It
+  does not set the command's project: **also put `--project=<id>` in the command**, or gcloud fails
+  with "the [project] resource is not properly specified".
+- **There is no default project and no wildcard.** `projects/-` returns 403, and `gcloud config ...`
+  is refused, so you can't read one. If the person didn't name a project, ask, or list them with
+  `project: "projects/outfitter-509211"` and `command: "gcloud projects list --project=outfitter-509211 --format=value(projectId)"`.
+
+Product tools take their own typed parameters; read the tool's schema rather than guessing. For
+example `cloudrun-list_services` is `{"project": "outfitter-509211", "region": "us-central1"}`
+(a bare project id, not `projects/...`).
+
 ## Rules
 
-- **Always pass the project explicitly** (the tool's `project` argument, or `--project=<id>`). Never
-  rely on a default: there is none, and it must never be the work project by accident. Outfitter's
-  is `outfitter-509211`.
+- **Always pass the project explicitly** (both forms above for the CLI; the tool's own parameter for
+  product tools). Never rely on a default: there is none, and it must never be the work project by
+  accident. Outfitter's is `outfitter-509211`.
 - **Use `=` in flags**: `--format=json`, `--filter=name:foo`, `--limit=20`. A space-separated value
   is parsed as a positional argument and fails.
 - **Long operations take `--async`** (creates, deploys, resizes). Then poll with the matching

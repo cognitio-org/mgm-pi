@@ -1,0 +1,35 @@
+--- a/pi-mcp-adapter/json-schema-validator.ts
++++ b/pi-mcp-adapter/json-schema-validator.ts
+@@ -33,6 +33,16 @@
+   };
+ }
+ 
++/**
++ * The formats Google's MCP servers (*.googleapis.com/mcp) put in their tool schemas, from Google's
++ * API Discovery format list. Without them Ajv logs "unknown format ... ignored" for every Google
++ * tool schema it compiles. Only google-duration ("3.5s") is checked; the rest are accepted as is.
++ */
++function addGoogleFormats(ajv: Ajv): void {
++  ajv.addFormat("google-duration", /^-?\d+(\.\d{1,9})?s$/);
++  for (const name of ["google-datetime", "google-fieldmask", "uint32", "uint64"]) ajv.addFormat(name, true);
++}
++
+ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
+   let draft07Validator: AjvJsonSchemaValidator | undefined;
+   let draft2020Validator: AjvJsonSchemaValidator | undefined;
+@@ -45,6 +55,7 @@
+           const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
+           const ajv = new Ajv2020({ strict: false, allErrors: true });
+           addFormats(ajv);
++          addGoogleFormats(ajv);
+           return new AjvJsonSchemaValidator(ajv);
+         })();
+         return draft2020Validator.getValidator<T>(schema);
+@@ -61,6 +72,7 @@
+           allErrors: true,
+         });
+         addFormats(ajv);
++        addGoogleFormats(ajv);
+         return new AjvJsonSchemaValidator(ajv);
+       })();
+       return draft07Validator.getValidator<T>(schema);

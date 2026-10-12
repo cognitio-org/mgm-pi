@@ -87,12 +87,17 @@ cp "$CHROME_SRC/extension-id" "$STAGE/chrome/extension-id"
 # apply-adapter-patch.sh applies it once, skips it when already applied, and fails on anything in
 # between, so a build never ships half the fix or none of it.
 "$ROOT/scripts/apply-adapter-patch.sh" "$STAGE/.pi/npm/node_modules" "$ROOT/scripts/patches/pi-mcp-adapter-force-reauth.patch"
+# Google's MCP servers use their own format names (google-duration, ...); without them Ajv logs an
+# "unknown format ... ignored" warning per Google tool schema at startup. Same apply-once rule.
+"$ROOT/scripts/apply-adapter-patch.sh" "$STAGE/.pi/npm/node_modules" "$ROOT/scripts/patches/pi-mcp-adapter-google-formats.patch"
 # Verify the result, not the tool: 0.3.9 shipped unpatched because a guard misjudged the tree.
 MCP_ADAPTER="$STAGE/.pi/npm/node_modules/pi-mcp-adapter"
 grep -q 'skipStaleClient(): void' "$MCP_ADAPTER/mcp-oauth-provider.ts" \
   && grep -q 'authProvider.skipStaleClient()' "$MCP_ADAPTER/mcp-auth-flow.ts" \
   && grep -q 'forceReauthorization: true,' "$MCP_ADAPTER/commands.ts" \
   || { echo "package.sh: the staged pi-mcp-adapter is missing the re-auth patch" >&2; exit 1; }
+[[ "$(grep -c 'addGoogleFormats(ajv);' "$MCP_ADAPTER/json-schema-validator.ts")" == 2 ]] \
+  || { echo "package.sh: the staged pi-mcp-adapter is missing the Google formats patch" >&2; exit 1; }
 case "$PLATFORM" in
   darwin-arm64) keep='darwin[-_]arm64|arm64[-_]darwin|aarch64[-_]apple' ;;
   darwin-x64)   keep='darwin[-_]x64|x64[-_]darwin|x86_64[-_]apple' ;;

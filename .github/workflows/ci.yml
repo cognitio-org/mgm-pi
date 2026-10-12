@@ -15,10 +15,10 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     defaults: { run: { working-directory: kernal } }
     steps:
-      - uses: actions/checkout@v5
+      - uses: useblacksmith/checkout@v1
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm, cache-dependency-path: kernal/package-lock.json }
       - run: npm ci

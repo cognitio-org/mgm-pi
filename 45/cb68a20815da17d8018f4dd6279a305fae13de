@@ -1,0 +1,31 @@
+banking/src/client.mjs
+  s_c67f9150e24079::t_1f354bb92e9f55 1-106
+banking/src/redact.mjs
+  s_38ec74cfb7fa1d::t_d4f583d95509f5 1-14
+banking/test/mcp.test.mjs
+  s_38ec74cfb7fa1d::t_9877ab56c01da5 1-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "45cb68a20815da17d8018f4dd6279a305fae13de",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

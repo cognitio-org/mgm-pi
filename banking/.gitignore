@@ -1,0 +1,7 @@
+.env
+*.pem
+*.key
+*.crt
+session.json
+pending.json
+node_modules/

@@ -20,7 +20,10 @@ the operator's key is re-minted with the toolset.
 
 Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<tool>`,
 `cloudmonitoring-<tool>`, `firestore-<tool>`, `cloudbilling-<tool>`, `billingbudgets-<tool>`, and
-`gcloud-run_gcloud_command` for the CLI.
+`gcloud-run_gcloud_command` for the CLI. **Through the `mcp` tool they carry the entry's name too:
+call them exactly as `mcp({ server: "google_cloud" })` lists them**, e.g.
+`google_cloud_gcloud-run_bq_command`, `google_cloud_cloudrun-list_services`,
+`google_cloud_cloudbilling-get_project_billing_info`. A bare `run_bq_command` is "not found".
 
 - **Prefer a product tool** for Cloud Run (services, revisions, deploys), Cloud Logging (reads),
   Cloud Monitoring (metrics, PromQL `query_range`) and Firestore (document reads and writes). They are
@@ -40,8 +43,11 @@ Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<too
 - **Spend comes from the billing export in BigQuery**, read with `gcloud-run_bq_command`. The dataset
   is `billing_export` in `outfitter-509211`, location `US`. Find the table with
   `bq ls --project_id=outfitter-509211 billing_export`; it is named
-  `gcp_billing_export_v1_<billing account id with _ for ->`. Then query it, for example net cost
-  by service for one invoice month:
+  `gcp_billing_export_v1_<billing account id with _ for ->` (totals by service, SKU, project and
+  day). A second table, `gcp_billing_export_resource_v1_<id>`, is there if the Detailed export is
+  on: use it only for per-resource questions (`resource.name`, e.g. which Cloud Run service), since
+  it is much larger. Only `billing_export` is the export; ignore other datasets (e.g. `gcp_billing_immutable_…`).
+  Then query it, for example net cost by service for one invoice month:
 
   ```
   bq query --use_legacy_sql=false --project_id=outfitter-509211 --location=US --maximum_bytes_billed=1000000000 --format=json 'SELECT service.description AS service, currency, ROUND(SUM(cost) + SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c), 0)), 2) AS net_cost FROM billing_export.<table> WHERE invoice.month = "202610" GROUP BY service, currency ORDER BY net_cost DESC'

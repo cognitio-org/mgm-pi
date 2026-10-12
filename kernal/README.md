@@ -192,8 +192,9 @@ with other platforms' native binaries removed, the launcher, docs and `.env.exam
 no Node. We never modify pi; everything kernal adds is extensions, so upgrading pi is a version bump.
 
 ```bash
-# release (maintainer)
-gh release create v0.2.0 --title "kernal 0.2.0" --notes "..."          # → CI builds and attaches bundles
+# release (maintainer): the next vX.Y.Z on origin/main, notes from the kernal/ commits since the last one
+DRY_RUN=1 scripts/release.sh                                         # print the version and notes
+scripts/release.sh                                                   # patch; or: minor, major, 0.4.0 → CI builds and attaches bundles
 scripts/package.sh 0.2.0 darwin-arm64                               # the same build, locally → dist/
 
 # install (user)

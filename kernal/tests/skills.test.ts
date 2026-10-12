@@ -21,7 +21,7 @@ test("every skill loads with pi's own loader, with a short description", () => {
 
 test("GA-3 (#493): the gcloud skill carries the server's usage rules", () => {
   const text = readFileSync(`${root}skills/gcloud-mcp/SKILL.md`, "utf8");
-  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha", "/mcp-auth google_cloud", "run_gcloud_command", "cloudrun-", "Secret Manager", "must start with `gcloud`", "also put `--project=<id>` in the command", "`projects/-` returns 403", "don't fall back to the local `gcloud` CLI", "cloudbilling-get_project_billing_info", "billingbudgets-list_budgets", "None of these report spend", "billing_export", "--maximum_bytes_billed", "Never estimate a figure"]) {
+  for (const rule of ["`=` in flags", "--async", "--limit", "project explicitly", "iam service-accounts", "billing", "alpha", "/mcp-auth google_cloud", "run_gcloud_command", "cloudrun-", "Secret Manager", "must start with `gcloud`", "also put `--project=<id>` in the command", "`projects/-` returns 403", "don't fall back to the local `gcloud` CLI", "cloudbilling-get_project_billing_info", "billingbudgets-list_budgets", "None of these report spend", "billing_export", "--maximum_bytes_billed", "Never estimate a figure", "google_cloud_gcloud-run_bq_command", "exactly as `mcp({ server: \"google_cloud\" })` lists them", "gcp_billing_export_resource_v1_"]) {
     assert.ok(text.includes(rule), `missing: ${rule}`);
   }
 });

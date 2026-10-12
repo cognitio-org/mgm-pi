@@ -1,0 +1,67 @@
+kernal/.pi/extensions/_shared/central-config.ts
+  s_02bad6fff96068::t_ebc3d0cd18b7ba 1122
+kernal/.pi/extensions/_shared/mcp-gate.ts
+  s_02bad6fff96068::t_7d505dc32cb28c 1-45
+kernal/.pi/extensions/_shared/outfitter-session.ts
+  s_02bad6fff96068::t_73ca0e64617d47 48
+kernal/.pi/extensions/connect/index.ts
+  s_02bad6fff96068::t_0ed0c305423878 26-27,261-266
+kernal/.pi/extensions/kernal-subscriptions/runner.ts
+  s_02bad6fff96068::t_850bf2a619e5d3 21-23,97-98
+kernal/.pi/mcp.json
+  s_02bad6fff96068::t_ca677a0ef41e5e 20-32
+kernal/docs/architecture.md
+  s_02bad6fff96068::t_4ea8cea33b51fb 215
+kernal/skills/gcloud-mcp/SKILL.md
+  s_02bad6fff96068::t_d7961188814e4c 1-29
+kernal/tests/gcloud-gate.test.ts
+  s_02bad6fff96068::t_00c423bd124374 1-75
+kernal/tests/skills.test.ts
+  s_02bad6fff96068::t_1f640e2de65223 22-37
+outfitter/image/render-mcp.sh
+  s_02bad6fff96068::t_318be2c6e67b33 15-19,28,37,45
+outfitter/image/render-mcp.test.sh
+  s_02bad6fff96068::t_fb5e5b4ba94492 19,33,38-41,53-55
+outfitter/packages/agentd/src/mcp-gate.ts
+  s_02bad6fff96068::t_3bf498662d9fb1 1-81
+outfitter/packages/agentd/src/protocol.ts
+  s_02bad6fff96068::t_2e542e6fad947e 376-383,450,468
+outfitter/packages/agentd/src/run.ts
+  s_02bad6fff96068::t_2538e4b5cbe251 60,134-135,887-888
+outfitter/packages/agentd/test/mcp-gate.test.ts
+  s_02bad6fff96068::t_7f246482dcdb68 1-89
+outfitter/packages/api/src/agentlink.ts
+  s_02bad6fff96068::t_2d236b46966830 51,293-295,1341-1354,1416-1418
+outfitter/packages/api/src/central/device-lifecycle.ts
+  s_02bad6fff96068::t_88a178bd00bc29 38
+outfitter/packages/api/src/central/gcloud-mcp.ts
+  s_02bad6fff96068::t_712eabcf0ca238 1-83
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_02bad6fff96068::t_66f6d5cdf6318a 24,51-53,439,449,474,484,651,655-664,672
+outfitter/packages/api/src/central/run-keys.ts
+  s_02bad6fff96068::t_2651bfdcfab029 27,78-80,161
+outfitter/packages/api/src/routes/hooks.ts
+  s_02bad6fff96068::t_dba75c31846e0e 29,124-125,136
+outfitter/packages/api/src/store/keys.ts
+  s_02bad6fff96068::t_c8c6f5d0f8c45a 27-29,49-50,118-123,254-257
+outfitter/packages/api/test/gcloud-mcp.test.ts
+  s_02bad6fff96068::t_b3e7b88a77ade2 1-166
+outfitter/packages/api/test/run-keys.test.ts
+  s_02bad6fff96068::t_eed8b25c339b71 6,261-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "1a576061c1b719cde28ee44abc818fc2c794c976",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

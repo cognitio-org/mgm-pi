@@ -1,0 +1,22 @@
+outfitter/docs/specs/agent-engine-dev-host.md
+  s_3db1c44e2566d6::t_2050fdf52e7434 1-215,219-547
+  s_3db1c44e2566d6::t_1bd459bfabccb6 216-218
+outfitter/EPIC.md
+  s_3db1c44e2566d6::t_bef121393c227b 674-694
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "d2fd28074018a3b2737376ce959d5cfe417979f6",
+  "prompts": {},
+  "sessions": {
+    "s_3db1c44e2566d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72f24c9d-c253-4897-b27e-c48c7c95f2c8",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

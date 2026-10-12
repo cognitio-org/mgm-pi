@@ -1,0 +1,42 @@
+outfitter/packages/web/test/git-view.test.ts
+  s_fe1c4322a69a90::t_fb4e1700ea8a08 2-3
+  s_fe1c4322a69a90::t_0d78b016fcd2ed 1,4-122
+outfitter/packages/web/src/components/CreatePrDialog.tsx
+  s_fe1c4322a69a90::t_2b399e9f5218df 1-118
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_fe1c4322a69a90::t_37171b88a9bf92 37-41,78-82,120,147-151,311-336,534-551,633-645,774-779,786-787,810,981,994,999,1007-1031
+  s_fe1c4322a69a90::t_8e0b1583be1c60 1032
+outfitter/packages/web/test/fixtures/git.ts
+  s_fe1c4322a69a90::t_fb4e1700ea8a08 1-48
+outfitter/packages/web/src/components/ChangesPane.tsx
+  s_fe1c4322a69a90::t_574f23a6b9513d 1-478
+outfitter/packages/web/src/lib/git-view.ts
+  s_fe1c4322a69a90::t_a71d2c8433405a 1-226
+outfitter/packages/web/test/changes-pane.test.tsx
+  s_fe1c4322a69a90::t_ebdb9f7c0752c0 1-252
+outfitter/packages/web/src/hooks/useSessionGit.ts
+  s_fe1c4322a69a90::t_b3661ba267e0ee 1-354
+outfitter/packages/web/src/components/GitChips.tsx
+  s_fe1c4322a69a90::t_66dabc8e4a2a4d 1-133
+outfitter/packages/web/src/styles/session.css
+  s_fe1c4322a69a90::t_8af5d6ddfa53b7 1337-1851
+  s_fe1c4322a69a90::t_5b937508e90ccf 1852
+outfitter/packages/web/src/hooks/useDiffNotes.ts
+  s_fe1c4322a69a90::t_f3e30023451163 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "e8ef56956ddf931a8a308190cba62af8580264f0",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

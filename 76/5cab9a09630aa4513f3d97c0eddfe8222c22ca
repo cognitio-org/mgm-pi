@@ -1,0 +1,32 @@
+outfitter/landing/tools/legal-pages.py
+  s_c67f9150e24079::t_056d85ff834158 89-90
+  s_c67f9150e24079::t_8aae73259b7c2a 1-88,91-314
+outfitter/landing/test/legal.test.mjs
+  s_c67f9150e24079::t_056d85ff834158 1-41
+outfitter/landing/public/index.html
+  s_c67f9150e24079::t_8aae73259b7c2a 128-129
+outfitter/landing/public/style.css
+  s_c67f9150e24079::t_642ddb54b41be3 416-431,433
+  s_c67f9150e24079::t_8aae73259b7c2a 432
+outfitter/landing/public/privacy/index.html
+  s_c67f9150e24079::t_8aae73259b7c2a 1-69,72-203
+  s_c67f9150e24079::t_056d85ff834158 70-71
+outfitter/landing/public/terms/index.html
+  s_c67f9150e24079::t_8aae73259b7c2a 1-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "765cab9a09630aa4513f3d97c0eddfe8222c22ca",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

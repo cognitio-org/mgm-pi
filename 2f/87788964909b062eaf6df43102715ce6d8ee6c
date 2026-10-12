@@ -1,0 +1,99 @@
+outfitter/packages/api/src/local-hosts/contract.ts
+  s_38ec74cfb7fa1d::t_ee74b94021e57e 1-18,22-213
+  s_8059725af2cc76::t_f8147b97231f91 19-21
+outfitter/packages/api/src/local-hosts/events.ts
+  s_38ec74cfb7fa1d::t_279b52cff7fda9 1-18,21-43,48-109
+  s_8059725af2cc76::t_1c6c903bd99c00 19-20,44-47
+outfitter/packages/api/src/routes/context.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 26-27,84-89
+outfitter/packages/api/src/store/memory.ts
+  s_38ec74cfb7fa1d::t_beb7743bcf78fb 76,1401
+outfitter/packages/api/src/routes/local-hosts.ts
+  s_38ec74cfb7fa1d::t_88f328e54a2a8f 1-16
+outfitter/packages/api/src/routes/hooks.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 123-125,133
+outfitter/packages/api/src/laptop.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 10-11,26-28
+outfitter/docs/specs/local-host.md
+  s_38ec74cfb7fa1d::t_c5fbd0b88ffc17 1-52,54-126,135-164,167-181,184-209,211-212,214-216,220-243,247-260,274-286,289-319,327-388,392-407,410-422,431-470,473-478,484,489-518,529-531,560-723,728-748,755-780,785-787,791-814,826-827,830-852,869-880,883-893,895-901
+  s_8059725af2cc76::t_ec188ac588c8c1 53,127-134,165-166,182-183,210,213,217-219,244-246,261-273,287-288,320-326,389-391,408-409,423-430,471-472,479-483,485-488,519-528,532-559,724-727,749-754,781-784,788-790,815-825,828-829,853-868,881-882,894
+outfitter/packages/api/src/store/local-hosts.ts
+  s_38ec74cfb7fa1d::t_2da09ef2e7430f 1-63,65-268
+  s_38ec74cfb7fa1d::t_9645bd0f8fd489 64
+outfitter/packages/api/test/stop.test.ts
+  s_38ec74cfb7fa1d::t_dbb0be50d74973 338
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 29,106-107,168,267-273,351-352,374
+outfitter/packages/api/src/store/mongo.ts
+  s_38ec74cfb7fa1d::t_beb7743bcf78fb 84,1802,1841,1904
+outfitter/packages/api/src/routes/index.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 27,76-77
+outfitter/packages/api/test/local-hosts-contract.test.ts
+  s_38ec74cfb7fa1d::t_0df5f22ca4441b 212,219,264
+  s_38ec74cfb7fa1d::t_49b9cc6e1028eb 1-40,42-211,213-218,220-263,265-266
+  s_8059725af2cc76::t_794dea5edaca70 41,267-281
+outfitter/packages/api/src/store/types.ts
+  s_38ec74cfb7fa1d::t_beb7743bcf78fb 12,1427-1428
+outfitter/packages/api/src/local-hosts/naming.ts
+  s_38ec74cfb7fa1d::t_f88c8409b90f6a 1-70,75-121
+  s_8059725af2cc76::t_05ad0958dd989c 71-74
+outfitter/packages/api/src/config.ts
+  s_38ec74cfb7fa1d::t_1bdd7e25a48087 122
+  s_8059725af2cc76::t_bc2df9b03aaa25 117-121,165-171,540,559
+kernal/.pi/extensions/kernal-local/state.ts
+  s_38ec74cfb7fa1d::t_31e43997ff6968 1-242
+kernal/tests/local-service.test.ts
+  s_38ec74cfb7fa1d::t_e9fd582229ef78 1-252
+kernal/.pi/extensions/kernal-local/service.ts
+  s_38ec74cfb7fa1d::t_9e34e344b8b346 1-209,212,215-261
+  s_38ec74cfb7fa1d::t_caab62f6895b7c 210-211,213-214
+kernal/docs/local-host.md
+  s_8059725af2cc76::t_1f54f8519d392d 1-86
+kernal/.pi/extensions/kernal-local/loop.ts
+  s_38ec74cfb7fa1d::t_1f828f527b5c03 273,278-282,475
+  s_38ec74cfb7fa1d::t_596ea0e3b829e0 1-187,190,192-272,274-277,283-474,476-646
+  s_38ec74cfb7fa1d::t_9475371f1e5e93 188-189,191
+  s_8059725af2cc76::t_779c085ccadafa 647-657
+kernal/README.md
+  s_8059725af2cc76::t_5528b40805ca96 684-693
+kernal/.pi/extensions/kernal-local/protocol.ts
+  s_38ec74cfb7fa1d::t_3f0205c49092ce 1-132
+kernal/.pi/extensions/kernal-local/commands.ts
+  s_38ec74cfb7fa1d::t_a8ae1e9c8fed30 1-269,271-314
+  s_38ec74cfb7fa1d::t_508010e751fcf1 270
+kernal/tests/local-loop.test.ts
+  s_8059725af2cc76::t_077ba818cbb4b0 457-476
+  s_38ec74cfb7fa1d::t_e45f9213904965 372-373,375
+  s_38ec74cfb7fa1d::t_cddadb2a6cf9a2 1-366,368,370-371,374,376-456,477-543
+  s_38ec74cfb7fa1d::t_1f828f527b5c03 367,369
+kernal/.pi/extensions/kernal-local/cli.ts
+  s_38ec74cfb7fa1d::t_508010e751fcf1 1-18
+kernal/tests/local-cli.test.ts
+  s_8059725af2cc76::t_f0f4718b6a0737 1-311
+kernal/bin/kernal
+  s_38ec74cfb7fa1d::t_6a645b312c02ef 410-427,432-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2f87788964909b062eaf6df43102715ce6d8ee6c",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_8059725af2cc76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb12699c-4940-41c3-a0ff-fc0496b89fc2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+outfitter/packages/api/test/local-hosts-contract.test.ts
+  s_8059725af2cc76::t_794dea5edaca70 41,267-281
+outfitter/packages/api/src/config.ts
+  s_8059725af2cc76::t_bc2df9b03aaa25 117-121,165-171,540,559
+outfitter/packages/api/src/local-hosts/contract.ts
+  s_8059725af2cc76::t_f8147b97231f91 19-21
+outfitter/packages/api/src/local-hosts/events.ts
+  s_8059725af2cc76::t_1c6c903bd99c00 19-20,44-47
+outfitter/docs/specs/local-host.md
+  s_8059725af2cc76::t_ec188ac588c8c1 53,127-134,165-166,182-183,210,213,217-219,244-246,261-273,287-288,320-326,389-391,408-409,423-430,471-472,479-483,485-488,519-528,532-559,724-727,749-754,781-784,788-790,815-825,828-829,853-868,881-882,894
+outfitter/packages/api/src/local-hosts/naming.ts
+  s_8059725af2cc76::t_05ad0958dd989c 71-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "085e2a74accb07fa78cb12a749bbade6e1ff502f",
+  "prompts": {},
+  "sessions": {
+    "s_8059725af2cc76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb12699c-4940-41c3-a0ff-fc0496b89fc2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

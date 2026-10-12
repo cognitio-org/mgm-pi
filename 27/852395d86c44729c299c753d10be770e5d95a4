@@ -1,0 +1,228 @@
+outfitter/packages/api/src/routes/context.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 17,95-96
+outfitter/deploy/gcloud-mcp-iam.sh
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-139
+kernal/scripts/package.sh
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 85-91
+.github/workflows/outfitter-deploy.yml
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 71-72
+outfitter/packages/api/test/mongo-sessions.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 61-93,194-214
+  s_02bad6fff96068::t_e2cdaea29bc616 215-217
+outfitter/docs/protocol.md
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 207,558-562,568
+outfitter/packages/api/src/routes/admin.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 20,77
+outfitter/packages/api/src/autofix.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-380
+outfitter/packages/api/src/routes/sessions.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 20-21,231-233,483-507,563-589,689-692
+outfitter/docs/runbooks/gcloud-mcp.md
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-138
+outfitter/packages/api/src/store/mongo.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 8,183-225,1918-1919
+outfitter/packages/api/test/session-changes-route.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-74
+outfitter/packages/api/test/session-changes.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-314
+outfitter/packages/agentd/src/run.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 20,1570-1571
+outfitter/deploy/test/gcloud-mcp-iam.test.sh
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-104
+kernal/.pi/extensions/gcloud-approval/classify.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-229
+.github/workflows/outfitter-ci.yml
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 56-57
+outfitter/docs/design/sessions-redesign-demo.html
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-1261
+outfitter/packages/api/src/store/types.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 96-100,105-132,873-885
+outfitter/packages/api/test/github-catalog.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 7,570-657
+outfitter/packages/api/src/github-catalog.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 15-18,124-137,326,502-577
+  s_02bad6fff96068::t_854126db8f1e73 578
+outfitter/packages/api/test/admin-gcloud.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-165
+outfitter/packages/api/src/store/memory.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 8,167-194
+outfitter/packages/api/src/session-changes.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-377
+outfitter/packages/agentd/src/git.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 311-323,634-653,659-660,664-667,669
+outfitter/packages/api/src/routes/hooks.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 129-130,140
+kernal/tests/gcloud-classify.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-275
+outfitter/packages/api/test/autofix.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-623
+outfitter/deploy/CLAUDE.md
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 29-32
+kernal/.pi/extensions/gcloud-approval/index.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-96
+outfitter/packages/api/src/checkpoint-wire.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 41-46
+kernal/.pi/extensions/gcloud-approval/hook.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-127
+outfitter/packages/api/test/github-routes.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 91-125
+kernal/tests/gcloud-approval.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-279
+outfitter/packages/api/src/admin/ops.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 72-74,110-113,137,613-617,737,768-769,771,778
+outfitter/packages/api/src/admin/gcloud-ops.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-115
+kernal/scripts/patches/pi-mcp-adapter-force-reauth.patch
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 3,10-12,18-29,34,44-196
+kernal/tests/mcp-force-reauth.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 2-3,6,9-10,12,18-22,29-32,35-56,58-64,66-77,79-96,103-250
+outfitter/deploy/test/gcloud-mcp-router.test.sh
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-124
+outfitter/deploy/gcloud-mcp-router.sh
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-159
+outfitter/packages/api/src/admin/drive.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 27,36,152-174,204
+outfitter/packages/agentd/src/protocol.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 653-654
+kernal/.pi/extensions/gcloud-approval/config-check.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 1-48
+outfitter/packages/agentd/test/git-repo.test.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 10,13,238-262
+  s_02bad6fff96068::t_30d33defe98298 263
+outfitter/packages/api/src/server.ts
+  s_02bad6fff96068::t_7c5ac9fd12ba9c 37,45-46,114-115,182-192,377,383,387-388,399,403
+outfitter/docs/specs/sysop-tools.md
+  s_02bad6fff96068::t_a9e74f858dc0f3 88-121
+outfitter/packages/web/src/App.tsx
+  s_02bad6fff96068::t_496003fed379dc 14,64-66,115-118,129,135-137,143,176,178,232,258-259
+outfitter/packages/web/src/api/client.ts
+  s_02bad6fff96068::t_140d3ff4c563cf 76-93,145-147,639-669,949-955,1007-1011
+outfitter/packages/web/src/components/ChangesPane.tsx
+  s_02bad6fff96068::t_fff92b9f695a34 1-615
+outfitter/packages/web/src/components/Composer.tsx
+  s_02bad6fff96068::t_d0f85340a77e62 11,40-48,82-86,229-230,233-237,297-299,301-366
+outfitter/packages/web/src/components/CreatePrDialog.tsx
+  s_02bad6fff96068::t_75b109033d79c6 1-116
+outfitter/packages/web/src/components/DiskBoxSidebar.tsx
+  s_02bad6fff96068::t_e73bd9e1a27881 1-232
+outfitter/packages/web/src/components/EntryItem.tsx
+  s_02bad6fff96068::t_a381dfead58a2f 3,12-13,98
+outfitter/packages/web/src/components/GitChips.tsx
+  s_02bad6fff96068::t_145bae8eaa174b 1-134
+outfitter/packages/web/src/components/IdeChip.tsx
+  s_02bad6fff96068::t_4feddeb29158a5 4,100
+outfitter/packages/web/src/components/KnightRiderScanner.tsx
+  s_02bad6fff96068::t_222f7689645dcb 1-64
+outfitter/packages/web/src/components/NerdOutPanel.tsx
+  s_02bad6fff96068::t_bb981b0d2c5cd0 57,63-65,155-157,178-182
+outfitter/packages/web/src/components/PopMenu.tsx
+  s_02bad6fff96068::t_5e4d5e43cec062 1-75,78,80,82-88,90,92-97
+outfitter/packages/web/src/components/SessionDetails.tsx
+  s_02bad6fff96068::t_66a2ee041eb5cb 1-203
+outfitter/packages/web/src/components/SessionIcons.tsx
+  s_02bad6fff96068::t_fab2100a64de2e 1-87
+outfitter/packages/web/src/components/SessionMenu.tsx
+  s_02bad6fff96068::t_2e151a28674726 1-191
+outfitter/packages/web/src/components/SessionSheet.tsx
+  s_02bad6fff96068::t_3198e8425bde3c 1-54
+outfitter/packages/web/src/components/TranscriptFlow.tsx
+  s_02bad6fff96068::t_2d1aae8e315a39 1-8,11,13-16,18-20,32,34-39,44,46-50,52,54,56-57,60-75,77,80,82-83,85-97,99,101-102,105,110,115,117-122,124-138,143,145-149,151-158,162-208,210-235,237-238,240-245,247-248,251-288
+outfitter/packages/web/src/components/UiRequestPanel.tsx
+  s_02bad6fff96068::t_1b27cbb4ce6f95 1,43-54,66-93,106-110,112,125-129,132,136,139,147-151,154,161,169-173,175,177,192,198-205
+outfitter/packages/web/src/hooks/useDiffNotes.ts
+  s_02bad6fff96068::t_4fe40eaf1e174a 1-70
+outfitter/packages/web/src/hooks/useFocusTrap.ts
+  s_02bad6fff96068::t_281a047f2d1212 1-59
+outfitter/packages/web/src/hooks/useMediaQuery.ts
+  s_02bad6fff96068::t_d782f12e90ab35 1-22
+outfitter/packages/web/src/hooks/useSessionGit.ts
+  s_02bad6fff96068::t_949e6de361daf5 1-17,19-23,26-32,35-53,56-57,60-79,81-134,137-155,157-159,162-163,166-372
+outfitter/packages/web/src/lib/break-keys.ts
+  s_02bad6fff96068::t_edf07d829ed3ee 1-37
+outfitter/packages/web/src/lib/disk-box.ts
+  s_02bad6fff96068::t_c32b5b044d2315 1-89
+outfitter/packages/web/src/lib/flow.ts
+  s_02bad6fff96068::t_d1d8695fdbc05c 1-10,12,14-15,17,22,24,33-47,50-55,58-77,80-87,89-91,94-95,97-98,101-102,104,106,110,120,122-123,125-127,129,140,150,165,174,178-179,184,187-189,191-212
+outfitter/packages/web/src/lib/git-view.ts
+  s_02bad6fff96068::t_d2196b5e160de3 1-252
+outfitter/packages/web/src/lib/html-preview-access.ts
+  s_02bad6fff96068::t_edceebf84b4678 5
+outfitter/packages/web/src/lib/live-status.ts
+  s_02bad6fff96068::t_2bee8dea63251a 1-82
+outfitter/packages/web/src/lib/nav.ts
+  s_02bad6fff96068::t_3baad117763c04 1-33
+outfitter/packages/web/src/lib/retro-errors.ts
+  s_02bad6fff96068::t_f4d9031849f2db 131-133,143
+outfitter/packages/web/src/lib/scanner.ts
+  s_02bad6fff96068::t_109090ee652254 1-80
+outfitter/packages/web/src/lib/session-lamp.ts
+  s_02bad6fff96068::t_aac67495024542 33
+outfitter/packages/web/src/lib/session-prefs.ts
+  s_02bad6fff96068::t_4c071899d5c745 1-53
+outfitter/packages/web/src/lib/tool-rows.ts
+  s_02bad6fff96068::t_6106bf3a0f0aab 1-354
+outfitter/packages/web/src/pages/SessionPage.tsx
+  s_02bad6fff96068::t_6acefce21cb268 1-3,6-8,10,24-34,37-41,51-59,61,67,75-91,104,120,123,125,138-155,157,163,179-180,196,234,252-256,262,297-330,332-337,339-340,343,351-366,380,383-387,409,412,429,480,483-496,505,516-517,523-550,560,562-563,595-603,615-737,739,741-769,771-781,783-788,790,793-798,800,802-803,805,807-810,812,814-938,940-990,992-1016,1019-1086,1088-1092
+outfitter/packages/web/src/style.css
+  s_02bad6fff96068::t_6e9d1cd0619b1a 15
+outfitter/packages/web/src/styles/layout.css
+  s_02bad6fff96068::t_686b81bf88312b 147,173,198,205
+outfitter/packages/web/src/styles/mobile.css
+  s_02bad6fff96068::t_908266bb8d5950 290
+outfitter/packages/web/src/styles/pages.css
+  s_02bad6fff96068::t_27398c40d322f3 681-682,686-687,700,705-706,737
+outfitter/packages/web/src/styles/session.css
+  s_02bad6fff96068::t_75204bb49d2bf6 1-1998
+outfitter/packages/web/src/styles/theme.css
+  s_02bad6fff96068::t_0d67f6c8da49b6 53-59,106-110,156-161,206-210
+outfitter/packages/web/test/autofix-client.test.ts
+  s_02bad6fff96068::t_69e4291f018b02 1-23
+outfitter/packages/web/test/break-keys.test.ts
+  s_02bad6fff96068::t_bb200cba60fe16 2-3,5-7,9-10,13-16,18-25,28-37,40-46,49-53
+outfitter/packages/web/test/browser-capture.test.tsx
+  s_02bad6fff96068::t_3ae943f07dedee 101,127,144,160
+outfitter/packages/web/test/changes-pane.test.tsx
+  s_02bad6fff96068::t_875cc419fff7fb 1-319
+outfitter/packages/web/test/changes-review.test.tsx
+  s_02bad6fff96068::t_31d7fa2230409f 2-3,5-13,17,19-21,23,26-35,38-39,42-56,58-67,70-81,83-90,92-97,99-100,102-114,116-123,125-128,130-131,133-134,136,138-243,245-247,249-252
+outfitter/packages/web/test/disk-box.test.ts
+  s_02bad6fff96068::t_2dfc62ad2831ab 1-69
+outfitter/packages/web/test/failed-attempts.test.tsx
+  s_02bad6fff96068::t_a0b126e32d9e26 11,14,168-169,173-180,184-188
+outfitter/packages/web/test/fixtures/git.ts
+  s_02bad6fff96068::t_d71d4a94bdf0b3 1-48
+outfitter/packages/web/test/flow.test.ts
+  s_02bad6fff96068::t_a6ca25791a01c1 1-96
+outfitter/packages/web/test/gemini-empty-stop.test.tsx
+  s_02bad6fff96068::t_557d4de2642d85 8,101-103
+outfitter/packages/web/test/git-view.test.ts
+  s_02bad6fff96068::t_ce0302b6c98883 1-140
+outfitter/packages/web/test/html-preview-per-run.test.tsx
+  s_02bad6fff96068::t_6f247a19d2ae0e 6-7,9,34,36,41,84-85,96-98
+outfitter/packages/web/test/retro-errors.test.ts
+  s_02bad6fff96068::t_24079f6d14a0b5 93-94,97-98
+outfitter/packages/web/test/scanner.test.ts
+  s_02bad6fff96068::t_9dc9b5c1849aef 1-85
+outfitter/packages/web/test/session-redesign.test.tsx
+  s_02bad6fff96068::t_7c5fea42c263a5 1-18,21,23,25,27-32,34-43,46-47,50-64,67-79,82-91,94-103,105,107-111,113-127,130-137,139-146,148,150-162,164-165,167,169-172,174-197,199,201,203-210,212,214-221,223,225-243,245-250,252-262,265-278,282-295,298-301,303,306-313,315,319-347,349-354,357-359
+outfitter/packages/web/test/thought-bubble.test.tsx
+  s_02bad6fff96068::t_ec4bdd492c7ed7 2,5-6
+outfitter/packages/web/test/tool-rows.test.ts
+  s_02bad6fff96068::t_7b594474ad1e6b 1-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "27852395d86c44729c299c753d10be770e5d95a4",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

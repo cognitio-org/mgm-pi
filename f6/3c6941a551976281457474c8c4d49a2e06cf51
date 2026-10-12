@@ -1,0 +1,36 @@
+outfitter/packages/api/src/routes/sessions.ts
+  s_ca69cd935abc78::t_9e9d50f15a3cca 439-441
+outfitter/packages/api/src/session-create.ts
+  s_ca69cd935abc78::t_9e9d50f15a3cca 86
+  s_ca69cd935abc78::t_03ae2ca3ea74a2 8
+outfitter/packages/api/src/session-model.ts
+  s_ca69cd935abc78::t_03ae2ca3ea74a2 33
+  s_ca69cd935abc78::t_9e9d50f15a3cca 10,25-32,34-40,62-74,97
+outfitter/packages/api/test/session-model.test.ts
+  s_ca69cd935abc78::t_7e289bcdd81d7f 81,88-136
+  s_ca69cd935abc78::t_ab765d57db23b1 137
+outfitter/packages/web/src/components/SwitchModelDialog.tsx
+  s_ca69cd935abc78::t_03ae2ca3ea74a2 35-38,99
+outfitter/packages/api/src/agentlink.ts
+  s_ca69cd935abc78::t_9e9d50f15a3cca 27,1225-1226,1371-1372
+outfitter/docs/protocol.md
+  s_ca69cd935abc78::t_6f7bf288b02b03 557
+outfitter/packages/api/docs/data-model.md
+  s_ca69cd935abc78::t_0ca2d32e53e92c 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f63c6941a551976281457474c8c4d49a2e06cf51",
+  "prompts": {},
+  "sessions": {
+    "s_ca69cd935abc78": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "deb1531a-a91a-4670-8a11-4170f73a66c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+kernal/scripts/package.sh
+  s_965b3fde483a74::t_dfa0cf94e35d16 84-89
+kernal/scripts/patches/pi-mcp-adapter-force-reauth.patch
+  s_965b3fde483a74::t_88821fab2ebf89 1-39
+kernal/tests/mcp-force-reauth.test.ts
+  s_965b3fde483a74::t_edd04b8faa2825 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "4086bb83c8a8cc3f568d011212c9249b76825ef7",
+  "prompts": {},
+  "sessions": {
+    "s_965b3fde483a74": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ce39861-d08b-40a0-9c15-013edd833810",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

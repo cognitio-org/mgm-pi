@@ -1,0 +1,60 @@
+outfitter/packages/api/src/store/local-hosts.ts
+  s_38ec74cfb7fa1d::t_4a535477a670d5 66-68
+  s_8059725af2cc76::t_9dbede673f17a8 209-221,240-242,250-251,263
+outfitter/docs/protocol.md
+  s_38ec74cfb7fa1d::t_bc0ef8014a888e 754-799
+outfitter/packages/api/src/local-hosts/registry.ts
+  s_38ec74cfb7fa1d::t_5b697fe7407bf7 1-394
+  s_8059725af2cc76::t_f5ab5f8bf69284 395-396
+outfitter/packages/api/test/local-hosts-routes.test.ts
+  s_38ec74cfb7fa1d::t_9ad55d3002100a 1-232,235-252
+  s_38ec74cfb7fa1d::t_e09ee277fbcc41 233-234
+outfitter/packages/api/src/server.ts
+  s_38ec74cfb7fa1d::t_fb9379bbd3a9d6 30-31,275-276
+outfitter/packages/api/src/laptop.ts
+  s_38ec74cfb7fa1d::t_1d43dabbfbb179 10-11
+  s_38ec74cfb7fa1d::t_08ddd39e4dc8a0 146-148
+  s_38ec74cfb7fa1d::t_0163facde570b9 40-42,50-75
+  s_38ec74cfb7fa1d::t_3303a5a7547855 27-28
+  s_38ec74cfb7fa1d::t_75643bb8941c31 128
+outfitter/packages/api/src/agentlink.ts
+  s_38ec74cfb7fa1d::t_fb9379bbd3a9d6 1226
+outfitter/packages/api/src/local-hosts/tunnel-credentials.ts
+  s_8059725af2cc76::t_d851ae850f718d 160-161
+  s_38ec74cfb7fa1d::t_00077123813495 1-159,162-324,328-363
+  s_38ec74cfb7fa1d::t_6b0b9d907f17c0 325-327
+outfitter/packages/api/src/routes/local-hosts.ts
+  s_38ec74cfb7fa1d::t_5042133c7b0e87 9,11-24,26-141
+outfitter/packages/api/test/local-hosts-registry.test.ts
+  s_38ec74cfb7fa1d::t_93733b602894fc 221-227
+  s_38ec74cfb7fa1d::t_6ebb3d1a1af39f 1-220,228-471
+  s_8059725af2cc76::t_1c8c8bca0671c3 472-530
+outfitter/packages/api/test/local-hosts-credentials.test.ts
+  s_38ec74cfb7fa1d::t_3f7e84136b3ae5 1-173,184-310,312,314-315
+  s_8059725af2cc76::t_f0008bd0d98365 174-183
+  s_8059725af2cc76::t_99f409d29485bf 311,313,316-320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ec640ee3a065296569fcf7ecc77469c7240c9355",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    },
+    "s_8059725af2cc76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb12699c-4940-41c3-a0ff-fc0496b89fc2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

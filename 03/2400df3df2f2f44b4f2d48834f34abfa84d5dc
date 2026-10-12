@@ -1,0 +1,29 @@
+outfitter/deploy/gcloud-mcp-iam.sh
+  s_02bad6fff96068::t_90b4a33800084c 126
+outfitter/deploy/gcloud-mcp-router.sh
+  s_02bad6fff96068::t_32a8cf41c3ff82 143,146,159
+  s_02bad6fff96068::t_90b4a33800084c 55-59,81-83,102-113,129,158
+outfitter/docs/runbooks/gcloud-mcp.md
+  s_02bad6fff96068::t_d355c0a7a5f325 36-38
+  s_02bad6fff96068::t_22b933d63b3d20 45-54
+outfitter/deploy/test/gcloud-mcp-router.test.sh
+  s_02bad6fff96068::t_32035ae481df36 46-49,57,84-99,101
+.github/workflows/outfitter-ci.yml
+  s_02bad6fff96068::t_3987b6ad4b13e5 56-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "032400df3df2f2f44b4f2d48834f34abfa84d5dc",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

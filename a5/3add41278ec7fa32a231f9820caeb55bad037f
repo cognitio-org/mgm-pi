@@ -1,0 +1,32 @@
+outfitter/deploy/test/google-cloud-mcp.test.sh
+  s_02bad6fff96068::t_ffc1276e13b459 132
+  s_02bad6fff96068::t_f75924140c2bdf 1-131,133-150,152-182
+  s_02bad6fff96068::t_c33038dfd2aa85 151
+outfitter/docs/runbooks/gcloud-mcp.md
+  s_02bad6fff96068::t_7a7bb37a72c3a6 134-195,197,199
+outfitter/deploy/CLAUDE.md
+  s_02bad6fff96068::t_27ce7eea7f8981 33-35
+outfitter/deploy/google-cloud-mcp.sh
+  s_02bad6fff96068::t_420c92d7f1d599 1-90,92-251
+  s_02bad6fff96068::t_1ed7ac4b34540b 91
+.github/workflows/outfitter-ci.yml
+  s_02bad6fff96068::t_381a6fe870fada 58
+.github/workflows/outfitter-deploy.yml
+  s_02bad6fff96068::t_e9fe2ec1753147 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a53add41278ec7fa32a231f9820caeb55bad037f",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+outfitter/packages/web/test/session-redesign.test.tsx
+  s_fe1c4322a69a90::t_8e0b1540c5c072 1-156,158-180
+  s_fe1c4322a69a90::t_b9d0b9ef5874fb 157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "ccf59afca4f2433e008657820e6a07f4e3aab8e1",
+  "prompts": {},
+  "sessions": {
+    "s_fe1c4322a69a90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b15f10a-0f91-42f8-8cd2-f16d6a3113d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

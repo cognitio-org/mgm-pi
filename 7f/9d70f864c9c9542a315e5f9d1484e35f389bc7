@@ -1,0 +1,23 @@
+kernal/.pi/mcp.json
+  s_c67f9150e24079::t_eb3c24a8d03baf 6
+kernal/tests/central-delivery.test.ts
+  s_c67f9150e24079::t_897075e8f64383 10,136,272,284-302,304-306,309-320
+kernal/.pi/extensions/connect/index.ts
+  s_c67f9150e24079::t_6a6861fe4f660e 207-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "7f9d70f864c9c9542a315e5f9d1484e35f389bc7",
+  "prompts": {},
+  "sessions": {
+    "s_c67f9150e24079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17f761ab-de7d-4690-a895-e067e9f608df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

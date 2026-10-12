@@ -1,0 +1,19 @@
+outfitter/image/Dockerfile
+  s_6b30ce3a41090d::t_322b8ef178f139 37-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "cc1280f64bfbca26abdf4a5de470258e17cd1265",
+  "prompts": {},
+  "sessions": {
+    "s_6b30ce3a41090d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b19d8924-a3ae-47b2-8192-cb4fd5522e9c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -1,0 +1,60 @@
+outfitter/packages/api/src/central/device-lifecycle.ts
+  s_02bad6fff96068::t_2c7ccda7549d3c 38
+outfitter/packages/api/src/store/keys.ts
+  s_02bad6fff96068::t_2c7ccda7549d3c 27-29,49-50,118-123,254-255,257
+  s_02bad6fff96068::t_a483e8ccd51386 256
+outfitter/image/render-mcp.test.sh
+  s_02bad6fff96068::t_ef0765bb32508d 19,40,55
+kernal/.pi/mcp.json
+  s_02bad6fff96068::t_b5f6ca6f9402e9 24-25
+outfitter/packages/api/src/central/gcloud-mcp.ts
+  s_02bad6fff96068::t_2c7ccda7549d3c 16-17,44-71
+  s_02bad6fff96068::t_e3cefaea08817c 72-83
+outfitter/packages/agentd/src/mcp-gate.ts
+  s_02bad6fff96068::t_fd8ce0a9417889 12,15-16,61-73,77-78
+kernal/tests/gcloud-gate.test.ts
+  s_02bad6fff96068::t_7b4221a74301a4 1-75
+outfitter/packages/api/src/central/litellm-keys.ts
+  s_02bad6fff96068::t_2c7ccda7549d3c 449,484,655-664
+outfitter/packages/api/src/routes/hooks.ts
+  s_02bad6fff96068::t_2c7ccda7549d3c 29,124-125
+  s_02bad6fff96068::t_df1d74b8b516ff 136
+outfitter/packages/api/test/run-keys.test.ts
+  s_02bad6fff96068::t_ef0765bb32508d 291-308
+kernal/.pi/extensions/_shared/mcp-gate.ts
+  s_02bad6fff96068::t_726174a62dd9ac 1-45
+kernal/.pi/extensions/connect/index.ts
+  s_02bad6fff96068::t_b5f6ca6f9402e9 26-27,261-266
+kernal/.pi/extensions/kernal-subscriptions/runner.ts
+  s_02bad6fff96068::t_b5f6ca6f9402e9 21-23,97-98
+outfitter/packages/agentd/test/mcp-gate.test.ts
+  s_02bad6fff96068::t_ef0765bb32508d 4,69-89
+outfitter/packages/api/src/agentlink.ts
+  s_02bad6fff96068::t_e3cefaea08817c 51,1344-1354,1416-1418
+kernal/.pi/extensions/_shared/central-config.ts
+  s_02bad6fff96068::t_b5f6ca6f9402e9 1122
+kernal/.pi/extensions/_shared/outfitter-session.ts
+  s_02bad6fff96068::t_b5f6ca6f9402e9 48
+outfitter/packages/api/test/gcloud-mcp.test.ts
+  s_02bad6fff96068::t_ef0765bb32508d 7-17,100-166
+kernal/docs/architecture.md
+  s_02bad6fff96068::t_a76da532fdaee9 215
+outfitter/docs/specs/sysop-tools.md
+  s_02bad6fff96068::t_79f7c438538a44 56-77,79-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "5d98c138c368d477531b99ea371be8e39e625855",
+  "prompts": {},
+  "sessions": {
+    "s_02bad6fff96068": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abe850f9-add1-4679-81ca-8f2142928825",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

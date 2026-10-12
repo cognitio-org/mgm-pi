@@ -1,0 +1,28 @@
+kernal/tests/central-delivery.test.ts
+  s_38ec74cfb7fa1d::t_c9c785436ee6c7 14
+  s_38ec74cfb7fa1d::t_8896a9d4cd20fa 213,216,221-222
+  s_38ec74cfb7fa1d::t_c87047ec1e52d4 170-212,214-215,217-220,223-277
+kernal/.pi/extensions/kernal-config/index.ts
+  s_38ec74cfb7fa1d::t_450ed85c0a213c 15-17,34,111-119,129-130,137-138
+outfitter/docs/specs/central-auth.md
+  s_38ec74cfb7fa1d::t_9aed2ce3a54096 672-675
+kernal/.pi/extensions/_shared/central-config.ts
+  s_38ec74cfb7fa1d::t_450ed85c0a213c 313-315,781,1054-1090
+  s_38ec74cfb7fa1d::t_6b547c1f5a6ab6 1091-1093
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "46abb4af0c43a5f10a4b1e2d4b489781c69868a9",
+  "prompts": {},
+  "sessions": {
+    "s_38ec74cfb7fa1d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6af4d30-1858-4d61-b3ce-fc54c0d45049",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

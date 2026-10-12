@@ -1,0 +1,19 @@
+outfitter/deploy/litellm-admin.sh
+  s_8059725af2cc76::t_c182908788f14a 142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6acab08d5f8197d84a7c891c43f6202be9af44c4",
+  "prompts": {},
+  "sessions": {
+    "s_8059725af2cc76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eb12699c-4940-41c3-a0ff-fc0496b89fc2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

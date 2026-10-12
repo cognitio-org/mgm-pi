@@ -2,9 +2,9 @@
 # google-cloud-mcp.sh against a fake router (node http, with a server and a toolset store) and a fake
 # gcloud that serves secrets from files. Checks: DRY_RUN reads nothing; a real run without CONFIRM=1
 # refuses before reading any secret; a missing primary or a failed GET aborts before any write; the
-# first run POSTs four secondaries with oauth_grant_server_id=gcloud and creates the toolset; the
+# first run POSTs six secondaries with oauth_grant_server_id=gcloud and creates the toolset; the
 # primary `gcloud` is never written; a rerun shows the servers and PUTs the toolset (no duplicate);
-# FORCE_PURGE=1 PUTs the secondaries; ENABLE_APIS=1 enables four APIs in kernal-oauth; neither the
+# FORCE_PURGE=1 PUTs the secondaries; ENABLE_APIS=1 enables six APIs in kernal-oauth; neither the
 # master key nor the client secret ever reaches stdout/stderr, including a 422 that echoes the body.
 # No network, no GCP.
 #   bash outfitter/deploy/test/google-cloud-mcp.test.sh
@@ -95,7 +95,7 @@ env -u GCLOUD_MCP_OAUTH_CLIENT_ID DRY_RUN=1 ENABLE_APIS=1 bash "${SCRIPT}" >"${W
 [[ ! -s "${ROUTER_LOG}" ]] || fail "DRY_RUN called the router"
 [[ ! -s "${STATE}/gcloud-calls" ]] || fail "DRY_RUN read a secret"
 [[ ! -e "${STATE}/enabled" ]] || fail "DRY_RUN enabled an API"
-for s in cloudrun cloudlogging cloudmonitoring firestore; do grep -q "server ${s} " "${WORK}/out" || fail "DRY_RUN plan lacks ${s}"; done
+for s in cloudrun cloudlogging cloudmonitoring firestore cloudbilling billingbudgets; do grep -q "server ${s} " "${WORK}/out" || fail "DRY_RUN plan lacks ${s}"; done
 grep -q "services enable run.googleapis.com" "${WORK}/out" || fail "DRY_RUN plan lacks the API enables"
 grep -q "firestore: no tools" "${WORK}/out" || fail "DRY_RUN doesn't say firestore has no tools yet"
 
@@ -126,32 +126,38 @@ grep -q "HTTP 422: bad url" "${WORK}/out" || { cat "${WORK}/out"; fail "422 mess
 ! grep -qE 'sk-master|GOCSPX' "${WORK}/out" || { cat "${WORK}/out"; fail "a secret leaked through the 422 error"; }
 rm -f "${FAIL_FILE}"; : >"${ROUTER_LOG}"
 
-# First run: four secondaries, toolset created, toolset_id printed.
+# First run: six secondaries, toolset created, toolset_id printed.
 CONFIRM=1 ENABLE_APIS=1 GOOGLE_CLOUD_FIRESTORE_TOOLS="get_document,list_documents" run
-[[ "$(count '^POST /v1/mcp/server ')" == 4 ]] || fail "expected four server POSTs"
+[[ "$(count '^POST /v1/mcp/server ')" == 6 ]] || fail "expected six server POSTs"
 [[ "$(count '^PUT ')" == 0 ]] || fail "first run PUT something"
 ! grep '^POST /v1/mcp/server ' "${ROUTER_LOG}" | grep -q '"server_id":"gcloud"' || fail "the primary gcloud was written"
-for s in cloudrun cloudlogging cloudmonitoring firestore; do
+for s in cloudrun cloudlogging cloudmonitoring firestore cloudbilling billingbudgets; do
   body="$(grep "^POST /v1/mcp/server {\"server_id\":\"${s}\"" "${ROUTER_LOG}" | sed 's/^POST [^ ]* //')"
   [[ -n "${body}" ]] || fail "no POST for ${s}"
   jq -e '.oauth_grant_server_id == "gcloud" and .auth_type == "oauth2" and .oauth2_flow == "authorization_code" and .transport == "http" and .allow_all_keys == false' <<<"${body}" >/dev/null || fail "${s}: payload"
   jq -e '.credentials.scopes == ["https://www.googleapis.com/auth/cloud-platform"] and .credentials.client_id == "111111111111-abcdef0ghi.apps.googleusercontent.com" and .credentials.client_secret == "GOCSPX-client-secret-TESTONLY"' <<<"${body}" >/dev/null || fail "${s}: credentials"
   jq -e '.token_url == "https://oauth2.googleapis.com/token" and (.authorization_url | startswith("https://accounts.google.com/o/oauth2/v2/auth?") and contains("access_type=offline") and contains("prompt=consent"))' <<<"${body}" >/dev/null || fail "${s}: endpoints"
 done
-for pair in cloudrun=https://run.googleapis.com/mcp cloudlogging=https://logging.googleapis.com/mcp cloudmonitoring=https://monitoring.googleapis.com/mcp firestore=https://firestore.googleapis.com/mcp; do
+for pair in cloudrun=https://run.googleapis.com/mcp cloudlogging=https://logging.googleapis.com/mcp cloudmonitoring=https://monitoring.googleapis.com/mcp firestore=https://firestore.googleapis.com/mcp cloudbilling=https://cloudbilling.googleapis.com/mcp billingbudgets=https://billingbudgets.googleapis.com/mcp; do
   grep "^POST /v1/mcp/server {\"server_id\":\"${pair%%=*}\"" "${ROUTER_LOG}" | grep -q "\"url\":\"${pair#*=}\"" || fail "wrong url for ${pair%%=*}"
 done
 [[ "$(count '^POST /v1/mcp/toolset ')" == 1 ]] || fail "expected one toolset POST"
 tbody="$(grep '^POST /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^POST [^ ]* //')"
-jq -e '.toolset_name == "google_cloud" and (.tools | length) == 16' <<<"${tbody}" >/dev/null || fail "toolset payload: $(jq -c . <<<"${tbody}")"
+jq -e '.toolset_name == "google_cloud" and (.tools | length) == 22' <<<"${tbody}" >/dev/null || fail "toolset payload: $(jq -c . <<<"${tbody}")"
 jq -e '[.tools[] | select(.server_id == "gcloud") | .tool_name] == ["run_gcloud_command","run_bq_command"]' <<<"${tbody}" >/dev/null || fail "gcloud tools"
 jq -e '[.tools[] | select(.server_id == "firestore") | .tool_name] == ["get_document","list_documents"]' <<<"${tbody}" >/dev/null || fail "firestore tools"
 jq -e '[.tools[] | select(.server_id == "cloudrun") | .tool_name] | index("deploy_service_from_image") != null' <<<"${tbody}" >/dev/null || fail "cloudrun deploy tool"
+jq -e '[.tools[] | select(.server_id == "cloudbilling") | .tool_name] == ["list_billing_accounts","get_billing_account","get_project_billing_info","list_project_billing_info"]' <<<"${tbody}" >/dev/null || fail "cloudbilling tools"
+jq -e '[.tools[] | select(.server_id == "billingbudgets") | .tool_name] == ["list_budgets","get_budget"]' <<<"${tbody}" >/dev/null || fail "billingbudgets tools"
+# Billing stays read-only: no write tool from either billing server is in the toolset.
+! jq -e '.tools[] | select(.server_id == "cloudbilling" or .server_id == "billingbudgets") | select(.tool_name | test("^(create|update|delete|move|set)_"))' <<<"${tbody}" >/dev/null || fail "a billing write tool is in the toolset"
 grep -q '^toolset_id=ts-1$' "${WORK}/out" || { cat "${WORK}/out"; fail "toolset_id not printed"; }
 grep -q "OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=ts-1" "${WORK}/out" || fail "no Outfitter hint"
-[[ "$(grep -c . "${STATE}/enabled")" == 4 ]] || fail "expected four API enables"
+[[ "$(grep -c . "${STATE}/enabled")" == 6 ]] || fail "expected six API enables"
 ! grep -qv -e '--project=kernal-oauth' "${STATE}/enabled" || fail "an API was enabled outside kernal-oauth"
 grep -q "services enable firestore.googleapis.com" "${STATE}/enabled" || fail "firestore API not enabled"
+grep -q "services enable cloudbilling.googleapis.com" "${STATE}/enabled" || fail "cloudbilling API not enabled"
+grep -q "services enable billingbudgets.googleapis.com" "${STATE}/enabled" || fail "billingbudgets API not enabled"
 
 # Rerun: servers shown, not edited; toolset updated in place, not duplicated; no client secret read.
 : >"${ROUTER_LOG}"; : >"${STATE}/gcloud-calls"
@@ -166,7 +172,7 @@ grep -q '^toolset_id=ts-1$' "${WORK}/out" || fail "rerun lost the toolset_id"
 
 # The rerun had GOOGLE_CLOUD_FIRESTORE_TOOLS unset: the firestore tools added earlier are kept.
 grep '^PUT /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^PUT [^ ]* //' \
-  | jq -e '[.tools[] | select(.server_id == "firestore") | .tool_name] == ["get_document","list_documents"] and (.tools | length) == 16' >/dev/null \
+  | jq -e '[.tools[] | select(.server_id == "firestore") | .tool_name] == ["get_document","list_documents"] and (.tools | length) == 22' >/dev/null \
   || fail "a plain rerun dropped the firestore tools"
 grep -q "keeping the toolset's existing firestore tools" "${WORK}/out" || fail "no note about kept firestore tools"
 # toolset_id is printed before the verification read.
@@ -176,13 +182,13 @@ grep -q "keeping the toolset's existing firestore tools" "${WORK}/out" || fail "
 : >"${ROUTER_LOG}"
 CONFIRM=1 GOOGLE_CLOUD_FIRESTORE_TOOLS="" run
 grep '^PUT /v1/mcp/toolset ' "${ROUTER_LOG}" | sed 's/^PUT [^ ]* //' \
-  | jq -e '([.tools[] | select(.server_id == "firestore")] | length) == 0 and (.tools | length) == 14' >/dev/null \
+  | jq -e '([.tools[] | select(.server_id == "firestore")] | length) == 0 and (.tools | length) == 20' >/dev/null \
   || fail "an explicit empty list didn't clear the firestore tools"
 
-# FORCE_PURGE=1: the four secondaries are PUT; the primary never is.
+# FORCE_PURGE=1: the six secondaries are PUT; the primary never is.
 : >"${ROUTER_LOG}"
 CONFIRM=1 FORCE_PURGE=1 run
-[[ "$(count '^PUT /v1/mcp/server ')" == 4 ]] || fail "FORCE_PURGE didn't PUT four servers"
+[[ "$(count '^PUT /v1/mcp/server ')" == 6 ]] || fail "FORCE_PURGE didn't PUT six servers"
 ! grep '^PUT /v1/mcp/server ' "${ROUTER_LOG}" | grep -q '"server_id":"gcloud"' || fail "FORCE_PURGE edited the primary"
 ! grep -q "purges every user" "${WORK}/out" || fail "wrongly warned that a secondary edit purges everyone"
 
@@ -199,7 +205,7 @@ grep -q "gcloud-mcp-router.sh first" "${WORK}/out" || { cat "${WORK}/out"; fail 
 # and the toolset, never the alias.
 stop_router; rm -f "${NO_PRIMARY}"; touch "${UUID_PRIMARY}"; start_router
 CONFIRM=1 run
-[[ "$(count '^POST /v1/mcp/server ')" == 4 ]] || fail "uuid primary: expected four POSTs"
+[[ "$(count '^POST /v1/mcp/server ')" == 6 ]] || fail "uuid primary: expected six POSTs"
 grep '^POST /v1/mcp/server ' "${ROUTER_LOG}" | while read -r _ _ body; do
   jq -e '.oauth_grant_server_id == "uuid-1234"' <<<"${body}" >/dev/null || exit 1
 done || fail "oauth_grant_server_id isn't the primary's real server_id"

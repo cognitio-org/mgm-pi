@@ -325,10 +325,18 @@ describe("Google product tools (GB-5, #541)", () => {
     cloudlogging: ["list_log_entries", "list_log_names", "get_bucket", "list_buckets", "get_view", "list_views"],
     cloudmonitoring: ["list_timeseries", "query_range", "get_alert_policy", "list_alert_policies", "get_alert", "list_alerts", "list_metric_descriptors", "list_dashboards", "get_dashboard"],
     firestore: ["get_document", "list_documents", "list_collections", "get_database", "list_databases", "get_index", "list_indexes", "get_backup", "list_backups", "get_backup_schedule", "list_backup_schedules"],
+    cloudbilling: [
+      "get_billing_account", "list_billing_accounts", "get_project_billing_info", "list_project_billing_info", "get_iam_policy", "test_iam_permissions",
+      "list_billing_account_prices", "get_billing_account_price", "list_prices", "get_price", "list_billing_account_services", "get_billing_account_service",
+      "list_billing_account_sku_groups", "get_billing_account_sku_group", "list_billing_account_sku_group_skus", "get_billing_account_sku_group_sku",
+      "list_billing_account_skus", "get_billing_account_sku", "list_services", "get_service", "list_sku_groups", "get_sku_group",
+      "list_sku_group_skus", "get_sku_group_sku", "list_skus", "get_sku",
+    ],
+    billingbudgets: ["get_budget", "list_budgets"],
   };
 
   test("the allow-list is exactly Google's readOnlyHint tools", () => {
-    assert.deepEqual([...PRODUCT_READ_TOOLS].sort(), Object.values(READS).flat().sort());
+    assert.deepEqual([...PRODUCT_READ_TOOLS].sort(), [...new Set(Object.values(READS).flat())].sort());
     assert.deepEqual([...PRODUCT_WRITE_TOOLS].sort(), ["deploy_service_from_archive", "deploy_service_from_file_contents", "deploy_service_from_image"]);
     assert.deepEqual([...FIRESTORE_READ_TOOLS].sort(), [...READS.firestore].sort());
   });
@@ -465,6 +473,26 @@ describe("Google product tools (GB-5, #541)", () => {
     assert.equal(await decide(prod("cloudrun-get_dashboard", {}), { drive: false }), "deny");
     assert.equal(await decide(prod("get_service", {}), { drive: false }), "deny"); // bare on google_cloud: unverifiable, asks
     assert.equal(await decide(prod("firestore-get_service", {}, "gcp"), { drive: false }), "deny");
+  });
+
+  test("billing: reads run unasked, writes ask, and names are checked against their own product", async () => {
+    for (const t of ["create_billing_account", "move_billing_account", "set_iam_policy"]) {
+      assert.equal(needsApproval(prod(`cloudbilling-${t}`)), true, t);
+      assert.equal(await decide(prod(`cloudbilling-${t}`), { drive: false }), "deny", t);
+    }
+    for (const t of ["create_budget", "update_budget", "delete_budget"]) {
+      assert.equal(needsApproval(prod(`billingbudgets-${t}`)), true, t);
+      assert.equal(await decide(prod(`billingbudgets-${t}`), { drive: false }), "deny", t);
+    }
+    // get_service / list_services are both Cloud Run's and Cloud Billing's catalog: each under its own prefix.
+    assert.equal(await decide(prod("cloudbilling-list_services", {}, "gcp"), { drive: false }), "allow_once");
+    assert.equal(await decide(prod("cloudrun-list_services", {}, "gcp"), { drive: false }), "allow_once");
+    assert.equal(await decide(prod("cloudrun-list_billing_accounts", {}), { drive: false }), "deny");
+    assert.equal(await decide(prod("billingbudgets-get_billing_account", {}), { drive: false }), "deny");
+    assert.equal(await decide(prod("cloudbilling-list_budgets", {}), { drive: false }), "deny");
+    assert.equal(baseTool("cloudbilling-get_project_billing_info"), "get_project_billing_info");
+    assert.equal(baseTool("billingbudgets-delete_budget"), "billingbudgets-delete_budget");
+    assert.equal(isGated(prod("xcloudbilling-list_billing_accounts", {}, "other")), false);
   });
 
   test("baseTool: product names with underscores, only the known tool after a boundary", () => {

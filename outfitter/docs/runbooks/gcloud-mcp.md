@@ -90,7 +90,8 @@ Do these in order. Scripts are owner-run and need `DRY_RUN=1` first, from `outfi
 ## What the server refuses
 
 `gcloud auth`, `config`, `init`, `survey`, `iam service-accounts`, `billing`, and `alpha`/`beta`
-variants; for `bq`: `init`, `shell`, `pyshell`. (Google's own list is "examples, non-exhaustive":
+variants; for `bq`: `init`, `shell`, `pyshell`. Billing reads go through the `cloudbilling` and
+`billingbudgets` servers in the `google_cloud` toolset instead (below). (Google's own list is "examples, non-exhaustive":
 https://docs.cloud.google.com/sdk/use-gcloud-mcp. The `billing` refusal is from the epic; Google's
 page does not list it.) Anything else is subject to your IAM and org policy. Tools: `run_gcloud_command`,
 `run_bq_command`; a project is required on every call.
@@ -146,8 +147,43 @@ the stored grant lives on `gcloud` and the others reuse it. Needs router-litellm
 | `cloudlogging` | `https://logging.googleapis.com/mcp` | `list_log_entries`, `list_log_names` |
 | `cloudmonitoring` | `https://monitoring.googleapis.com/mcp` | `query_range`, `list_timeseries`, `list_alert_policies`, `list_alerts`, `list_metric_descriptors` |
 | `firestore` | `https://firestore.googleapis.com/mcp` | none yet: the names are added once verified live |
+| `cloudbilling` | `https://cloudbilling.googleapis.com/mcp` | `list_billing_accounts`, `get_billing_account`, `get_project_billing_info`, `list_project_billing_info` |
+| `billingbudgets` | `https://billingbudgets.googleapis.com/mcp` | `list_budgets`, `get_budget` |
 
 Tool names in a toolset are the upstream (bare) names; the router serves them prefixed.
+
+**Billing** (verified live 2026-10-12) exists because the gcloud server refuses `gcloud billing`.
+It is read-only on purpose: accounts, which account a project is linked to, and budgets. The
+servers' writes (subaccounts, account moves, `set_iam_policy`, budget create/update/delete) are left
+out of the toolset, and the approval hook asks for them if they ever appear. Neither API reports
+spend; cost by service or day comes from the BigQuery billing export (next section). To
+read accounts and budgets, a person needs Billing Account Viewer (`roles/billing.viewer`) on the
+billing account. Project billing info also needs the project's `resourcemanager.projects.get`.
+
+### Billing export (spend)
+
+Agents read actual cost from Cloud Billing's export to BigQuery, through `run_bq_command`; the
+gcloud-mcp skill has the query shape. A plain `SELECT` with `--maximum_bytes_billed` (10 GB or less)
+counts as a read, so it runs without a card. At this account's size it is free: the export
+writes a few MB a month, inside BigQuery's free 10 GB of storage and 1 TB of queries.
+
+1. **Dataset and access**, from `outfitter/deploy/`: `DRY_RUN=1 ./billing-export.sh`, then
+   `./billing-export.sh`. It enables the BigQuery and BigQuery Data Transfer APIs in
+   `outfitter-509211`. It creates the dataset `billing_export` (location `US`; it can't move later,
+   so set `BILLING_EXPORT_LOCATION` on the first run if you want another). It gives each operator
+   READER on that dataset and `roles/bigquery.jobUser` on the project. It prints the console link
+   and the table name.
+2. **Switch the export on** (console only, no API): open the printed link (Billing, Billing export),
+   then BigQuery export, **Standard usage cost**, Edit settings. Pick project `outfitter-509211`
+   and dataset `billing_export`, then save. You need Billing Account Administrator on the billing
+   account.
+3. **Check** a few hours later, as a sysop:
+   `bq ls --project_id=outfitter-509211 billing_export` shows `gcp_billing_export_v1_<account>`.
+   Ask an agent for this month's cost by service; it should answer with no approval card.
+
+The table only holds usage from about when the export was switched on, and rows land hours (up to a
+day) after the usage. Detailed usage cost (per resource) and pricing exports are separate options
+on the same console page; turn them on later if needed. Agents can query them the same way.
 
 ### Owner steps, in order
 
@@ -157,13 +193,13 @@ From `outfitter/deploy/`, after the `gcloud` server exists (one-time setup above
 2. **Enable each API in `kernal-oauth`.** Calls with a person's token are billed to the OAuth client's
    project, so a missing API gives 403 and the server shows **0 tools**. Either
    `ENABLE_APIS=1` in step 3 does it, or by hand:
-   `gcloud --configuration=outfitter services enable run.googleapis.com logging.googleapis.com monitoring.googleapis.com firestore.googleapis.com --project=kernal-oauth`.
+   `gcloud --configuration=outfitter services enable run.googleapis.com logging.googleapis.com monitoring.googleapis.com firestore.googleapis.com cloudbilling.googleapis.com billingbudgets.googleapis.com --project=kernal-oauth`.
    The APIs must also be on in the projects being worked on (Firestore already is in `outfitter-509211`
    and `kernal-oauth`), and each person needs the usual IAM (`roles/mcp.toolUser`, plus the product
    roles) there. The deny policy's client id check passes because the client is the same.
 3. **Register and create the toolset:**
    `CONFIRM=1 ENABLE_APIS=1 GCLOUD_MCP_OAUTH_CLIENT_ID=<client id> ./google-cloud-mcp.sh`.
-   It POSTs the four secondary servers (existing ones are only shown), creates or updates the toolset by
+   It POSTs the six secondary servers (existing ones are only shown), creates or updates the toolset by
    name, and prints `toolset_id=...`. It never edits `gcloud`. Secrets come from Secret Manager as in
    step 4 above and are never printed.
 4. **Give Outfitter the id:** set `OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=<toolset_id>` (`config.env`), then release by tag as usual.
@@ -172,7 +208,7 @@ From `outfitter/deploy/`, after the `gcloud` server exists (one-time setup above
 
 - One sign-in covers every member. **Revoking one revokes all** (the grant is a single row on `gcloud`).
 - **Editing `gcloud` purges everyone's grant**, as before (url, endpoints, client id/secret or scopes). The script never does it.
-- **Editing a secondary purges nothing** (it owns no credential rows), so `FORCE_PURGE=1` on this script is safe: it only re-PUTs the four secondaries.
+- **Editing a secondary purges nothing** (it owns no credential rows), so `FORCE_PURGE=1` on this script is safe: it only re-PUTs the six secondaries.
 - A secondary must use the same client id and scopes as `gcloud`; the router answers 400 otherwise.
 
 ### Adding a tool or server later
@@ -192,7 +228,9 @@ From `outfitter/deploy/`, after the `gcloud` server exists (one-time setup above
 2. `tools/list` on the toolset shows every member's tools and `server_outcomes` is all ok. A `forbidden`
    or 0-tool server means its API isn't enabled in `kernal-oauth`.
 3. A read from each service runs without asking (e.g. `list_services`, `list_log_names`,
-   `list_alert_policies`, a Firestore get), and a Cloud Run deploy raises an approval card (GA-4).
+   `list_alert_policies`, a Firestore get, `cloudbilling-get_project_billing_info` on
+   `projects/outfitter-509211`, `billingbudgets-list_budgets` on its billing account), and a Cloud Run
+   deploy raises an approval card (GA-4).
 4. Repeat after more than an hour to confirm refresh. Tick #542 only after that.
 
 ## Follow-ons

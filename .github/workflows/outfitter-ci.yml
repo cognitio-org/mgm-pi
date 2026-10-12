@@ -2,9 +2,9 @@ name: Outfitter CI
 on:
   push:
     branches: [main]
-    paths: ["outfitter/**", "kernal/**", ".github/workflows/outfitter-ci.yml"]
+    paths: ["outfitter/**", "kernal/**", "!kernal/tests/**", "!kernal/docs/**", "!kernal/README.md", ".github/workflows/outfitter-ci.yml"]
   pull_request:
-    paths: ["outfitter/**", "kernal/**", ".github/workflows/outfitter-ci.yml"]
+    paths: ["outfitter/**", "kernal/**", "!kernal/tests/**", "!kernal/docs/**", "!kernal/README.md", ".github/workflows/outfitter-ci.yml"]
 # A PR branch that is pushed again (an amended commit, a rebase, one of several agent sessions
 # force-pushing) used to leave the previous run billing to completion: on a private repo those are
 # metered minutes spent on a commit nobody will look at again. Supersede them instead. Pushes to
@@ -15,7 +15,9 @@ concurrency:
 
 jobs:
   test:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # The one job that pays for 4 vCPU: it ran in 44% of its 2 vCPU time (3m07s vs ~7m, 2026-10-12).
+    # Everything else is cheaper on 2 vCPU (docs/ci-runners.md).
+    runs-on: ${{ vars.LINUX_HEAVY_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     defaults: { run: { working-directory: outfitter } }
     steps:
       - uses: useblacksmith/checkout@v1
@@ -62,7 +64,7 @@ jobs:
   # `npm test`. Build both images the way deploy/ does and boot each with the environment the deploy
   # scripts set, so a packaging or boot-time config regression fails here instead of on Cloud Run.
   images:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     steps:
       - uses: useblacksmith/checkout@v1
       - name: Build the control-plane image

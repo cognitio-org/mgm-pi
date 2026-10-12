@@ -15,7 +15,7 @@ import { classifyCommand } from "./classify.ts";
 import type { AdminTransport } from "../outfitter-admin/transport.ts";
 
 export const GCLOUD_SERVER = "gcloud";
-/** The router's combined toolset (GB-5, #541): cloudcli + Cloud Run + Logging + Monitoring + Firestore. */
+/** The router's combined toolset (GB-5, #541): cloudcli + Cloud Run + Logging + Monitoring + Firestore + Billing. */
 export const GOOGLE_CLOUD_SERVER = "google_cloud";
 
 export type Decision = "abstain" | "allow_once" | "deny";
@@ -70,6 +70,21 @@ const READ_BY_PRODUCT: Readonly<Record<string, ReadonlySet<string>>> = {
     "get_database", "list_databases", "get_index", "list_indexes",
     "get_backup", "list_backups", "get_backup_schedule", "list_backup_schedules",
   ]),
+  // Cloud Billing and Budgets: verified live 2026-10-12 against cloudbilling.googleapis.com/mcp and
+  // billingbudgets.googleapis.com/mcp tools/list (readOnlyHint: true). Their writes (subaccounts,
+  // moves, set_iam_policy, budget create/update/delete) are not here, so they ask.
+  cloudbilling: new Set([
+    "get_billing_account", "list_billing_accounts", "get_project_billing_info", "list_project_billing_info",
+    "get_iam_policy", "test_iam_permissions",
+    "list_billing_account_prices", "get_billing_account_price", "list_prices", "get_price",
+    "list_billing_account_services", "get_billing_account_service",
+    "list_billing_account_sku_groups", "get_billing_account_sku_group",
+    "list_billing_account_sku_group_skus", "get_billing_account_sku_group_sku",
+    "list_billing_account_skus", "get_billing_account_sku",
+    "list_services", "get_service", "list_sku_groups", "get_sku_group",
+    "list_sku_group_skus", "get_sku_group_sku", "list_skus", "get_sku",
+  ]),
+  billingbudgets: new Set(["get_budget", "list_budgets"]),
 };
 
 /** Product tools whose readOnlyHint is false (Cloud Run deploys). */
@@ -81,7 +96,7 @@ export const PRODUCT_READ_TOOLS: ReadonlySet<string> = new Set(Object.values(REA
 export const FIRESTORE_READ_TOOLS: ReadonlySet<string> = READ_BY_PRODUCT.firestore;
 
 /** The router's own spelling: `<server>-<tool>`, the server first in the name (after an optional `<plugin>__`). */
-const PRODUCT_PREFIX = /^(?:[^_\s]+__)?(gcloud|cloudrun|cloudlogging|cloudmonitoring|firestore)-([^]+)$/i;
+const PRODUCT_PREFIX = /^(?:[^_\s]+__)?(gcloud|cloudrun|cloudlogging|cloudmonitoring|firestore|cloudbilling|billingbudgets)-([^]+)$/i;
 
 /**
  * The router prefix a tool name carries (`cloudrun-list_services`: product `cloudrun`, tool

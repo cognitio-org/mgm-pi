@@ -1,6 +1,6 @@
 ---
 name: gcloud-mcp
-description: Operate Google Cloud through the router's `google_cloud` toolset (Cloud Run, Logging, Monitoring and Firestore product tools, plus run_gcloud_command), as the signed-in person. Only for Sysop operators; use it when those tools are available, otherwise say so and stop.
+description: Operate Google Cloud through the router's `google_cloud` toolset (Cloud Run, Logging, Monitoring, Firestore and Billing product tools, plus run_gcloud_command), as the signed-in person. Only for Sysop operators; use it when those tools are available, otherwise say so and stop.
 ---
 
 # Google Cloud through MCP
@@ -19,11 +19,25 @@ the operator's key is re-minted with the toolset.
 ## Product tools first, the CLI for the rest
 
 Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<tool>`,
-`cloudmonitoring-<tool>`, `firestore-<tool>`, and `gcloud-run_gcloud_command` for the CLI.
+`cloudmonitoring-<tool>`, `firestore-<tool>`, `cloudbilling-<tool>`, `billingbudgets-<tool>`, and
+`gcloud-run_gcloud_command` for the CLI.
 
 - **Prefer a product tool** for Cloud Run (services, revisions, deploys), Cloud Logging (reads),
   Cloud Monitoring (metrics, PromQL `query_range`) and Firestore (document reads and writes). They are
   typed and mark read-only tools, and do things gcloud can't (Firestore documents, PromQL ranges).
+- **Billing goes through the billing tools only**, because the CLI server refuses `gcloud billing`.
+  They are read-only:
+  - `cloudbilling-list_billing_accounts` and `cloudbilling-get_billing_account` cover the accounts the
+    person can see. Pass `name` as `billingAccounts/<id>`.
+  - `cloudbilling-get_project_billing_info` (`{"name": "projects/<id>"}`) says which account a project
+    is linked to and whether billing is on. `cloudbilling-list_project_billing_info`
+    (`{"name": "billingAccounts/<id>"}`) lists the projects on an account.
+  - `billingbudgets-list_budgets` (`{"parent": "billingAccounts/<id>"}`) and
+    `billingbudgets-get_budget` return the budgets: amount, scope and alert thresholds.
+
+  None of these report spend or a cost breakdown. If asked what something costs, say so, and point
+  to the console's Billing reports or a BigQuery billing export. Never estimate a figure.
+  Changing a budget or a billing account isn't in the toolset: it needs the console.
 - **Use `run_gcloud_command`** for everything without a product server: Domains, DNS, Secret Manager,
   Cloud Build, Artifact Registry, IAM reads and the rest. The rules below apply to it.
 - **Approvals:** read-only tools run; anything that changes something (a deploy, a write, a delete)
@@ -72,5 +86,5 @@ example `cloudrun-list_services` is `{"project": "outfitter-509211", "region": "
 - Prefer read commands (`list`, `describe`) first. A command that changes something shows the person
   an approval card before it runs; say what it will do and why before you call it.
 - The server refuses `auth`, `config`, `iam service-accounts`, `billing` and every `alpha` or `beta`
-  command. Don't try to work around a refusal (no other tool, no raw API call); tell the person it
-  needs the console or their own terminal.
+  command. Don't try to work around a refusal (no raw API call); tell the person it needs the console
+  or their own terminal. The one exception is billing reads: use the billing tools above.

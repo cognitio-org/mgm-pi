@@ -7,7 +7,8 @@
 #   CONFIRM=1 ENABLE_APIS=1 ... ./google-cloud-mcp.sh     # also enable the product APIs in kernal-oauth
 #   GOOGLE_CLOUD_FIRESTORE_TOOLS="a,b" ...                # firestore tools in the toolset (default none)
 #
-# The secondary servers (cloudrun, cloudlogging, cloudmonitoring, firestore) are oauth2
+# The secondary servers (cloudrun, cloudlogging, cloudmonitoring, firestore, cloudbilling,
+# billingbudgets) are oauth2
 # authorization_code rows with the SAME client, scope and endpoints as `gcloud`, and
 # `oauth_grant_server_id: "gcloud"` (router-litellm #49): the stored per-user grant lives on `gcloud`,
 # so one sign-in covers all of them. Consequences, which decide how this script behaves:
@@ -59,15 +60,21 @@ SECONDARIES=(
   "cloudlogging|https://logging.googleapis.com/mcp|logging.googleapis.com|Google Cloud Logging"
   "cloudmonitoring|https://monitoring.googleapis.com/mcp|monitoring.googleapis.com|Google Cloud Monitoring"
   "firestore|https://firestore.googleapis.com/mcp|firestore.googleapis.com|Google Firestore"
+  "cloudbilling|https://cloudbilling.googleapis.com/mcp|cloudbilling.googleapis.com|Google Cloud Billing"
+  "billingbudgets|https://billingbudgets.googleapis.com/mcp|billingbudgets.googleapis.com|Google Cloud Billing Budgets"
 )
 
-# Curated tools (upstream names, from live tools/list 2026-10-08), as "server_id:tool,tool". The router
-# stores the bare upstream name in a toolset and serves it prefixed.
+# Curated tools (upstream names, from live tools/list 2026-10-08; billing 2026-10-12), as
+# "server_id:tool,tool". The router stores the bare upstream name in a toolset and serves it prefixed.
+# Billing is read-only on purpose: accounts, which account a project is linked to, and budgets. No
+# spend figures: neither API reports actual cost (that is the BigQuery billing export).
 TOOLS=(
   "@primary:run_gcloud_command,run_bq_command"
   "cloudrun:get_service,list_services,deploy_service_from_image,deploy_service_from_archive,deploy_service_from_file_contents"
   "cloudlogging:list_log_entries,list_log_names"
   "cloudmonitoring:query_range,list_timeseries,list_alert_policies,list_alerts,list_metric_descriptors"
+  "cloudbilling:list_billing_accounts,get_billing_account,get_project_billing_info,list_project_billing_info"
+  "billingbudgets:list_budgets,get_budget"
 )
 
 command -v jq >/dev/null || deploy_fail "jq is required"
@@ -238,7 +245,7 @@ if (( FIRESTORE_SET == 0 )) && [[ -n "${tid}" ]]; then
   FIRESTORE_TOOLS="$(jq -r --arg id "${tid}" 'map(select(.toolset_id == $id))[0].tools // [] | map(select(.server_id == "firestore") | .tool_name) | join(",")' <<<"${tlist}")"
   [[ -z "${FIRESTORE_TOOLS}" ]] || echo "~ keeping the toolset's existing firestore tools: ${FIRESTORE_TOOLS}"
 fi
-tdesc="Google Cloud for operators: gcloud and bq, Cloud Run, Logging, Monitoring and Firestore, behind one sign-in."
+tdesc="Google Cloud for operators: gcloud and bq, Cloud Run, Logging, Monitoring, Firestore and Billing, behind one sign-in."
 tools="$(tools_json)"
 if [[ -n "${tid}" ]]; then
   echo "~ update toolset ${TOOLSET_NAME} (${tid})"

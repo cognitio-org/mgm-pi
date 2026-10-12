@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     defaults: { run: { working-directory: kernal } }
     steps:
       - uses: actions/checkout@v5

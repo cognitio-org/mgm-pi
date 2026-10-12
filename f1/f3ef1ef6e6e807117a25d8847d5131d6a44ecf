@@ -1,0 +1,19 @@
+banking/test/deploy-script.test.mjs
+  s_80fa2401020b61::t_b7ea85cca83a6b 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "f1f3ef1ef6e6e807117a25d8847d5131d6a44ecf",
+  "prompts": {},
+  "sessions": {
+    "s_80fa2401020b61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a12101-33d1-7f31-ad91-966cafe28042",
+        "model": "unknown"
+      },
+      "human_author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

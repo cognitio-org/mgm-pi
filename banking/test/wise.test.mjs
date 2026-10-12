@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -372,9 +372,14 @@ test("a stale Wise token lock is replaced and the refresh still runs", async () 
   })}\n`, { mode: 0o600 });
   await chmod(connection, 0o600);
   const lock = path.join(dir, "tokens.lock");
-  await writeFile(lock, "", { mode: 0o600 });
-  const old = new Date(Date.now() - 30_000);
-  await utimes(lock, old, old);
+  await writeFile(lock, "2147483646", { mode: 0o600 });
+  await chmod(lock, 0o600);
+  try {
+    process.kill(2147483646, 0);
+    throw new Error("expected pid 2147483646 to be unused");
+  } catch (err) {
+    if (err.code !== "ESRCH") throw err;
+  }
   let refreshed = false;
   const fetchImpl = async (url) => {
     const href = String(url);
@@ -389,4 +394,51 @@ test("a stale Wise token lock is replaced and the refresh still runs", async () 
   assert.equal(refreshed, true);
   assert.deepEqual(balances.balances, []);
   await assert.rejects(lstat(lock), (err) => err.code === "ENOENT");
+});
+
+test("a live Wise token lock is left in place", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "wise-live-lock-"));
+  await chmod(root, 0o700);
+  const dir = path.join(root, "sandbox");
+  await mkdir(dir, { mode: 0o700 });
+  await chmod(dir, 0o700);
+  const env = { WISE_CONFIG_DIR: root, WISE_CLIENT_ID: "client-id", WISE_CLIENT_SECRET: "client-secret" };
+  const tokens = path.join(dir, "tokens.json");
+  const connection = path.join(dir, "connection.json");
+  await writeFile(tokens, `${JSON.stringify({
+    access_token: "old-access-token",
+    refresh_token: "refresh-1",
+    expires_at: "2020-01-01T00:00:00.000Z",
+  })}\n`, { mode: 0o600 });
+  await chmod(tokens, 0o600);
+  await writeFile(connection, `${JSON.stringify({
+    profileId: "5",
+    profileType: "PERSONAL",
+    balances: [{ index: 1, id: "8", currency: "GBP", type: "SAVINGS" }],
+  })}\n`, { mode: 0o600 });
+  await chmod(connection, 0o600);
+  const lock = path.join(dir, "tokens.lock");
+  await writeFile(lock, String(process.pid), { mode: 0o600 });
+  await chmod(lock, 0o600);
+  let refreshed = false;
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/oauth/token")) {
+      refreshed = true;
+      return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", expires_in: 43199 });
+    }
+    if (href.includes("/balances")) return jsonResponse([]);
+    throw new Error(`unexpected ${href}`);
+  };
+  const pending = wiseBalances(env, { fetchImpl, now: () => new Date("2026-10-12T00:00:00.000Z") });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(refreshed, false);
+  assert.equal(await readFile(lock, "utf8"), String(process.pid));
+  await unlink(lock);
+  const balances = await Promise.race([
+    pending,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("refresh did not start after the lock was removed")), 2000)),
+  ]);
+  assert.equal(refreshed, true);
+  assert.deepEqual(balances.balances, []);
 });

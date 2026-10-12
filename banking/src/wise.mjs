@@ -5,8 +5,8 @@
 // WISE_API_TOKEN and WISE_PERSONAL_TOKEN are refused so a pasted token never becomes the credential.
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { open, stat, unlink } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { chmod, link, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -177,36 +177,66 @@ function expiry(absolute, seconds, now) {
 async function withTokenLock(dir, fn) {
   const lock = path.join(dir, "tokens.lock");
   const started = Date.now();
-  let stole = false;
-  while (true) {
-    try {
-      const handle = await open(lock, "wx", 0o600);
+  const pid = String(process.pid);
+  const claim = path.join(dir, `tokens.lock.${pid}.${randomBytes(4).toString("hex")}`);
+  await writeFile(claim, pid, { mode: 0o600, flag: "wx" });
+  await chmod(claim, 0o600);
+  try {
+    while (true) {
+      try {
+        // link publishes the pid in the same inode, so a waiter never sees an empty lock.
+        await link(claim, lock);
+      } catch (err) {
+        if (err.code !== "EEXIST") throw err;
+        if (await lockHolderDead(lock)) {
+          await unlink(lock).catch(() => {});
+          continue;
+        }
+        if (Date.now() - started > 10_000) {
+          throw new WiseError("PROVIDER_ERROR", `Another Wise token refresh is still running (${lock}).`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
       try {
         return await fn();
       } finally {
-        await handle.close();
-        await unlink(lock).catch(() => {});
+        await releaseLock(lock, pid);
       }
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      let info = null;
-      try {
-        info = await stat(lock);
-      } catch (statErr) {
-        if (statErr.code === "ENOENT") continue;
-        throw statErr;
-      }
-      if (!stole && Date.now() - info.mtimeMs > 10_000) {
-        stole = true;
-        await unlink(lock).catch(() => {});
-        continue;
-      }
-      if (Date.now() - started > 10_000) {
-        throw new WiseError("PROVIDER_ERROR", `Another Wise token refresh is still running (${lock}).`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
     }
+  } finally {
+    await unlink(claim).catch(() => {});
   }
+}
+
+async function lockHolderDead(lock) {
+  let text;
+  try {
+    text = await readFile(lock, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  const holder = Number(text.trim());
+  if (!Number.isInteger(holder) || holder <= 0) return true;
+  try {
+    process.kill(holder, 0);
+    return false;
+  } catch (err) {
+    return err.code === "ESRCH";
+  }
+}
+
+async function releaseLock(lock, pid) {
+  let text;
+  try {
+    text = await readFile(lock, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return;
+    throw err;
+  }
+  if (text.trim() !== pid) return;
+  await unlink(lock).catch(() => {});
 }
 
 export function createWiseClient({ origin, fetchImpl = globalThis.fetch, onSca }) {

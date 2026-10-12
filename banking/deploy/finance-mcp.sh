@@ -68,7 +68,10 @@ add_token_version() {
 }
 
 if gc secrets describe "$TOKEN_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  enabled="$(gc secrets versions list "$TOKEN_SECRET" --project="$PROJECT_ID" --filter='state=ENABLED' --format='value(name)' --limit=1 2>/dev/null || true)"
+  if ! enabled="$(gc secrets versions list "$TOKEN_SECRET" --project="$PROJECT_ID" --filter='state=ENABLED' --format='value(name)' --limit=1)"; then
+    echo "could not list versions of ${TOKEN_SECRET}" >&2
+    exit 1
+  fi
   if [ -n "$enabled" ]; then
     echo "caller token version exists"
   else

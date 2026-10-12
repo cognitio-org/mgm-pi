@@ -35,9 +35,27 @@ Tool names are prefixed with their server: `cloudrun-<tool>`, `cloudlogging-<too
   - `billingbudgets-list_budgets` (`{"parent": "billingAccounts/<id>"}`) and
     `billingbudgets-get_budget` return the budgets: amount, scope and alert thresholds.
 
-  None of these report spend or a cost breakdown. If asked what something costs, say so, and point
-  to the console's Billing reports or a BigQuery billing export. Never estimate a figure.
-  Changing a budget or a billing account isn't in the toolset: it needs the console.
+  None of these report spend or a cost breakdown. Changing a budget or a billing account isn't in
+  the toolset: it needs the console.
+- **Spend comes from the billing export in BigQuery**, read with `gcloud-run_bq_command`. The dataset
+  is `billing_export` in `outfitter-509211`, location `US`. Find the table with
+  `bq ls --project_id=outfitter-509211 billing_export`; it is named
+  `gcp_billing_export_v1_<billing account id with _ for ->`. Then query it, for example net cost
+  by service for one invoice month:
+
+  ```
+  bq query --use_legacy_sql=false --project_id=outfitter-509211 --location=US --maximum_bytes_billed=1000000000 --format=json 'SELECT service.description AS service, currency, ROUND(SUM(cost) + SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c), 0)), 2) AS net_cost FROM billing_export.<table> WHERE invoice.month = "202610" GROUP BY service, currency ORDER BY net_cost DESC'
+  ```
+
+  Keep that shape, so the query runs without an approval card. Use one `SELECT`, a
+  `--maximum_bytes_billed` of at most 10 GB, and `--project_id=` plus `--location=US`. Name the table
+  as `billing_export.<table>`, not `project.dataset.table` in backticks: backticks are refused.
+  Leave out `--nosync`, or you get a job id instead of rows. Other useful columns:
+  `usage_start_time`, `sku.description`, `project.id`, `cost_type`. Net cost is `cost` plus the
+  `credits` amounts, which are negative.
+  The data lags by hours, up to a day, and starts on the day the export was switched on.
+  If `bq ls` finds no table, the export isn't on yet: say so, and point to
+  docs/runbooks/gcloud-mcp.md, "Billing export". Never estimate a figure.
 - **Use `run_gcloud_command`** for everything without a product server: Domains, DNS, Secret Manager,
   Cloud Build, Artifact Registry, IAM reads and the rest. The rules below apply to it.
 - **Approvals:** read-only tools run; anything that changes something (a deploy, a write, a delete)

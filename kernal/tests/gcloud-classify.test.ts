@@ -214,6 +214,10 @@ describe("bq", () => {
     "bq query --maximum_bytes_billed=1000 --nouse_legacy_sql --dry_run 'select * from d.t'",
     "bq query --maximum_bytes_billed=1000 'WITH x AS (SELECT 1 a) SELECT a FROM x'",
     "bq query --maximum_bytes_billed=1000 'SELECT COUNT(1) FROM d.t'",
+    // The gcloud-mcp skill's billing export queries: they must stay reads, or every cost question asks.
+    "bq query --use_legacy_sql=false --project_id=outfitter-509211 --location=US --maximum_bytes_billed=1000000000 --format=json 'SELECT service.description AS service, currency, ROUND(SUM(cost) + SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c), 0)), 2) AS net_cost FROM billing_export.gcp_billing_export_v1_01DEC0_9358E1_C1FF0D WHERE invoice.month = \"202610\" GROUP BY service, currency ORDER BY net_cost DESC'",
+    "bq query --use_legacy_sql=false --project_id=outfitter-509211 --location=US --maximum_bytes_billed=1000000000 --format=json 'SELECT DATE(usage_start_time) AS day, ROUND(SUM(cost), 2) AS cost FROM billing_export.gcp_billing_export_v1_01DEC0_9358E1_C1FF0D WHERE usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY) GROUP BY day ORDER BY day'",
+    "bq ls --project_id=outfitter-509211 billing_export",
   ]) {
     test(`read: ${c}`, () => assert.equal(bq(c), "read"));
   }

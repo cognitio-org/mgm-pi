@@ -156,9 +156,34 @@ Tool names in a toolset are the upstream (bare) names; the router serves them pr
 It is read-only on purpose: accounts, which account a project is linked to, and budgets. The
 servers' writes (subaccounts, account moves, `set_iam_policy`, budget create/update/delete) are left
 out of the toolset, and the approval hook asks for them if they ever appear. Neither API reports
-spend; cost by service or day needs the BigQuery billing export, which is a separate follow-on. To
+spend; cost by service or day comes from the BigQuery billing export (next section). To
 read accounts and budgets, a person needs Billing Account Viewer (`roles/billing.viewer`) on the
 billing account. Project billing info also needs the project's `resourcemanager.projects.get`.
+
+### Billing export (spend)
+
+Agents read actual cost from Cloud Billing's export to BigQuery, through `run_bq_command`; the
+gcloud-mcp skill has the query shape. A plain `SELECT` with `--maximum_bytes_billed` (10 GB or less)
+counts as a read, so it runs without a card. At this account's size it is free: the export
+writes a few MB a month, inside BigQuery's free 10 GB of storage and 1 TB of queries.
+
+1. **Dataset and access**, from `outfitter/deploy/`: `DRY_RUN=1 ./billing-export.sh`, then
+   `./billing-export.sh`. It enables the BigQuery and BigQuery Data Transfer APIs in
+   `outfitter-509211`. It creates the dataset `billing_export` (location `US`; it can't move later,
+   so set `BILLING_EXPORT_LOCATION` on the first run if you want another). It gives each operator
+   READER on that dataset and `roles/bigquery.jobUser` on the project. It prints the console link
+   and the table name.
+2. **Switch the export on** (console only, no API): open the printed link (Billing, Billing export),
+   then BigQuery export, **Standard usage cost**, Edit settings. Pick project `outfitter-509211`
+   and dataset `billing_export`, then save. You need Billing Account Administrator on the billing
+   account.
+3. **Check** a few hours later, as a sysop:
+   `bq ls --project_id=outfitter-509211 billing_export` shows `gcp_billing_export_v1_<account>`.
+   Ask an agent for this month's cost by service; it should answer with no approval card.
+
+The table only holds usage from about when the export was switched on, and rows land hours (up to a
+day) after the usage. Detailed usage cost (per resource) and pricing exports are separate options
+on the same console page; turn them on later if needed. Agents can query them the same way.
 
 ### Owner steps, in order
 

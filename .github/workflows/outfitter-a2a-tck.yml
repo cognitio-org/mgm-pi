@@ -29,13 +29,13 @@ permissions:
 
 jobs:
   tck:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     env:
       # a2aproject/a2a-tck; known-defects.txt and run-tck.sh's TCK_COMMIT are for this commit.
       TCK_REF: 263b9cfaf16a554bdfb166a7ba5b67716e946349
     steps:
-      - uses: actions/checkout@v5
+      - uses: useblacksmith/checkout@v1
         with:
           # The TCK's own Python code runs in this job; it gets no token to read.
           persist-credentials: false
@@ -47,7 +47,7 @@ jobs:
           npm ci
           npm run build -w packages/provider-local
       - name: Check out the TCK
-        uses: actions/checkout@v5
+        uses: useblacksmith/checkout@v1
         with:
           repository: a2aproject/a2a-tck
           ref: ${{ env.TCK_REF }}

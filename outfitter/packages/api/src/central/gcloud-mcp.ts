@@ -21,9 +21,9 @@ export const GCLOUD_MCP_SERVER = "gcloud";
 
 /** Kernal's mcp.json entry for the router's `google_cloud` toolset (GB-4, epic #544). Not a router
  * server name: the router admits a key to the toolset by id (`object_permission.mcp_toolsets`), and the
- * toolset's own members (gcloud, cloudrun, cloudlogging, cloudmonitoring, firestore) replace the key's
- * mcp_servers inside toolset scope, so none of them need listing beyond `gcloud` (kept for the legacy
- * per-server path). The name rides in the delivered `routerKey.mcpServers` so Kernal's gate can switch
+ * toolset's own members (gcloud, cloudrun, cloudlogging, cloudmonitoring, firestore, cloudbilling,
+ * billingbudgets) replace the key's mcp_servers inside toolset scope, so none of them need listing
+ * beyond `gcloud` (kept for the legacy per-server path). The name rides in the delivered `routerKey.mcpServers` so Kernal's gate can switch
  * the entry on, and in run.spec.mcp.enable for a Drive. */
 export const GOOGLE_CLOUD_ENTRY = "google_cloud";
 

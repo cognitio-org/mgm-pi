@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: useblacksmith/checkout@v1
         with:
           persist-credentials: false
           sparse-checkout: outfitter/packages/api/src/config.ts

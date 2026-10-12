@@ -16,8 +16,8 @@
     "dev:fake-api": "npm run build && node dist/dev/fake-api.js"
   },
   "dependencies": {
-    "@sentry/node": "11.3.0",
-    "@sentry/profiling-node": "11.3.0",
+    "@sentry/node": "11.5.0",
+    "@sentry/profiling-node": "11.5.0",
     "ws": "^8.22.0"
   },
   "devDependencies": {

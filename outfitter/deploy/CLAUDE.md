@@ -33,6 +33,9 @@
 - `google-cloud-mcp.sh` (google_cloud toolset, epic #544) is owner-run without `DRY_RUN=1`: it reads the
   router master key, registers the Google product servers and the toolset (`CONFIRM=1`), and with
   `ENABLE_APIS=1` enables APIs in kernal-oauth. It never edits `gcloud`. `DRY_RUN=1` reads no secret.
+- `billing-export.sh` (Cloud Billing export to BigQuery, docs/runbooks/gcloud-mcp.md "Billing export")
+  is owner-run without `DRY_RUN=1`: it enables the BigQuery APIs, creates the `billing_export`
+  dataset and grants operators dataset READER and `roles/bigquery.jobUser`. `DRY_RUN=1` is safe.
 - `mcp-identity-check.sh` (MO-7 #489, docs/runbooks/mcp-grants.md) is read-only but owner-run without
   `DRY_RUN=1`: it reads Outfitter's scoped admin key to list router users. `DRY_RUN=1` reads no secret.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector

@@ -322,6 +322,33 @@ test("production init uses the https callback and leaves the sandbox directory a
   }
 });
 
+test("init refuses a symlink config directory before moving the key", async () => {
+  const repo = await privateDir();
+  const downloads = await privateDir();
+  const realConfig = await privateDir();
+  const linkParent = await privateDir();
+  const configDir = path.join(linkParent, "config");
+  try {
+    await chmod(realConfig, 0o755);
+    await symlink(realConfig, configDir);
+    const source = path.join(downloads, `${APP_ID}.pem`);
+    await writeFile(source, PEM, { mode: 0o644 });
+    await chmod(source, 0o644);
+    await assert.rejects(
+      init({ appId: APP_ID, keyPath: source, configDir, repoRoot: repo }),
+      /symlink/,
+    );
+    assert.equal((await lstat(source)).isFile(), true);
+    await assert.rejects(lstat(path.join(realConfig, `${APP_ID}.pem`)), (err) => err.code === "ENOENT");
+    assert.equal((await lstat(realConfig)).mode & 0o777, 0o755);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+    await rm(downloads, { recursive: true, force: true });
+    await rm(realConfig, { recursive: true, force: true });
+    await rm(linkParent, { recursive: true, force: true });
+  }
+});
+
 test("the local callback stays on loopback and hides the login code", async () => {
   const port = 25000 + Math.floor(Math.random() * 10000);
   const waiter = waitForCallback({ port, expectedState: "expected-state", timeoutMs: 5000 });

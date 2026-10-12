@@ -140,11 +140,9 @@ function serve() {
     console.error("This is the Enable Banking MCP server. It speaks on stdio. Use src/cli.mjs in a terminal.");
     process.exit(1);
   }
-  let framing = "ndjson";
   const parser = createFrameParser((message, used) => {
-    framing = used;
     handleRequest(message).then((response) => {
-      if (response) process.stdout.write(encodeFrame(response, framing));
+      if (response) process.stdout.write(encodeFrame(response, used));
     }).catch((err) => {
       console.error(err instanceof Error ? err.message : "MCP request failed.");
     });

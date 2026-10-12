@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -287,4 +287,106 @@ test("MCP tools are the read-only Wise set", async () => {
   }, env);
   assert.equal(unlinked.result.isError, true);
   assert.match(unlinked.result.content[0].text, /No Wise account is linked/);
+});
+
+test("a gcloud failure does not return the Wise key", async () => {
+  const key = "kernal-wise-key-token-value";
+  await assert.rejects(
+    loadAppCredentials({}, async () => {
+      const err = new Error(`gcloud failed: ${key}`);
+      err.stderr = `secret ${key}`;
+      err.code = 1;
+      throw err;
+    }),
+    (err) => {
+      assert.equal(err instanceof WiseError, true);
+      assert.equal(err.message.includes(key), false);
+      assert.equal(err.message, "Could not read kernal_wise_key.");
+      return true;
+    },
+  );
+});
+
+test("statement balance must be a digit index, and an omitted index needs one stored balance", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "wise-idx-"));
+  await chmod(root, 0o700);
+  const env = { WISE_CONFIG_DIR: root };
+  const loadCredentials = async () => ({ kind: "key", token: "kernal-wise-key-token-value" });
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    calls.push(href);
+    if (href.includes("statement.json")) return jsonResponse({ transactions: [] });
+    throw new Error(`unexpected ${href}`);
+  };
+  await assert.rejects(wiseStatement(env, true, 7, { fetchImpl, loadCredentials }), /balance/);
+  await assert.rejects(wiseStatement(env, "1e1", 7, { fetchImpl, loadCredentials }), /balance/);
+  await assert.rejects(wiseStatement(env, "0x10", 7, { fetchImpl, loadCredentials }), /balance/);
+  await assert.rejects(wiseStatement(env, 1, "1e1", { fetchImpl, loadCredentials }), /days/);
+  assert.equal(calls.length, 0);
+
+  const keyDir = path.join(root, "key");
+  await mkdir(keyDir, { mode: 0o700 });
+  await chmod(keyDir, 0o700);
+  const writeBalances = async (balances) => {
+    const file = path.join(keyDir, "connection.json");
+    await writeFile(file, `${JSON.stringify({ mode: "key", balances, sca: { status: "current" } })}\n`, { mode: 0o600 });
+    await chmod(file, 0o600);
+  };
+  const now = () => new Date("2026-10-12T00:00:00.000Z");
+  await writeBalances([
+    { index: 1, id: "10", currency: "EUR", type: "STANDARD", profileId: "1" },
+    { index: 2, id: "11", currency: "USD", type: "SAVINGS", profileId: "2" },
+  ]);
+  await assert.rejects(
+    wiseStatement(env, undefined, 7, { fetchImpl, loadCredentials, now }),
+    /balance index/,
+  );
+  assert.equal(calls.length, 0);
+
+  await writeBalances([{ index: 1, id: "10", currency: "EUR", type: "STANDARD", profileId: "1" }]);
+  const statement = await wiseStatement(env, undefined, 7, { fetchImpl, loadCredentials, now });
+  assert.equal(statement.balance, 1);
+  assert.equal(calls.some((href) => href.includes("/profiles/1/balance-statements/10/")), true);
+});
+
+test("a stale Wise token lock is replaced and the refresh still runs", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "wise-lock-"));
+  await chmod(root, 0o700);
+  const dir = path.join(root, "sandbox");
+  await mkdir(dir, { mode: 0o700 });
+  await chmod(dir, 0o700);
+  const env = { WISE_CONFIG_DIR: root, WISE_CLIENT_ID: "client-id", WISE_CLIENT_SECRET: "client-secret" };
+  const tokens = path.join(dir, "tokens.json");
+  const connection = path.join(dir, "connection.json");
+  await writeFile(tokens, `${JSON.stringify({
+    access_token: "old-access-token",
+    refresh_token: "refresh-1",
+    expires_at: "2020-01-01T00:00:00.000Z",
+  })}\n`, { mode: 0o600 });
+  await chmod(tokens, 0o600);
+  await writeFile(connection, `${JSON.stringify({
+    profileId: "5",
+    profileType: "PERSONAL",
+    balances: [{ index: 1, id: "8", currency: "GBP", type: "SAVINGS" }],
+  })}\n`, { mode: 0o600 });
+  await chmod(connection, 0o600);
+  const lock = path.join(dir, "tokens.lock");
+  await writeFile(lock, "", { mode: 0o600 });
+  const old = new Date(Date.now() - 30_000);
+  await utimes(lock, old, old);
+  let refreshed = false;
+  const fetchImpl = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/oauth/token")) {
+      refreshed = true;
+      return jsonResponse({ access_token: "access-2", refresh_token: "refresh-2", expires_in: 43199 });
+    }
+    if (href.includes("/balances")) return jsonResponse([]);
+    throw new Error(`unexpected ${href}`);
+  };
+  const balances = await wiseBalances(env, { fetchImpl, now: () => new Date("2026-10-12T00:00:00.000Z") });
+  assert.equal(refreshed, true);
+  assert.deepEqual(balances.balances, []);
+  await assert.rejects(lstat(lock), (err) => err.code === "ENOENT");
 });

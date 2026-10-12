@@ -266,6 +266,15 @@ export async function init({
   const dir = configDir ?? (envName === "production"
     ? path.join(homedir(), ".config", "enablebanking-prod")
     : sandboxDefault);
+  let dirInfo = null;
+  try {
+    dirInfo = await lstat(dir);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  if (dirInfo?.isSymbolicLink()) {
+    throw new ConfigError("PRIVATE_FILE", `${dir} is a symlink. Pass a real directory.`);
+  }
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
   if (envName === "production") {
@@ -309,6 +318,7 @@ export async function init({
     } catch (err) {
       if (err.code !== "EXDEV") throw err;
       await copyFile(sourceReal, dest);
+      await chmod(dest, 0o600);
       await rm(sourceReal);
     }
   }

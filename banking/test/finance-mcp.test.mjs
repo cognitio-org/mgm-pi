@@ -214,3 +214,33 @@ test("the Cloud Run upstream list reads the secret before it calls Wise", async 
 test("the server refuses to start without a caller token", () => {
   assert.throws(() => createFinanceApp({ token: "short", upstreams: [] }), /FINANCE_MCP_TOKEN/);
 });
+
+test("a non-JSON 200 does not return a body snippet", async () => {
+  const leaked = "kernal-wise-key-token-value";
+  const bad = () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      throw new SyntaxError(`Unexpected token ${leaked} is not valid JSON`);
+    },
+  });
+  const secretBad = createGsmReader({
+    fetchImpl: async (url) => {
+      if (String(url).includes("metadata")) return jsonResponse({ access_token: "ya29.metadata-token", expires_in: 3600 });
+      return bad();
+    },
+  });
+  await assert.rejects(secretBad(), (err) => {
+    assert.equal(err instanceof WiseError, true);
+    assert.equal(err.message.includes(leaked), false);
+    assert.match(err.message, /Secret Manager HTTP 200/);
+    return true;
+  });
+  const metadataBad = createGsmReader({ fetchImpl: async () => bad() });
+  await assert.rejects(metadataBad(), (err) => {
+    assert.equal(err instanceof WiseError, true);
+    assert.equal(err.message.includes(leaked), false);
+    assert.match(err.message, /metadata HTTP 200/);
+    return true;
+  });
+});

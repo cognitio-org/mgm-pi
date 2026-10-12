@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open, unlink } from "node:fs/promises";
+import { open, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -151,8 +151,9 @@ export async function loadAppCredentials(env, exec = execFileAsync) {
     ], { timeout: 20_000, maxBuffer: 64 * 1024, encoding: "utf8" });
     stdout = result.stdout;
   } catch (err) {
-    const detail = clip(err?.stderr || err?.message || "gcloud failed");
-    throw new WiseError("NOT_CONFIGURED", `Could not read kernal_wise_key (${detail}).`);
+    const status = Number.isInteger(err?.code) ? err.code : null;
+    if (status != null) console.error(`Could not read kernal_wise_key (gcloud exit ${status}).`);
+    throw new WiseError("NOT_CONFIGURED", "Could not read kernal_wise_key.");
   }
   return parseAppSecret(stdout);
 }
@@ -176,6 +177,7 @@ function expiry(absolute, seconds, now) {
 async function withTokenLock(dir, fn) {
   const lock = path.join(dir, "tokens.lock");
   const started = Date.now();
+  let stole = false;
   while (true) {
     try {
       const handle = await open(lock, "wx", 0o600);
@@ -187,8 +189,20 @@ async function withTokenLock(dir, fn) {
       }
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
+      let info = null;
+      try {
+        info = await stat(lock);
+      } catch (statErr) {
+        if (statErr.code === "ENOENT") continue;
+        throw statErr;
+      }
+      if (!stole && Date.now() - info.mtimeMs > 10_000) {
+        stole = true;
+        await unlink(lock).catch(() => {});
+        continue;
+      }
       if (Date.now() - started > 10_000) {
-        throw new WiseError("PROVIDER_ERROR", "Another Wise token refresh is still running.");
+        throw new WiseError("PROVIDER_ERROR", `Another Wise token refresh is still running (${lock}).`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -502,10 +516,15 @@ function publicBalances(balances) {
 }
 
 export async function wiseStatement(env = process.env, balanceIndex, days, deps = {}) {
-  const which = whole(balanceIndex, 1, 1, 30, "balance");
+  const requested = whole(balanceIndex, null, 1, 30, "balance");
   const span = whole(days, 30, 1, 90, "days");
   const { client, connection, accessToken } = await authorizedClient(env, deps);
-  const balance = (connection.balances || []).find((row) => row.index === which);
+  const stored = connection.balances || [];
+  const which = requested == null ? (stored.length === 1 ? stored[0].index : null) : requested;
+  if (which == null) {
+    throw new WiseError("PROVIDER_DATA", "Pass a balance index from wise_balances.");
+  }
+  const balance = stored.find((row) => row.index === which);
   if (!balance) throw new WiseError("NOT_LINKED", "That balance index is not in the last Wise balance list. Run balances first.");
   const profileId = balance.profileId || connection.profileId;
   if (!DIGITS.test(String(profileId || ""))) {
@@ -586,7 +605,9 @@ export function readWiseCallback(requestUrl, expectedState) {
 
 function whole(value, fallback, min, max, label) {
   if (value == null || value === "") return fallback;
-  const number = Number(value);
+  const number = typeof value === "number"
+    ? value
+    : (typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN);
   if (!Number.isInteger(number) || number < min || number > max) {
     throw new WiseError("PROVIDER_DATA", `${label} must be an integer from ${min} to ${max}.`);
   }

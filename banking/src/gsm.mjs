@@ -25,7 +25,7 @@ export function createGsmReader({
     if (!res.ok) {
       throw new WiseError("NOT_CONFIGURED", `Could not read kernal_wise_key (metadata HTTP ${res.status}).`);
     }
-    const body = await res.json();
+    const body = await readJson(res, "metadata");
     if (typeof body?.access_token !== "string" || !body.access_token) {
       throw new WiseError("NOT_CONFIGURED", "Could not read kernal_wise_key (metadata token missing).");
     }
@@ -45,7 +45,7 @@ export function createGsmReader({
     if (!res.ok) {
       throw new WiseError("NOT_CONFIGURED", `Could not read kernal_wise_key (Secret Manager HTTP ${res.status}).`);
     }
-    const body = await res.json();
+    const body = await readJson(res, "Secret Manager");
     const data = body?.payload?.data;
     if (typeof data !== "string" || !data) {
       throw new WiseError("NOT_CONFIGURED", "Could not read kernal_wise_key (empty payload).");
@@ -54,4 +54,12 @@ export function createGsmReader({
     secretCache = { value, until: now() + ttlMs };
     return value;
   };
+}
+
+async function readJson(res, label) {
+  try {
+    return await res.json();
+  } catch {
+    throw new WiseError("NOT_CONFIGURED", `Could not read kernal_wise_key (${label} HTTP ${res.status}).`);
+  }
 }

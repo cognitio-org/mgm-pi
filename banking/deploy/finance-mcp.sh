@@ -43,22 +43,43 @@ else
   run gc iam service-accounts create "$SA_NAME" --project="$PROJECT_ID" --display-name="Finance MCP runtime"
 fi
 
-if gc secrets describe "$TOKEN_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  echo "caller token secret exists"
-else
-  run gc secrets create "$TOKEN_SECRET" --project="$PROJECT_ID" --replication-policy=automatic
+add_token_version() {
   if [ -n "${DRY_RUN:-}" ]; then
     echo "would add a token version from a temp file"
-  else
-    umask 077
-    tmp="$(mktemp)"
-    value="$(openssl rand -base64 48 | tr -d '\n+/=')"
-    printf '%s' "${value:0:48}" >"$tmp"
-    unset value
-    gc secrets versions add "$TOKEN_SECRET" --project="$PROJECT_ID" --data-file="$tmp"
-    rm -f "$tmp"
+    return 0
   fi
+  umask 077
+  local tmp value
+  tmp="$(mktemp)"
+  # RETURN runs even when versions add fails, so the bearer does not stay in $TMPDIR.
+  trap 'rm -f "$tmp"' RETURN
+  value="$(openssl rand -base64 48 | tr -d '\n+/=')"
+  value="${value:0:48}"
+  if [ "${#value}" -lt 20 ]; then
+    unset value
+    echo "generated caller token is too short" >&2
+    return 1
+  fi
+  printf '%s' "$value" >"$tmp"
+  unset value
+  if ! gc secrets versions add "$TOKEN_SECRET" --project="$PROJECT_ID" --data-file="$tmp"; then
+    return 1
+  fi
+}
+
+if gc secrets describe "$TOKEN_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  enabled="$(gc secrets versions list "$TOKEN_SECRET" --project="$PROJECT_ID" --filter='state=ENABLED' --format='value(name)' --limit=1 2>/dev/null || true)"
+  if [ -n "$enabled" ]; then
+    echo "caller token version exists"
+  else
+    add_token_version
+  fi
+else
+  run gc secrets create "$TOKEN_SECRET" --project="$PROJECT_ID" --replication-policy=automatic
+  add_token_version
 fi
+trap - RETURN
+unset enabled
 
 bind() {
   local i

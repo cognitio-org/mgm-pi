@@ -1,0 +1,27 @@
+{
+  "name": "enablebanking-local",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local-only, read-only Enable Banking proof of concept",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "init": "node src/cli.mjs init",
+    "check": "node src/cli.mjs check",
+    "banks": "node src/cli.mjs banks",
+    "link": "node src/cli.mjs link",
+    "accounts": "node src/cli.mjs accounts",
+    "balances": "node src/cli.mjs balances",
+    "details": "node src/cli.mjs details",
+    "transactions": "node src/cli.mjs transactions",
+    "transaction": "node src/cli.mjs transaction",
+    "unlink": "node src/cli.mjs unlink",
+    "mcp": "node src/mcp.mjs",
+    "wise": "node src/wise-cli.mjs",
+    "wise-mcp": "node src/wise-mcp.mjs",
+    "finance-mcp": "node src/finance-mcp.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

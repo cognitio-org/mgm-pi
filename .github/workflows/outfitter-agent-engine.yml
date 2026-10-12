@@ -17,11 +17,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     defaults: { run: { working-directory: outfitter/integrations/agent-engine } }
     steps:
-      - uses: actions/checkout@v5
+      - uses: useblacksmith/checkout@v1
       - uses: astral-sh/setup-uv@v6
         with: { version: "0.12.17", python-version: "3.12" }
       # The tools alone (a2a-sdk, httpx): what any A2A client of Outfitter needs.

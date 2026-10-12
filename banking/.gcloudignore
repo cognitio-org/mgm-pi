@@ -1,0 +1,6 @@
+#!include:.gitignore
+.git
+test
+deploy
+*.md
+.gcloudignore

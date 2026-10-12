@@ -35,7 +35,7 @@ export interface DeviceRevokedEvent {
  * is sent once, in that one answer, and Outfitter keeps none of it. */
 export interface DeviceDelivery {
   /** CA-5: this device's own router key. */
-  routerKey?: { key: string; baseUrl: string; alias: string; expiresAt?: string };
+  routerKey?: { key: string; baseUrl: string; alias: string; expiresAt?: string; mcpServers?: string[] };
 }
 
 export interface DeviceLoginResult {

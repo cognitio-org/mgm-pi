@@ -3,24 +3,45 @@
     "litellm": {
       "url": "https://router.kernal.one/mcp/",
       "headers": {
-        "x-litellm-api-key": "Bearer ${LITELLM_AGENT_KEY}",
+        "x-litellm-api-key": "![ -n \"$KERNAL_ROUTER_KEY\" ] || exit 1; printf 'Bearer %s' \"$KERNAL_ROUTER_KEY\"",
         "x-mcp-servers": "ce_knowledge_base,headroom"
       }
     },
-    "google_admin": {
-      "url": "https://gcs-admin-mcp-ucpy26yrfa-uc.a.run.app/mcp",
+    "sentry": {
+      "url": "https://router.kernal.one/sentry/mcp",
       "auth": "oauth",
+      "headers": {
+        "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
+      },
       "oauth": {
-        "clientName": "kernal agent"
+        "clientName": "kernal"
       }
     },
-    "augment_admin": {
-      "url": "https://l.augment-code.support/mcp",
+    "gcloud": {
+      "url": "https://router.kernal.one/gcloud/mcp",
       "auth": "oauth",
-      "oauth": {
-        "clientName": "kernal agent"
+      "lifecycle": "lazy",
+      "disabled": true,
+      "approveTools": true,
+      "headers": {
+        "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
       },
-      "directTools": false
+      "oauth": {
+        "clientName": "kernal"
+      }
+    },
+    "google_cloud": {
+      "url": "https://router.kernal.one/google_cloud/mcp",
+      "auth": "oauth",
+      "lifecycle": "lazy",
+      "disabled": true,
+      "approveTools": true,
+      "headers": {
+        "x-litellm-api-key": "Bearer ${KERNAL_ROUTER_KEY}"
+      },
+      "oauth": {
+        "clientName": "kernal"
+      }
     }
   }
 }

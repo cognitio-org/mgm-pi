@@ -3,11 +3,12 @@ import { Working } from "./Working.tsx";
 import { MarkdownEditor } from "./MarkdownEditor.tsx";
 import { withFloppySound } from "../lib/floppy-sound.ts";
 import { isTouchDeviceHere } from "../lib/touch.ts";
-import { loadEnterMode, saveEnterMode, type EnterMode } from "../lib/composer-keys.ts";
+import { loadEnterMode, loadTallEditor, saveEnterMode, saveTallEditor, type EnterMode } from "../lib/composer-keys.ts";
 import { useVoice, type VoiceEngines } from "../hooks/useVoice.ts";
 import { useSpeaker, type SpeechStarter } from "../hooks/useSpeaker.ts";
 import type { PiEntry } from "../api/client.ts";
 import { VoiceControl } from "./VoiceControl.tsx";
+import { SendIcon, StopIcon } from "./SessionIcons.tsx";
 
 interface Props {
   /** The page's own "Sending…" phase (deriveSessionActivity) -- shown on the Send button too. */
@@ -36,6 +37,15 @@ interface Props {
   voiceSpeak?: boolean;
   agentBusy?: boolean;
   speech?: SpeechStarter;
+  /** #498: a turn is running. The send button gives way to ■ Break (Send comes back beside it once
+   * there's a draft, which queues as today). */
+  busy?: boolean;
+  onBreak?: () => void;
+  /** The Break request is in flight. */
+  breaking?: boolean;
+  /** #498: the floppy's model chip and context ring, which sit in the composer's one row. */
+  modelChip?: ReactNode;
+  contextChip?: ReactNode;
 }
 
 type Behavior = "" | "steer" | "followUp";
@@ -43,8 +53,8 @@ type Behavior = "" | "steer" | "followUp";
 const NO_ENTRIES: PiEntry[] = [];
 
 const MODES: Array<{ value: Behavior; label: string; short: string }> = [
-  // Short label "Prompt", not "Send": on phones the segmented control sits beside the Send button,
-  // and two buttons both reading "Send" left it unclear which one sends.
+  // Short label "Prompt", not "Send": on phones the compact picker sits in the row with the Send
+  // button, and two controls both reading "Send" would leave it unclear which one sends.
   { value: "", label: "Prompt (queued if idle)", short: "Prompt" },
   { value: "steer", label: "Steer", short: "Steer" },
   { value: "followUp", label: "Follow-up", short: "Follow-up" },
@@ -52,9 +62,9 @@ const MODES: Array<{ value: Behavior; label: string; short: string }> = [
 
 /** Send/steer/follow-up composer. "Send" queues a plain prompt (the API wakes a run if none is
  * running); "steer" and "follow-up" set `behavior` for a currently-running run (protocol.md's
- * `prompt.behavior`). The mode picker is a `<select>` on desktop and a compact segmented control
- * on phones (styles/mobile.css toggles which one is visible) -- both drive the same `behavior`
- * state, so nothing about the send logic differs between them. */
+ * `prompt.behavior`). The mode picker is a `<select>` with full labels on desktop and one with the
+ * short labels on phones (styles/mobile.css toggles which one is visible) -- both drive the same
+ * `behavior` state, so nothing about the send logic differs between them. */
 export function Composer({
   onSend,
   disabled,
@@ -69,6 +79,11 @@ export function Composer({
   voiceSpeak,
   agentBusy = false,
   speech,
+  busy = false,
+  onBreak,
+  breaking = false,
+  modelChip,
+  contextChip,
 }: Props) {
   const [text, setText] = useState("");
   const [behavior, setBehavior] = useState<Behavior>("");
@@ -116,6 +131,13 @@ export function Composer({
   const [enterMenu, setEnterMenu] = useState(false);
   // The formatting toolbar stays folded behind "Aa" until asked. It is rarely used.
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [tall, setTall] = useState(() => loadTallEditor());
+  function toggleTall() {
+    setTall((t) => {
+      saveTallEditor(!t);
+      return !t;
+    });
+  }
   const toolbarId = useId();
   const sendWrapRef = useRef<HTMLSpanElement>(null);
   const enterMenuRef = useRef<HTMLDivElement>(null);
@@ -204,22 +226,15 @@ export function Composer({
 
   const sendKeyHint = enterMode === "send" ? "Enter to send, Shift+Enter for a new line" : "Shift+Enter or ⌘/Ctrl+Enter to send";
 
+  const showSend = !busy || !onBreak || text.trim().length > 0;
+
   return (
-    <div className="composer">
-      <div className="composer-row composer-status-row">
-        <div className="composer-status">{status}</div>
-        <button
-          type="button"
-          className="md-tools-toggle"
-          aria-expanded={toolsOpen}
-          aria-controls={toolbarId}
-          aria-label="Formatting tools"
-          title="Formatting tools"
-          onClick={() => setToolsOpen((o) => !o)}
-        >
-          <span aria-hidden="true">Aa</span>
-        </button>
-      </div>
+    <div className={`composer${tall ? " is-tall" : ""}`}>
+      {status ? (
+        <div className="composer-row composer-status-row">
+          <div className="composer-status">{status}</div>
+        </div>
+      ) : null}
       <MarkdownEditor
         value={text}
         onChange={setText}
@@ -231,7 +246,28 @@ export function Composer({
         toolsOpen={toolsOpen}
         toolbarId={toolbarId}
       />
-      <div className="composer-row">
+      <div className="composer-row composer-controls">
+        <button
+          type="button"
+          className="md-tools-toggle"
+          aria-expanded={toolsOpen}
+          aria-controls={toolbarId}
+          aria-label="Formatting tools"
+          title="Formatting tools"
+          onClick={() => setToolsOpen((o) => !o)}
+        >
+          <span aria-hidden="true">Aa</span>
+        </button>
+        <button
+          type="button"
+          className="composer-size-toggle"
+          aria-pressed={tall}
+          aria-label="Tall editor"
+          title={tall ? "Shrink the editor" : "Make the editor taller for long messages"}
+          onClick={toggleTall}
+        >
+          <span aria-hidden="true">{tall ? "⇣" : "⇡"}</span>
+        </button>
         <select
           className="composer-mode-select"
           value={behavior}
@@ -245,65 +281,89 @@ export function Composer({
             </option>
           ))}
         </select>
-        <div className="composer-mode-buttons" role="radiogroup" aria-label="Send mode">
-          {MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              role="radio"
-              aria-checked={behavior === m.value}
-              className={behavior === m.value ? "active" : ""}
-              disabled={disabled}
-              onClick={() => setBehavior(m.value)}
-            >
-              {m.short}
-            </button>
-          ))}
-        </div>
-        <VoiceControl voice={voice} speaker={speaker} />
-        <span
-          className="send-wrap"
-          data-enter-mode={enterMode}
-          title="Right-click to set whether Enter sends"
-          onContextMenu={openEnterMenu}
-          onPointerDown={armHold}
-          onPointerUp={clearHold}
-          onPointerCancel={cancelHold}
-          onPointerLeave={clearHold}
+        <select
+          className="composer-mode-compact"
+          value={behavior}
+          onChange={(e) => setBehavior(e.target.value as Behavior)}
+          disabled={disabled}
+          aria-label="Send mode"
         >
+          {MODES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.short}
+            </option>
+          ))}
+        </select>
+        {modelChip}
+        <span className="composer-spacer" />
+        {contextChip}
+        <VoiceControl voice={voice} speaker={speaker} />
+        {showSend && (
+          <span
+            className="send-wrap"
+            data-enter-mode={enterMode}
+            title={`Send (${sendKeyHint}). Right-click to set whether Enter sends.`}
+            onContextMenu={openEnterMenu}
+            onPointerDown={armHold}
+            onPointerUp={clearHold}
+            onPointerCancel={cancelHold}
+            onPointerLeave={clearHold}
+          >
+            <button
+              type="button"
+              className="btn btn-primary send-button"
+              aria-haspopup="menu"
+              aria-expanded={enterMenu}
+              aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
+              onClick={(event) => {
+                if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
+                  ignoreClick.current = false;
+                  return;
+                }
+                setEnterMenu(false);
+                void send();
+              }}
+            >
+              {sending ? (
+                <Working label="Sending" />
+              ) : (
+                <>
+                  <span className="send-label sr-only">{busy ? "Send, queued for after this turn" : "Send"}</span>
+                  <span className="send-glyph" aria-hidden="true">
+                    <SendIcon />
+                  </span>
+                </>
+              )}
+            </button>
+            {enterMenu && (
+              <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
+                <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
+                  Enter sends
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={enterMode === "newline"}
+                  onClick={() => chooseEnterMode("newline")}
+                >
+                  Enter is a new line
+                </button>
+              </div>
+            )}
+          </span>
+        )}
+        {busy && onBreak && (
           <button
             type="button"
-            className="btn btn-primary"
-            aria-haspopup="menu"
-            aria-expanded={enterMenu}
-            aria-disabled={disabled || voiceBusy || !text.trim() ? true : undefined}
-            onClick={(event) => {
-              if (ignoreClick.current || event.ctrlKey || event.button !== 0) {
-                ignoreClick.current = false;
-                return;
-              }
-              setEnterMenu(false);
-              void send();
-            }}
+            className="btn break-button"
+            onClick={onBreak}
+            disabled={breaking}
+            aria-label="Break"
+            title="Break: interrupt the current turn, like the C64 RUN/STOP key (Esc)"
           >
-            {sending ? <Working label="Sending" /> : "Send"}
+            {breaking ? <Working label="Breaking" /> : <StopIcon />}
           </button>
-          {enterMenu && (
-            <div ref={enterMenuRef} className="enter-mode-menu" role="menu" aria-label="Enter key">
-              <button type="button" role="menuitemradio" aria-checked={enterMode === "send"} onClick={() => chooseEnterMode("send")}>
-                Enter sends
-              </button>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={enterMode === "newline"}
-                onClick={() => chooseEnterMode("newline")}
-              >
-                Enter is a new line
-              </button>
-            </div>
-          )}
-        </span>
+        )}
       </div>
       {(voice.note || speaker.note) && (
         <div className="voice-note" role="status">

@@ -87,26 +87,27 @@ describe("Markdown", () => {
     expect(data).not.toContain("data:text/html");
   });
 
-  it("collapses a long message to its opening and a Read button", () => {
+  it("renders a long message in full inside a scroll box with a reading-view button", () => {
     const text = `${"a".repeat(50)}\n\n${"b".repeat(1200)}`;
     const out = html(text);
     expect(out).toContain("a".repeat(50));
-    expect(out).not.toContain("b".repeat(100));
-    expect(out).toContain(">Read<");
+    expect(out).toContain("b".repeat(1200));
+    expect(out).toContain('class="md md-scroll"');
+    expect(out).toContain('aria-label="Open in reading view"');
     const full = renderToStaticMarkup(<Markdown text={text} reading={false} />);
     expect(full).toContain("b".repeat(100));
-    expect(full).not.toContain(">Read<");
+    expect(full).not.toContain("md-scroll");
+    expect(full).not.toContain("Open in reading view");
   });
 
-  it("collapses two ATX headings even when the prose is short", () => {
+  it("treats two ATX headings as long even when the prose is short, and keeps them formatted", () => {
     const text = "# Alpha\n\nFirst paragraph.\n\n# Beta\n\nSecond paragraph.";
     const out = html(text);
-    expect(out).toContain("First paragraph.");
-    expect(out).not.toContain("Second paragraph.");
-    expect(out).not.toContain("<h1>");
-    expect(out).toContain(">Read<");
+    expect(out).toContain("<h1>Alpha</h1>");
+    expect(out).toContain("Second paragraph.");
+    expect(out).toContain("Open in reading view");
     const one = html("# Alpha\n\nJust a sentence.");
     expect(one).toContain("<h1>Alpha</h1>");
-    expect(one).not.toContain(">Read<");
+    expect(one).not.toContain("Open in reading view");
   });
 });

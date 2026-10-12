@@ -14,30 +14,46 @@
  * when signed in) → the shell. The last three are all level "local", so a key whose declaration
  * has no "local" level ignores them.
  *
+ * The personal keys (model.*, compaction.*, memory.mode, voice.*, subscriptions.*: `accountFirst`, #437
+ * and subscriptions.md) rank the
+ * account above what a machine set before there was one, so a central change reaches a laptop that
+ * once ran /connect: this machine (config.local.json) → device → profile → user → legacy local
+ * values (settings.json's defaultProvider/defaultModel/defaultThinkingLevel, kernal.compaction,
+ * kernal.memory, pi-listen's voice settings, KERNAL_SUMMARY_MODEL in .env or the shell; source
+ * "legacy") → fleet and group → defaults. A settings.json value equal to what the release shipped
+ * (settings.shipped.json; the committed settings.json in a checkout) is the release's default, not the person's choice, so it is no legacy
+ * layer. In a Drive the owner's settings arrive in KERNAL_RUN_SETTINGS (agentd, spec §9) and rank
+ * with the fleet: the tape stays in charge there.
+ *
+ * The non-secret resolved values also go to `effective[.<profile>].json` in the cache directory,
+ * which bin/kernal reads before pi starts (the memory mode), so both see the same value.
+ *
  * Signed out there is no central layer: everything works from the local layers as before, and LM
  * Studio works offline. Secrets are never written to the cache: the server sends none in
  * GET /api/config, `router.key` comes from the keychain, and personal provider keys (§4) are kept
  * in memory only (`providerKey`).
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env as kenv } from "./env.ts";
 import * as session from "./outfitter-session.ts";
 import { parseEnvText } from "../connect/lib.ts";
-import { kernalSection, readSettings, updateKernal } from "../connect/settings.ts";
+import { SHIPPED_FILE, kernalSection, readSettings, settingsPath, updateKernal } from "../connect/settings.ts";
 
 export type SettingValue = string | number | boolean;
 export type OverrideRule = "none" | "opt-out" | "any";
 
 /** Server sources (GET /api/config), then the local ones Kernal adds, lowest authority last. */
-export type ConfigSource = "fleet" | "group" | "user" | "profile" | "device" | "default" | "local" | "dotenv" | "env";
+export type ConfigSource = "fleet" | "group" | "user" | "profile" | "device" | "default" | "local" | "dotenv" | "env" | "legacy";
 
 export interface ConfigValue {
   value: SettingValue;
   source: ConfigSource;
-  /** The profile's name for source "profile"; the env var's name for "dotenv" and "env". */
+  /** The profile's name for source "profile"; the env var's name for "dotenv" and "env"; for
+   * "legacy", where it was found ("settings.json defaultModel", "KERNAL_SUMMARY_MODEL in .env"). */
   sourceName?: string;
   override: OverrideRule;
   /** A local value can't change it (/admin shows it read-only). */
@@ -56,6 +72,9 @@ export interface ResolvedConfig {
   fromCache: boolean;
   /** The account's profiles, as the last answer listed them (empty when signed out). */
   profiles?: string[];
+  /** The personal keys' fleet (or group, or a Drive's run) values, also where a legacy local
+   * value outranks them: bin/kernal needs them once that legacy value is gone (effective file). */
+  fleet?: Record<string, SettingValue>;
 }
 
 // ---------- the schema, as Kernal knows it ----------
@@ -78,25 +97,46 @@ export interface KnownSetting {
   default?: SettingValue;
   env?: readonly string[];
   description: string;
+  /** #437: the account outranks legacy local values (the module comment has the order). */
+  accountFirst?: boolean;
+  /** When a change reaches a running Kernal: "now" (read on every use), "session" (the next
+   * session, /new or a restart; a running conversation never switches model), "start" (the next
+   * start of Kernal). Absent: the next start. */
+  takesEffect?: "now" | "session" | "start";
 }
 
 /** The schema version this Kernal was built against. */
-export const KNOWN_SCHEMA_VERSION = 2;
+export const KNOWN_SCHEMA_VERSION = 4;
 
 const PERSONAL: readonly Level[] = ["fleet", "user", "profile", "device", "local"];
+/** subscriptions.md §2: not fleet. A fleet write is the server's 400, and this copy has no fleet level. */
+const SUBSCRIPTION_LEVELS: readonly Level[] = ["user", "profile", "device", "local"];
+const SUBSCRIPTION_MODE = ["off", "sandboxed", "full"] as const;
 
-/** The v1 keys (spec §3.2), and v2's Sentry signals (#424). */
+/** Vendor ids for `subscriptions.prefer` (subscriptions.md §2). No spaces, no duplicates; a subset is allowed. */
+const PREFER_VENDOR = "(?:claude|grok|codex|gemini)";
+const PREFER_RE = new RegExp(`^${PREFER_VENDOR}(?:,${PREFER_VENDOR})*$`);
+
+/** A valid prefer list, or undefined (`invalid_value` on the server; ignored here). */
+export function subscriptionPrefer(raw: string): string | undefined {
+  if (!PREFER_RE.test(raw)) return undefined;
+  const ids = raw.split(",");
+  return new Set(ids).size === ids.length ? raw : undefined;
+}
+
+/** The v1 keys (spec §3.2), v2's Sentry signals (#424), v3's curated OpenRouter list (#440),
+ * and v4's subscription workers (subscriptions.md §2). */
 export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "router.baseUrl", type: "url", secret: false, levels: ["fleet", "local"], override: "none", default: "https://router.kernal.one/v1", env: ["LITELLM_BASE_URL"], description: "The LiteLLM router this machine's router key is for." },
   { key: "router.key", type: "string", secret: true, levels: ["device", "local"], override: "any", env: ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"], description: "This device's own router key, minted at sign-in." },
-  { key: "model.provider", type: "enum", values: ["litellm", "lmstudio", "openrouter"], secret: false, levels: PERSONAL, override: "any", default: "litellm", description: "The backend Kernal starts on (/connect)." },
-  { key: "model.default", type: "string", secret: false, levels: PERSONAL, override: "any", description: "The model Kernal starts on." },
-  { key: "model.thinking", type: "enum", values: ["off", "minimal", "low", "medium", "high", "xhigh"], secret: false, levels: PERSONAL, override: "any", description: "The default thinking level." },
-  { key: "compaction.summaryModel", type: "string", secret: false, levels: PERSONAL, override: "any", env: ["KERNAL_SUMMARY_MODEL"], description: "The model that writes compaction summaries." },
-  { key: "compaction.masking", type: "boolean", secret: false, levels: PERSONAL, override: "any", default: true, description: "Elide old tool results before the context fills." },
-  { key: "memory.mode", type: "enum", values: ["off", "tool", "auto"], secret: false, levels: PERSONAL, override: "any", description: "Agent Engine memory on a laptop." },
-  { key: "voice.enabled", type: "boolean", secret: false, levels: PERSONAL, override: "any", default: false, description: "Voice input (pi-listen)." },
-  { key: "voice.language", type: "string", secret: false, levels: PERSONAL, override: "any", default: "en", description: "Speech recognition language." },
+  { key: "model.provider", type: "enum", values: ["litellm", "lmstudio", "openrouter"], secret: false, levels: PERSONAL, override: "any", default: "litellm", description: "The backend Kernal starts on (/connect).", accountFirst: true, takesEffect: "session" },
+  { key: "model.default", type: "string", secret: false, levels: PERSONAL, override: "any", description: "The model Kernal starts on.", accountFirst: true, takesEffect: "session" },
+  { key: "model.thinking", type: "enum", values: ["off", "minimal", "low", "medium", "high", "xhigh"], secret: false, levels: PERSONAL, override: "any", description: "The default thinking level.", accountFirst: true, takesEffect: "session" },
+  { key: "compaction.summaryModel", type: "string", secret: false, levels: PERSONAL, override: "any", env: ["KERNAL_SUMMARY_MODEL"], description: "The model that writes compaction summaries.", accountFirst: true, takesEffect: "now" },
+  { key: "compaction.masking", type: "boolean", secret: false, levels: PERSONAL, override: "any", default: true, description: "Elide old tool results before the context fills.", accountFirst: true, takesEffect: "now" },
+  { key: "memory.mode", type: "enum", values: ["off", "tool", "auto"], secret: false, levels: PERSONAL, override: "any", description: "Agent Engine memory on a laptop.", accountFirst: true, takesEffect: "start" },
+  { key: "voice.enabled", type: "boolean", secret: false, levels: PERSONAL, override: "any", default: false, description: "Voice input (pi-listen).", accountFirst: true, takesEffect: "session" },
+  { key: "voice.language", type: "string", secret: false, levels: PERSONAL, override: "any", default: "en", description: "Speech recognition language.", accountFirst: true, takesEffect: "session" },
   { key: "localHost.shareModels", type: "boolean", secret: false, levels: ["user", "profile", "device", "local"], override: "any", default: false, description: "Share this machine's local models through the router." },
   { key: "telemetry.sentry.enabled", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Send errors to Sentry. Only the fleet turns it on; a machine may turn it off." },
   { key: "telemetry.sentry.dsn", type: "url", secret: false, levels: ["fleet"], override: "none", description: "Where Sentry events go." },
@@ -107,6 +147,22 @@ export const KNOWN_SETTINGS: readonly KnownSetting[] = [
   { key: "telemetry.sentry.metrics", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Counters: agent runs, tool and model calls, tokens, spend, errors." },
   { key: "telemetry.sentry.logs", type: "boolean", secret: false, levels: ["fleet", "local"], override: "opt-out", default: false, description: "Server logs to Sentry (Outfitter and Drives; a laptop sends none)." },
   { key: "telemetry.sentry.profilesSampleRate", type: "number", min: 0, max: 1, secret: false, levels: ["fleet"], override: "none", default: 0, description: "Share of traces profiled (Outfitter and Drives; not Kernal's binary)." },
+  // v3 (#440): the curated OpenRouter list, one add and one remove key per level so they combine
+  // (connect/lib.ts curateOpenRouter). Comma-separated model ids.
+  { key: "openrouter.models.fleetAdd", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models offered to everyone on top of Kernal's curated list." },
+  { key: "openrouter.models.fleetRemove", type: "string", secret: false, levels: ["fleet"], override: "none", description: "OpenRouter models hidden from everyone; nobody can add them back." },
+  { key: "openrouter.models.add", type: "string", secret: false, levels: ["user"], override: "any", description: "OpenRouter models you added to your curated list." },
+  { key: "openrouter.models.remove", type: "string", secret: false, levels: ["user"], override: "any", description: "OpenRouter models you removed from your curated list." },
+  { key: "openrouter.models.profileAdd", type: "string", secret: false, levels: ["profile"], override: "any", description: "OpenRouter models this profile adds to your curated list." },
+  { key: "openrouter.models.profileRemove", type: "string", secret: false, levels: ["profile"], override: "any", description: "OpenRouter models this profile removes from your curated list." },
+  { key: "openrouter.models.localAdd", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine adds to the curated list." },
+  { key: "openrouter.models.localRemove", type: "string", secret: false, levels: ["local"], override: "any", description: "OpenRouter models this machine removes from the curated list." },
+  // v4 (subscriptions.md §2). The fleet cannot turn one on. Not secret: the mode is not the token.
+  { key: "subscriptions.claude", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Claude plan from Kernal: off, read-only, or the CLI's own approvals.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.grok", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Grok plan from Kernal.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.codex", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Codex plan from Kernal.", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.gemini", type: "enum", values: SUBSCRIPTION_MODE, secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "off", description: "Spend your Google AI Pro/Ultra plan from Kernal (Antigravity).", accountFirst: true, takesEffect: "session" },
+  { key: "subscriptions.prefer", type: "string", secret: false, levels: SUBSCRIPTION_LEVELS, override: "any", default: "claude,grok,codex,gemini", description: "Which signed-in subscription to try after a plan window is spent, comma-separated.", accountFirst: true, takesEffect: "session" },
 ];
 
 /** The legacy settings.json flags (`kernal.<flag>: false`) that were each key's local opt-out
@@ -130,6 +186,44 @@ export const PROVIDER_ENV: Readonly<Record<string, string>> = {
   anthropic: "ANTHROPIC_API_KEY",
   gemini: "GEMINI_API_KEY",
 };
+
+/**
+ * The key variables whose origin matters when signed in (#432): a shell-exported one wins over this
+ * device's router key or the account's provider key (connect's loadEnv puts the process environment
+ * on top; layerCentralEnv only fills what is unset).
+ */
+export const ROUTER_KEY_ENV: readonly string[] = ["LITELLM_AGENT_KEY", "LITELLM_API_KEY"];
+export const SHELL_WATCHED: readonly string[] = [...ROUTER_KEY_ENV, ...Object.values(PROVIDER_ENV)];
+
+/**
+ * bin/kernal's marker: the SHELL_WATCHED names already set in the environment it was started from,
+ * before it sources the .env files with `set -a` (space-separated, possibly empty). Present, a name
+ * missing from it came from a .env file bin/kernal read, even one connect doesn't (the bundle's
+ * parent directory). Absent (pi started some other way), the values are compared with the .env files
+ * alone.
+ */
+export const SHELL_KEYS_MARKER = "KERNAL_SHELL_KEYS";
+
+/**
+ * True when `name`'s value in `env` came from the shell rather than a .env file Kernal reads: it is
+ * set, bin/kernal's marker (when present) names it, and it differs from the .env files' value (one
+ * equal to it is the .env one, which bin/kernal exported; signed in that already has its own
+ * deprecation warning). Only the SHELL_WATCHED names are judged by the marker.
+ */
+export function fromShell(name: string, env: NodeJS.ProcessEnv, dotenv: Record<string, string>): boolean {
+  const v = env[name];
+  if (v === undefined || v === "" || v === dotenv[name]) return false;
+  const marker = env[SHELL_KEYS_MARKER];
+  if (marker !== undefined && SHELL_WATCHED.includes(name) && !marker.split(/[\s,]+/).includes(name)) return false;
+  return true;
+}
+
+/** True when bin/kernal's marker shows `name` came from a .env file bin/kernal sourced but connect
+ * doesn't read (the bundle's parent directory): set, not in the marker, in none of `dotenv`. */
+function fromKernalDotenv(name: string, env: NodeJS.ProcessEnv, dotenv: Record<string, string>): boolean {
+  const marker = env[SHELL_KEYS_MARKER];
+  return marker !== undefined && SHELL_WATCHED.includes(name) && !!env[name] && dotenv[name] === undefined && !marker.split(/[\s,]+/).includes(name);
+}
 
 const CENTRAL_SOURCES: ReadonlySet<ConfigSource> = new Set(["fleet", "group", "user", "profile", "device"]);
 const LOCAL_SOURCES: ReadonlySet<ConfigSource> = new Set(["local", "dotenv", "env"]);
@@ -165,8 +259,11 @@ export function coerce(decl: KnownSetting, raw: unknown, fromText = false): Sett
       return typeof raw === "string" && (decl.values ?? []).includes(raw) ? raw : undefined;
     case "url":
       return typeof raw === "string" && /^https?:\/\/\S+$/.test(raw) ? raw : undefined;
-    case "string":
-      return typeof raw === "string" && raw !== "" ? raw : undefined;
+    case "string": {
+      if (typeof raw !== "string" || raw === "") return undefined;
+      if (decl.key === "subscriptions.prefer") return subscriptionPrefer(raw);
+      return raw;
+    }
   }
 }
 
@@ -250,8 +347,17 @@ export interface CentralConfigDeps {
   env: () => NodeJS.ProcessEnv;
   /** The merged .env files, nearest last (default: the files connect's loadEnv reads). */
   dotenv: () => Record<string, string>;
-  /** The agent settings.json (for the legacy Sentry opt-out flags, SENTRY_LOCAL_FLAGS). */
+  /** The agent settings.json (the legacy Sentry opt-out flags, SENTRY_LOCAL_FLAGS, and the legacy
+   * values of the personal keys, LEGACY_SETTINGS). */
   settings: () => Record<string, unknown>;
+  /** What the release shipped as settings.json (readShippedSettings: settings.shipped.json beside
+   * it, or in a source checkout the committed settings.json): a value equal to it is the release's
+   * default, not a legacy choice. */
+  shippedSettings: () => Record<string, unknown>;
+  /** pi-listen's settings (kernal-voice's voiceSettingsPath): voice.enabled and voice.language. */
+  voiceSettings: () => Record<string, unknown>;
+  /** What Kernal itself wrote into pi-listen's settings (readVoiceRecord). */
+  voiceRecord: () => VoiceRecord;
   /** Changes the agent settings.json's `kernal` section (default: updateKernal); only to clear a
    * legacy Sentry flag (SENTRY_LOCAL_FLAGS). */
   saveKernal: (patch: Record<string, unknown>) => void;
@@ -259,6 +365,9 @@ export interface CentralConfigDeps {
   now: () => number;
   /** One-line warnings (default: stderr). */
   warn: (line: string) => void;
+  /** The process environment as it was before Kernal changed it (#432; default: the snapshot taken
+   * when this module was first loaded, or `env` when a test replaced that). */
+  startEnv: () => NodeJS.ProcessEnv;
 }
 
 interface State {
@@ -267,6 +376,12 @@ interface State {
   providerKeys: Map<string, string>;
   warned: Set<string>;
   deps: Partial<CentralConfigDeps>;
+  /** The login the resolution was made for (#443): adoptKeychainLogin tells a re-login as another
+   * account (the resolution and the provider keys were theirs) from a new device of the same one. */
+  login?: { api: string; email: string; deviceId: string };
+  /** The key variables (SHELL_WATCHED) and bin/kernal's marker as the process started with them,
+   * before connect writes OPENROUTER_API_KEY or /setup and /admin write theirs (#432). */
+  startEnv: Record<string, string>;
 }
 
 /**
@@ -277,8 +392,20 @@ interface State {
 const SLOT = Symbol.for("kernal.centralConfig");
 function state(): State {
   const g = globalThis as { [SLOT]?: State };
-  return (g[SLOT] ??= { resolved: new Map(), inflight: new Map(), providerKeys: new Map(), warned: new Set(), deps: {} });
+  return (g[SLOT] ??= { resolved: new Map(), inflight: new Map(), providerKeys: new Map(), warned: new Set(), deps: {}, startEnv: snapshotStartEnv() });
 }
+
+function snapshotStartEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of [...SHELL_WATCHED, SHELL_KEYS_MARKER]) {
+    const v = process.env[name];
+    if (v !== undefined) out[name] = v;
+  }
+  return out;
+}
+// At load, before any extension runs: connect imports this module before its first registration
+// writes OPENROUTER_API_KEY into process.env, so the snapshot is the environment Kernal started with.
+state();
 
 /** The .env files connect's loadEnv reads (connect/index.ts), nearest last. Not imported from
  * there: connect/index.ts pulls in pi's TUI and imports this module. */
@@ -293,6 +420,29 @@ function readDotenv(): Record<string, string> {
   return out;
 }
 
+const shippedCache = new Map<string, Record<string, unknown>>();
+
+/** What the release shipped as settings.json: the bundle's settings.shipped.json. A source checkout
+ * has none; there settings.json is the tracked file itself, so its committed version (HEAD) is what
+ * "shipped" means, and a value equal to it is no one's choice. {} when neither can be read. Read
+ * once per directory. */
+export function readShippedSettings(agentDir: string = dirname(settingsPath())): Record<string, unknown> {
+  const kept = shippedCache.get(agentDir);
+  if (kept) return kept;
+  let out: Record<string, unknown> = {};
+  const file = join(agentDir, SHIPPED_FILE);
+  if (existsSync(file)) out = readSettings(file);
+  else {
+    try {
+      const text = execFileSync("git", ["-C", agentDir, "show", "HEAD:./settings.json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3_000 });
+      const v = JSON.parse(text);
+      if (isObject(v)) out = v;
+    } catch {}
+  }
+  shippedCache.set(agentDir, out);
+  return out;
+}
+
 function deps(): CentralConfigDeps {
   const d = state().deps;
   return {
@@ -300,10 +450,14 @@ function deps(): CentralConfigDeps {
     env: d.env ?? (() => process.env),
     dotenv: d.dotenv ?? readDotenv,
     settings: d.settings ?? (() => readSettings()),
+    shippedSettings: d.shippedSettings ?? (() => readShippedSettings()),
+    voiceSettings: d.voiceSettings ?? (() => readSettings(voiceSettingsFile())),
+    voiceRecord: d.voiceRecord ?? (() => readVoiceRecord()),
     saveKernal: d.saveKernal ?? ((patch) => updateKernal(patch)),
     fetch: d.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a)),
     now: d.now ?? Date.now,
     warn: d.warn ?? ((line) => console.error(line)),
+    startEnv: d.startEnv ?? d.env ?? (() => state().startEnv),
   };
 }
 
@@ -339,6 +493,57 @@ export function localOverridesPath(): string {
   return join(kernalHome(), "config.local.json");
 }
 
+/** pi-listen's global settings (kernal-voice/index.ts's voiceSettingsPath; pi-listen ignores
+ * PI_CODING_AGENT_DIR). A copy: kernal-voice imports nothing from here and this nothing from it. */
+export function voiceSettingsFile(): string {
+  return kenv("VOICE_SETTINGS") || join(homedir(), ".pi", "agent", "settings.json");
+}
+
+/**
+ * Kernal's own record of what it wrote into pi-listen's voice.enabled and voice.language, beside
+ * pi-listen's settings (pi-listen rewrites its own file with known fields only, so the record can't
+ * live there): `seed`, Kernal's baseline, what kernal-voice's seed set (enabled, and the language
+ * from $LANG when the person had none) or a default applyVoiceSettings put back; `applied`, what applyVoiceSettings last copied from the account or this
+ * machine. A pi-listen value equal to Kernal's last write is Kernal's, not the person's, so it is
+ * no legacy layer (legacyLayers) and doesn't outrank the fleet or outlive the account's value.
+ */
+export type VoiceField = "enabled" | "language";
+export type VoiceRecord = { version: 1; seed?: Partial<Record<VoiceField, SettingValue>>; applied?: Partial<Record<VoiceField, SettingValue>> };
+
+export function voiceRecordFile(): string {
+  return join(dirname(voiceSettingsFile()), "kernal-voice-applied.json");
+}
+
+export function readVoiceRecord(file: string = voiceRecordFile()): VoiceRecord {
+  try {
+    const j = JSON.parse(readFileSync(file, "utf8"));
+    if (!isObject(j) || j.version !== 1) return { version: 1 };
+    return { version: 1, ...(isObject(j.seed) ? { seed: j.seed as VoiceRecord["seed"] } : {}), ...(isObject(j.applied) ? { applied: j.applied as VoiceRecord["applied"] } : {}) };
+  } catch {
+    return { version: 1 };
+  }
+}
+
+export function writeVoiceRecord(record: VoiceRecord, file: string = voiceRecordFile()): void {
+  try { writeWhole(file, JSON.stringify(record, null, 2) + "\n"); } catch {}
+}
+
+/** The value Kernal last wrote for one field: applyVoiceSettings' copy, else the seed's. */
+export function kernalVoiceWrite(record: VoiceRecord, field: VoiceField): SettingValue | undefined {
+  if (record.applied && field in record.applied) return record.applied[field];
+  return record.seed?.[field];
+}
+
+/** The server's profile names (api settings-schema.ts PROFILE_NAME_RE): safe in a file name. */
+const PROFILE_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The non-secret resolution bin/kernal reads before pi starts: `effective.json` for no profile,
+ * `effective.<name>.json` for `--profile <name>`. Undefined for a name the server would refuse. */
+export function effectivePath(profile: string | undefined): string | undefined {
+  if (profile === undefined) return join(configCacheDir(), "effective.json");
+  return PROFILE_NAME.test(profile) ? join(configCacheDir(), `effective.${profile}.json`) : undefined;
+}
+
 /** The web app for an API: app.kernal.one for the released link origin, else the API itself (a dev
  * server runs role "all"). */
 export function webOrigin(api: string = session.outfitterApi()): string {
@@ -353,7 +558,8 @@ function writeWhole(file: string, text: string): void {
   renameSync(tmp, file);
 }
 
-function readLocalOverrides(): Record<string, unknown> {
+/** config.local.json's values, read from disk now (not the memoised resolution). */
+export function readLocalOverrides(): Record<string, unknown> {
   try {
     const f = JSON.parse(readFileSync(localOverridesPath(), "utf8")) as { version?: unknown; values?: unknown };
     return f && f.version === 1 && f.values && typeof f.values === "object" ? (f.values as Record<string, unknown>) : {};
@@ -377,7 +583,128 @@ function readCache(api: string, email: string, profile: string | undefined, now:
 
 // ---------- resolution ----------
 
-type Layer = { value: SettingValue; source: ConfigSource; sourceName?: string; locked?: boolean };
+export type Layer = {
+  value: SettingValue; source: ConfigSource; sourceName?: string; locked?: boolean;
+  /** A Drive's run settings (KERNAL_RUN_SETTINGS): ranks with the fleet whatever its source. */
+  low?: boolean;
+  /** A legacy value read from .env: the variable, for the deprecation warning. */
+  dotenvVar?: string;
+};
+
+// ---------- legacy local values of the personal keys (#437) ----------
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** compaction's own reading of its settings (compaction/index.ts readPrefs): `kernal`, else the
+ * pre-rename `mgm` section; `kernal.summaryModel` is the older place for the summarizer. */
+function compactionPrefs(settings: Record<string, unknown>): Record<string, unknown> {
+  const section = isObject(settings.kernal) ? settings.kernal : isObject(settings.mgm) ? settings.mgm : {};
+  const prefs = isObject(section.compaction) ? section.compaction : {};
+  return { ...prefs, ...(section.summaryModel ? { summaryModel: section.summaryModel } : {}) };
+}
+
+/**
+ * The legacy values one personal key had on this machine before there was an account, lowest
+ * priority first: the files (agent settings.json, pi-listen's), then .env, then the shell. A
+ * settings.json default model equal to what the release shipped is no one's choice and is left out;
+ * defaultProvider and defaultModel count as a pair, so a changed model keeps its backend. A pi-listen
+ * value equal to what Kernal itself last wrote there (its seed, or a copy of the account's value:
+ * voiceRecord) is Kernal's, not the person's, and is left out too.
+ */
+export function legacyLayers(decl: KnownSetting,
+  files: { settings: Record<string, unknown>; shipped: Record<string, unknown>; voice: Record<string, unknown>; voiceRecord?: VoiceRecord },
+  dotenv: Record<string, string>, shell: NodeJS.ProcessEnv): Layer[] {
+  const out: Layer[] = [];
+  const { settings, shipped, voice } = files;
+  const add = (raw: unknown, where: string) => {
+    const value = coerce(decl, raw);
+    if (value !== undefined) out.push({ value, source: "legacy", sourceName: where });
+  };
+  const changed = (k: string) => settings[k] !== undefined && settings[k] !== shipped[k];
+  const pairChanged = changed("defaultProvider") || changed("defaultModel");
+  const voiceBlock = isObject(voice.voice) ? voice.voice : {};
+  const voiceRecord = files.voiceRecord ?? { version: 1 };
+  const byPerson = (field: VoiceField) => voiceBlock[field] !== undefined && voiceBlock[field] !== kernalVoiceWrite(voiceRecord, field);
+  switch (decl.key) {
+    case "model.provider": if (pairChanged) add(settings.defaultProvider, "settings.json defaultProvider"); break;
+    case "model.default": if (pairChanged) add(settings.defaultModel, "settings.json defaultModel"); break;
+    case "model.thinking": if (changed("defaultThinkingLevel")) add(settings.defaultThinkingLevel, "settings.json defaultThinkingLevel"); break;
+    case "compaction.summaryModel": add(compactionPrefs(settings).summaryModel, "settings.json kernal.compaction"); break;
+    case "compaction.masking": add(compactionPrefs(settings).masking, "settings.json kernal.compaction"); break;
+    case "memory.mode": add(kernalSection(settings).memory, "settings.json kernal.memory"); break;
+    case "voice.enabled": if (byPerson("enabled")) add(voiceBlock.enabled, "pi-listen settings"); break;
+    case "voice.language": if (byPerson("language")) add(voiceBlock.language, "pi-listen settings"); break;
+  }
+  for (const name of decl.env ?? []) {
+    const v = coerce(decl, dotenv[name], true);
+    if (v !== undefined) { out.push({ value: v, source: "legacy", sourceName: `${name} in .env`, dotenvVar: name }); break; }
+  }
+  for (const name of decl.env ?? []) {
+    const raw = shell[name] !== undefined && shell[name] !== dotenv[name] ? shell[name] : undefined;
+    const v = coerce(decl, raw, true);
+    if (v !== undefined) { out.push({ value: v, source: "legacy", sourceName: `${name} in the shell` }); break; }
+  }
+  return out;
+}
+
+const ACCOUNT_SOURCES: ReadonlySet<ConfigSource> = new Set(["user", "profile", "device"]);
+
+/**
+ * One personal key (#437): this machine's own choice (config.local.json) → the account (device,
+ * profile or user, as the server resolved it) → the legacy local values (the last one wins) → the
+ * fleet or a group → the default. Rule "any", so nothing is locked.
+ */
+export function combineAccountFirst(decl: KnownSetting, central: Layer | undefined, own: Layer | undefined, legacy: Layer[]): ConfigValue | undefined {
+  const at = (l: Layer): ConfigValue => ({ value: l.value, source: l.source, ...(l.sourceName ? { sourceName: l.sourceName } : {}), override: decl.override, locked: false });
+  if (own) return at(own);
+  if (central && !central.low && ACCOUNT_SOURCES.has(central.source)) return at(central);
+  if (legacy.length) return at(legacy[legacy.length - 1]);
+  if (central && central.source !== "default") return at(central);
+  const fallback = central ?? (decl.default !== undefined ? { value: decl.default, source: "default" as const } : undefined);
+  return fallback ? at(fallback) : undefined;
+}
+
+/** True when a value is something Kernal applies over what pi or pi-listen already read for
+ * themselves: this machine's choice or a central one. A legacy value is what they read already,
+ * and a default changes nothing. */
+export function appliesOverLocal(v: Pick<ConfigValue, "source" | "sourceName"> | undefined): boolean {
+  if (!v) return false;
+  return (v.source === "local" && !v.sourceName) || isCentralSource(v.source);
+}
+
+// ---------- a Drive's run settings (spec §9) ----------
+
+type RunSettings = { profile: string | null; schemaVersion: number; values: Record<string, unknown>; sources: Record<string, unknown> };
+
+/** KERNAL_RUN_SETTINGS (agentd settings.ts) inside a Drive: the owner's resolved values. Ignored
+ * outside a sandbox, where a stray variable must not pose as an account. */
+function runSettings(env: NodeJS.ProcessEnv): RunSettings | undefined {
+  const sandbox = (env.KERNAL_SANDBOX ?? env.MGM_SANDBOX)?.trim().toLowerCase();
+  if (!sandbox || ["0", "false", "no", "off"].includes(sandbox) || !env.KERNAL_RUN_SETTINGS) return undefined;
+  try {
+    const j = JSON.parse(env.KERNAL_RUN_SETTINGS) as Record<string, unknown>;
+    if (!isObject(j) || !isObject(j.values)) return undefined;
+    return {
+      profile: typeof j.profile === "string" ? j.profile : null,
+      schemaVersion: typeof j.schemaVersion === "number" ? j.schemaVersion : KNOWN_SCHEMA_VERSION,
+      values: j.values,
+      sources: isObject(j.sources) ? j.sources : {},
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+const SERVER_SOURCES: ReadonlySet<string> = new Set(["fleet", "group", "user", "profile", "device", "default"]);
+
+function runLayer(decl: KnownSetting, run: RunSettings): Layer | undefined {
+  if (decl.secret) return undefined;
+  const value = coerce(decl, run.values[decl.key]);
+  if (value === undefined) return undefined;
+  const s = run.sources[decl.key];
+  const source = (typeof s === "string" && SERVER_SOURCES.has(s) ? s : "user") as ConfigSource;
+  return { value, source, ...(source === "profile" && run.profile ? { sourceName: run.profile } : {}), low: true };
+}
 
 /** The local candidates for one key, lowest priority first: overrides file, settings.json, .env,
  * shell. A variable that bin/kernal exported from .env (same value in both) counts as .env. */
@@ -399,9 +726,9 @@ function localLayers(decl: KnownSetting, overrides: Record<string, unknown>, set
     }
     return undefined;
   };
-  const dot = fromVars((n) => dotenv[n], "dotenv");
+  const dot = fromVars((n) => dotenv[n] ?? (fromKernalDotenv(n, shell, dotenv) ? shell[n] : undefined), "dotenv");
   if (dot) out.push(dot);
-  const sh = fromVars((n) => (shell[n] !== undefined && shell[n] !== dotenv[n] ? shell[n] : undefined), "env");
+  const sh = fromVars((n) => (fromShell(n, shell, dotenv) ? shell[n] : undefined), "env");
   if (sh) out.push(sh);
   return out;
 }
@@ -444,9 +771,10 @@ function warnDotenv(local: Map<string, Layer[]>): void {
   const st = state();
   for (const layers of local.values()) {
     for (const l of layers) {
-      if (l.source !== "dotenv" || !l.sourceName || st.warned.has(l.sourceName)) continue;
-      st.warned.add(l.sourceName);
-      deps().warn(`${l.sourceName} in .env is deprecated: /admin can save it to your account or this machine`);
+      const name = l.source === "dotenv" ? l.sourceName : l.dotenvVar;
+      if (!name || st.warned.has(name)) continue;
+      st.warned.add(name);
+      deps().warn(`${name} in .env is deprecated: /admin can save it to your account or this machine`);
     }
   }
 }
@@ -454,21 +782,37 @@ function warnDotenv(local: Map<string, Layer[]>): void {
 function resolveFrom(cache: CacheFile | undefined, account: session.SessionAccount | undefined, profile: string | undefined): ResolvedConfig {
   const d = deps();
   const overrides = readLocalOverrides();
-  const settings = (() => { try { return d.settings(); } catch { return {}; } })();
+  const read = (f: () => Record<string, unknown>) => { try { const v = f(); return isObject(v) ? v : {}; } catch { return {}; } };
+  const settings = read(d.settings);
+  const files = { settings, shipped: read(d.shippedSettings), voice: read(d.voiceSettings), voiceRecord: safe(d.voiceRecord) ?? { version: 1 as const } };
   const dotenv = (() => { try { return d.dotenv(); } catch { return {}; } })();
   const shell = d.env();
+  // In a Drive (no login there) the owner's settings come with the run instead of the cache.
+  const run = cache ? undefined : runSettings(shell);
   const routerKey = account ? safe(() => d.session.getRouterKey({ api: account.api, email: account.email })) : undefined;
   const values: Record<string, ConfigValue> = {};
+  const fleet: Record<string, SettingValue> = {};
   const locals = new Map<string, Layer[]>();
   for (const decl of KNOWN_SETTINGS) {
     const r = cache?.response.values[decl.key];
     const central: Layer | undefined = r
       ? { value: r.value as SettingValue, source: r.source as ConfigSource, ...(r.sourceName ? { sourceName: r.sourceName } : {}), ...(r.locked !== undefined ? { locked: r.locked } : {}) }
-      : undefined;
+      : run ? runLayer(decl, run) : undefined;
+    // The server may say a local value is not allowed for this account (localAllowed: false).
+    const localAllowed = r?.localAllowed !== false;
+    if (decl.accountFirst) {
+      const ownValue = localAllowed && decl.levels.includes("local") ? coerce(decl, overrides[decl.key]) : undefined;
+      const own: Layer | undefined = ownValue !== undefined ? { value: ownValue, source: "local" } : undefined;
+      const legacy = localAllowed && decl.levels.includes("local") ? legacyLayers(decl, files, dotenv, shell) : [];
+      locals.set(decl.key, legacy);
+      const v = combineAccountFirst(decl, central, own, legacy);
+      if (v) values[decl.key] = v;
+      if (central && central.source !== "default" && (central.low || !ACCOUNT_SOURCES.has(central.source))) fleet[decl.key] = central.value;
+      continue;
+    }
     const device: Layer | undefined = decl.key === "router.key" && routerKey?.key ? { value: routerKey.key, source: "device" } : undefined;
     const local = localLayers(decl, overrides, settings, dotenv, shell);
-    // The server may say a local value is not allowed for this account (localAllowed: false).
-    const allowed = r?.localAllowed === false ? [] : local;
+    const allowed = localAllowed ? local : [];
     locals.set(decl.key, allowed);
     const v = combine(decl, central, device, allowed);
     if (v) values[decl.key] = v;
@@ -478,12 +822,13 @@ function resolveFrom(cache: CacheFile | undefined, account: session.SessionAccou
   return {
     api: account?.api ?? null,
     account: account?.email ?? null,
-    profile: cache?.response.profile ?? profile ?? null,
-    schemaVersion: cache?.response.schemaVersion ?? KNOWN_SCHEMA_VERSION,
+    profile: cache?.response.profile ?? run?.profile ?? profile ?? null,
+    schemaVersion: cache?.response.schemaVersion ?? run?.schemaVersion ?? KNOWN_SCHEMA_VERSION,
     values,
     fetchedAt: cache?.fetchedAt ?? null,
     fromCache: !!cache,
     profiles: cache?.response.profiles ?? [],
+    ...(Object.keys(fleet).length ? { fleet } : {}),
   };
 }
 
@@ -495,6 +840,9 @@ function signedInAccount(): session.SessionAccount | undefined {
   const s = safe(() => deps().session.loginState({ api: session.outfitterApi(deps().env()) }));
   return s?.signedIn ? s.account : undefined;
 }
+
+/** Signed in to Outfitter (kernal login), as the resolution sees it. */
+export const isSignedIn = (): boolean => !!signedInAccount();
 
 /** --profile <name> / KERNAL_PROFILE (bin/kernal turns the flag into the env var). */
 export function activeProfile(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -512,7 +860,62 @@ export function resolve(profile: string | undefined = activeProfile(deps().env()
   const cache = account ? readCache(account.api, account.email, profile, deps().now()) : undefined;
   const r = resolveFrom(cache, account, profile);
   st.resolved.set(id, r);
+  if (account) st.login = { api: account.api, email: account.email, deviceId: account.deviceId };
+  writeEffective(r, profile);
   return r;
+}
+
+/** Forget this process's resolution and resolve again from the cache and the local layers (after a
+ * write to a legacy place such as /compaction's or /memory's settings.json section), so the change
+ * shows at once and the effective file bin/kernal reads is current. */
+export function reresolve(profile: string | undefined = activeProfile(deps().env())): ResolvedConfig {
+  state().resolved.delete(profile ?? "");
+  return resolve(profile);
+}
+
+/**
+ * The non-secret values of a signed-in resolution, for bin/kernal (effectivePath): `values` and
+ * `sources` (the winner of each key), and `fleet` (the personal keys' fleet value, which a legacy
+ * value may outrank today but not once it is gone). Each holds one key per line, so a shell without
+ * node can read a value with sed. Signed out
+ * nothing is written: bin/kernal then reads the local files as it always did. Rewritten only when
+ * something changed; a failed write changes nothing else.
+ */
+function writeEffective(r: ResolvedConfig, profile: string | undefined): void {
+  if (!r.account) return;
+  const file = effectivePath(profile);
+  if (!file) return;
+  const values: Record<string, SettingValue> = {}, sources: Record<string, string> = {};
+  for (const decl of KNOWN_SETTINGS) {
+    const v = r.values[decl.key];
+    if (!v || decl.secret) continue;
+    values[decl.key] = v.value;
+    sources[decl.key] = v.source;
+  }
+  const fleet: Record<string, SettingValue> = {};
+  for (const [k, v] of Object.entries(r.fleet ?? {})) if (!BY_KEY.get(k)?.secret) fleet[k] = v;
+  const body = { version: 1, api: r.api, account: r.account, profile: profile ?? null, values, sources, fleet };
+  const text = JSON.stringify(body, null, 2) + "\n";
+  try {
+    if (readFileSync(file, "utf8") === text) return;
+  } catch {}
+  try { writeWhole(file, text); } catch {}
+}
+
+/** The keys whose fresh central value a running Kernal takes over without a /config reload
+ * (startBackgroundRefresh): the personal keys, each of which is applied when it is safe (compaction
+ * on its next use, voice and the model at the next session, memory at the next start). */
+function adoptPersonal(fresh: ResolvedConfig, profile: string | undefined): void {
+  const kept = state().resolved.get(profile ?? "");
+  if (!kept || kept.account !== fresh.account) return;
+  for (const decl of KNOWN_SETTINGS) {
+    if (!decl.accountFirst) continue;
+    const v = fresh.values[decl.key];
+    if (v) kept.values[decl.key] = v;
+    else delete kept.values[decl.key];
+  }
+  if (fresh.fleet) kept.fleet = fresh.fleet;
+  else delete kept.fleet;
 }
 
 /** One value, or undefined. */
@@ -588,7 +991,10 @@ async function fetchConfig(profile: string | undefined, fetchImpl?: typeof fetch
   } catch {
     // An unwritable cache only means the next start reads the network's answer a little later.
   }
-  return { ...resolveFrom(cache, account, profile), fromCache: false };
+  const fresh = { ...resolveFrom(cache, account, profile), fromCache: false };
+  // bin/kernal's next start sees the fresh values even before this process adopts them.
+  writeEffective(fresh, profile);
+  return fresh;
 }
 
 /** `/config reload`: refresh, then make the fresh resolution this process's own. Without an answer
@@ -604,6 +1010,19 @@ export async function reloadConfig(opts: { profile?: string; fetch?: typeof fetc
 /** This machine's own overrides (the "local" level), `~/.kernal/config.local.json`. Undefined
  * removes the key. Throws for a key this Kernal doesn't know, a secret, a key with no local level,
  * or a value of the wrong type. Takes effect in this process at once. */
+/** Removes those of `keys` this machine's config.local.json sets, in one write; the removed keys
+ * (none: nothing is written). */
+export function clearLocalOverrides(keys: readonly string[]): string[] {
+  const values = { ...readLocalOverrides() };
+  const removed = keys.filter((k) => values[k] !== undefined);
+  if (!removed.length) return [];
+  for (const k of removed) delete values[k];
+  writeWhole(localOverridesPath(), JSON.stringify({ version: 1, values }, null, 2) + "\n");
+  state().resolved.clear();
+  safe(() => resolve());
+  return removed;
+}
+
 export function setLocalOverride(key: string, value: SettingValue | undefined): void {
   const decl = BY_KEY.get(key);
   if (!decl) throw new Error(`unknown setting ${key}`);
@@ -617,8 +1036,9 @@ export function setLocalOverride(key: string, value: SettingValue | undefined): 
     values[key] = v;
   }
   writeWhole(localOverridesPath(), JSON.stringify({ version: 1, values }, null, 2) + "\n");
-  // Re-resolve from the same cache with the new local layer.
+  // Re-resolve from the same cache with the new local layer (which rewrites the effective file).
   state().resolved.clear();
+  safe(() => resolve());
 }
 
 /**
@@ -699,7 +1119,7 @@ export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?:
     if (!res?.ok) return false;
     const k = ((await res.json()) as { routerKey?: Record<string, unknown> }).routerKey;
     if (!k || typeof k.key !== "string" || typeof k.baseUrl !== "string" || typeof k.alias !== "string") return false;
-    d.session.setRouterKey({ key: k.key, baseUrl: k.baseUrl, alias: k.alias, ...(typeof k.expiresAt === "string" ? { expiresAt: k.expiresAt } : {}) }, { api: account.api, email: account.email });
+    d.session.setRouterKey({ key: k.key, baseUrl: k.baseUrl, alias: k.alias, ...(typeof k.expiresAt === "string" ? { expiresAt: k.expiresAt } : {}), ...(Array.isArray(k.mcpServers) ? { mcpServers: k.mcpServers.filter((n): n is string => typeof n === "string") } : {}) }, { api: account.api, email: account.email });
     // The server deleted the old key: the new one replaces it in what this process resolved, so
     // connect's next registerAll (kernal-config asks for one) uses it. Only the key changes; the
     // rest of a fresh answer still waits for the next start or /config reload (spec §10).
@@ -713,11 +1133,55 @@ export async function remintRouterKeyIfDue(opts: { fetch?: typeof fetch; force?:
   }
 }
 
+export type KeychainAdoption = { adopted: false } | { adopted: true; accountChanged: boolean };
+
+/**
+ * After the router refused `refused` (this process's device router key), the login and router key
+ * are read from the keychain again first (#443): another terminal may have signed in again since,
+ * which revoked this process's device (and deleted its key on the router) and stored a new key. A
+ * stored key that differs from the refused one is adopted into this process's resolution, so
+ * connect's next registerAll uses it; nothing is minted, which would only rotate the key the other
+ * process just got. A re-login as another account also drops the cached resolution and the
+ * provider keys (they were the old account's) and resolves again for the new one.
+ * `{ adopted: false }` when the keychain still holds the refused key, or no login or key at all:
+ * then re-minting (remintRouterKeyIfDue with force) is the remedy. Access tokens need no adopting:
+ * every request reads its bearer from the keychain (getAccessToken). Never throws.
+ */
+export function adoptKeychainLogin(refused: string): KeychainAdoption {
+  try {
+    const account = signedInAccount();
+    if (!account) return { adopted: false };
+    const stored = safe(() => deps().session.getRouterKey({ api: account.api, email: account.email }));
+    if (!stored?.key || stored.key === refused) return { adopted: false };
+    const st = state();
+    const was = st.login;
+    const accountChanged = !!was && (was.api !== account.api || was.email !== account.email);
+    if (accountChanged) {
+      st.resolved.clear();
+      st.providerKeys.clear();
+      safe(() => resolve());   // the new account's cache, and its router key from the keychain
+    } else {
+      for (const r of st.resolved.values()) {
+        const v = r.values["router.key"];
+        if (v?.source === "device") r.values["router.key"] = { ...v, value: stored.key };
+      }
+    }
+    st.login = { api: account.api, email: account.email, deviceId: account.deviceId };
+    return { adopted: true, accountChanged };
+  } catch {
+    return { adopted: false };
+  }
+}
+
 /** Start-up's background work (kernal-config calls it once): fresh settings into the cache, the
  * provider keys into memory, a router key re-minted when due. Never rejects. */
 export function startBackgroundRefresh(opts: { fetch?: typeof fetch } = {}): Promise<void> {
   if (!signedInAccount()) return Promise.resolve();
-  return Promise.all([refreshConfig(opts), refreshProviderKeys(opts), remintRouterKeyIfDue(opts)]).then(() => undefined, () => undefined);
+  const profile = activeProfile(deps().env());
+  // #437: the personal keys' fresh values are taken over at once (each applies when that is safe);
+  // everything else waits for the next start or /config reload, as before.
+  const settings = refreshConfig(opts).then((fresh) => { if (fresh) adoptPersonal(fresh, profile); });
+  return Promise.all([settings, refreshProviderKeys(opts), remintRouterKeyIfDue(opts)]).then(() => undefined, () => undefined);
 }
 
 // ---------- for connect ----------
@@ -749,6 +1213,86 @@ export function layerCentralEnv(env: Record<string, string>): Record<string, str
   return out;
 }
 
+// ---------- a shell key over the login (#432) ----------
+
+const PROVIDER_LABEL: Readonly<Record<string, string>> = { openrouter: "OpenRouter", deepgram: "Deepgram", openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini" };
+
+function safeDotenv(): Record<string, string> {
+  try { return deps().dotenv(); } catch { return {}; }
+}
+
+/** The shell's value of `name` when it came from the shell (fromShell, judged on the environment
+ * the process started with) and is still in force (the same value in the process now: connect's own
+ * OPENROUTER_API_KEY write, or /setup's, never counts). Undefined otherwise. */
+export function shellValue(name: string, dotenv: Record<string, string> = safeDotenv()): string | undefined {
+  const d = deps();
+  const start = d.startEnv();
+  if (!fromShell(name, start, dotenv)) return undefined;
+  return d.env()[name] === start[name] ? start[name] : undefined;
+}
+
+export type ShellOverride = { name: string; message: string };
+
+/**
+ * The key variables from the shell that win over what this login has (#432): LITELLM_AGENT_KEY or
+ * LITELLM_API_KEY over this device's router key, a provider's variable over the account's key for
+ * it. Only when the device or account really has a different value; signed out, none. The account's
+ * provider keys arrive with the background refresh, so a call before it can only see the router key.
+ */
+export function shellOverrides(): ShellOverride[] {
+  try {
+    const account = signedInAccount();
+    if (!account) return [];
+    const dotenv = safeDotenv();
+    const out: ShellOverride[] = [];
+    const device = safe(() => deps().session.getRouterKey({ api: account.api, email: account.email }))?.key;
+    if (device) {
+      for (const name of ROUTER_KEY_ENV) {
+        const v = shellValue(name, dotenv);
+        if (v && v !== device) out.push({ name, message: `${name} from your shell overrides this device's own router key (spend isn't attributed to you). Unset it, or open a new terminal.` });
+      }
+    }
+    for (const [provider, name] of Object.entries(PROVIDER_ENV)) {
+      const mine = providerKey(provider);
+      const v = mine ? shellValue(name, dotenv) : undefined;
+      if (v && v !== mine) out.push({ name, message: `${name} from your shell overrides your account's ${PROVIDER_LABEL[provider] ?? provider} key. Unset it, or open a new terminal.` });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** shellOverrides' messages not given yet in this process; each is given once (kernal-config shows
+ * them at session_start and again after the background refresh brings the account's keys). */
+export function takeShellWarnings(): string[] {
+  const st = state();
+  const out: string[] = [];
+  for (const o of shellOverrides()) {
+    const key = `shell:${o.name}`;
+    if (st.warned.has(key)) continue;
+    st.warned.add(key);
+    out.push(o.message);
+  }
+  return out;
+}
+
+/** Where a provider key in force comes from, as /config and /admin show it: the shell, a .env file,
+ * or the account. Undefined when none is set. A local copy wins over the account's (layerCentralEnv). */
+export function providerKeySource(provider: string): { value: string; source: string } | undefined {
+  const name = PROVIDER_ENV[provider];
+  if (!name) return undefined;
+  const d = deps();
+  const dotenv = safeDotenv();
+  const sh = shellValue(name, dotenv);
+  if (sh) return { value: sh, source: describeSource({ source: "env", sourceName: name }) };
+  const live = d.env()[name];
+  const fromFile = dotenv[name] || (live && fromKernalDotenv(name, d.env(), dotenv) ? live : undefined);
+  if (fromFile) return { value: fromFile, source: describeSource({ source: "dotenv", sourceName: name }) };
+  const mine = providerKey(provider);
+  return mine ? { value: mine, source: describeSource({ source: "user" }) } : undefined;
+}
+
 // ---------- for /config and /admin ----------
 
 /** Where a value came from, in the words /config and /admin show (spec §11). */
@@ -763,6 +1307,7 @@ export function describeSource(v: Pick<ConfigValue, "source" | "sourceName">): s
     case "local": return v.sourceName === "settings.json" ? "this machine (settings.json)" : "this machine";
     case "dotenv": return v.sourceName ? `.env (${v.sourceName})` : ".env";
     case "env": return v.sourceName ? `shell (${v.sourceName})` : "shell";
+    case "legacy": return `${v.sourceName ?? "this machine"} (legacy)`;
   }
 }
 

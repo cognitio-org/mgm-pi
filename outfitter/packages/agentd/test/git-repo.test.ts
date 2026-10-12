@@ -7,10 +7,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, chmod, access, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, chmod, access, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGitOps, OUTFITTER_BOT_IDENTITY } from "../src/git.js";
+import { capPatch, createGitOps, OUTFITTER_BOT_IDENTITY } from "../src/git.js";
 
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
@@ -233,6 +233,32 @@ test("diff: an untracked file named like an option stays a path", async () => {
   await assert.rejects(access(join(dest, "pwned.txt")), "git must not have parsed the name as --output");
   assert.match(patch, /--output=pwned\.txt/);
   assert.match(patch, /with space\.txt/);
+});
+
+test("diff (#499): commits and uncommitted edits are one diff from the merge-base; untracked files in new directories are listed", async () => {
+  const { root, url } = await makeRemote();
+  const dest = join(root, "ws");
+  const gitOps = createGitOps();
+  await gitOps.clone({ cloneUrl: url, baseBranch: "main", branch: "outfitter/s11", createBranch: true }, dest);
+  await writeFile(join(dest, "README.md"), "hello\ncommitted\n");
+  await gitOps.commitAll(dest, "checkpoint");
+  await writeFile(join(dest, "README.md"), "hello\ncommitted\nuncommitted\n");
+  await mkdir(join(dest, "newdir", "deeper"), { recursive: true });
+  await writeFile(join(dest, "newdir", "deeper", "a.txt"), "a\n");
+  const patch = await gitOps.diff(dest, "main");
+  assert.equal(patch.match(/^diff --git a\/README\.md /gm)?.length, 1, "README.md once, not once per section");
+  assert.match(patch, /^@@ -1 \+1,3 @@$/m, "hunk numbered against the merge-base");
+  assert.match(patch, /^\+committed$/m);
+  assert.match(patch, /^\+uncommitted$/m);
+  assert.match(patch, /^\+\+\+ b\/newdir\/deeper\/a\.txt$/m);
+});
+
+test("capPatch (#499): cuts at a file boundary under the limit and flags it", () => {
+  const one = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n";
+  const two = "diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-x\n+" + "z".repeat(100) + "\n";
+  assert.deepEqual(capPatch(one + two, 10_000), { patch: one + two, truncated: false });
+  assert.deepEqual(capPatch(one + two, one.length + 20), { patch: one, truncated: true });
+  assert.deepEqual(capPatch(two, 20), { patch: "", truncated: true });
 });
 
 test("push: root's repo only ever gets the bundled history, not the workspace's other objects", async () => {

@@ -79,6 +79,8 @@ export GCLOUD_CALLS="${WORK}/gcloud-calls" OUTFITTER_LINK_ORIGIN=https://outfitt
 # GITHUB_REF_NAME/OUTFITTER_RELEASE too: in the release workflow the ref is the outfitter-v* tag, and
 # service.sh would add OUTFITTER_RELEASE to the baseline list below (the release case sets it itself).
 unset GITHUB_REF_NAME OUTFITTER_RELEASE
+# The cases below start with the google_cloud toolset grant off; one case checks the shipped default.
+export OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=""
 unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW ALLOW_ORIGIN_CHANGE GKE_CLUSTER \
   CLOUD_TASKS_QUEUE TASKS_SA_EMAIL DEPLOY_ALL_COMMIT
 : >"${GCLOUD_CALLS}"
@@ -119,7 +121,7 @@ else
   echo "ok: --set-env-vars has no GKE_ variable while GKE is off"
 fi
 
-EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,OUTFITTER_LOGIN_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
+EXPECTED="OUTFITTER_ROLE=web,OUTFITTER_ORIGIN=https://outfitter-api-abc.run.app,OUTFITTER_ORIGIN_ALIASES=,AGENT_SA_EMAIL=outfitter-agent@outfitter-509211.iam.gserviceaccount.com,GCP_PROJECT=outfitter-509211,GCP_REGION=us-central1,TUNNEL_DOMAIN_LMSTUDIO=mgm-lmstudio.ngrok.app,SANDBOX_PROVIDER=cloudrun,CLOUDRUN_JOB=outfitter-agent,IDLE_STOP_SECONDS=1800,LITELLM_BASE_URL=https://router.kernal.one/v1,PROVIDER_POLL_MS=300000,OUTFITTER_LOGIN_ALLOW=domain:mgmonteleone.com;domain:serviam-it.hr;user:matija.turk@gmail.com;user:matej@mgms.eu;mgm@mgms.eu;matej@mgms.eu,OUTFITTER_RUN_KEY_FALLBACK=0,IAP_AUDIENCE=/projects/123456789012/locations/us-central1/services/outfitter-api,OUTFITTER_LINK_ORIGIN=https://outfitter-link-abc.run.app,OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,OUTFITTER_BUILD_COMMIT=${TAG}"
 if [[ "${ENV_VARS_ARG}" == "--set-env-vars=${EXPECTED}" ]]; then
   echo "ok: --set-env-vars is exactly config.env's pre-GKE list, unchanged"
 else
@@ -178,6 +180,79 @@ if [[ "${REL_ENV}" == *",OUTFITTER_BUILD_COMMIT=${TAG},OUTFITTER_RELEASE=outfitt
   echo "ok: a release deploy also sets OUTFITTER_RELEASE"
 else
   echo "FAIL: expected OUTFITTER_RELEASE=outfitter-v2026.09.28.1 after OUTFITTER_BUILD_COMMIT; got: ${REL_ENV}"
+  fails=$((fails + 1))
+fi
+
+# #399 CA-10: Drives use per-run keys only. config.env's default turns the shared-key fallback off
+# on both roles; exporting OUTFITTER_RUN_KEY_FALLBACK=1 brings it back.
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && ./service.sh link 2>&1)" || true
+LINK_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${LINK_ENV}" == *",OUTFITTER_RUN_KEY_FALLBACK=0,"* ]]; then
+  echo "ok: link gets OUTFITTER_RUN_KEY_FALLBACK=0 (per-run keys only)"
+else
+  echo "FAIL: expected OUTFITTER_RUN_KEY_FALLBACK=0 on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_RUN_KEY_FALLBACK=1 ./service.sh link 2>&1)" || true
+LINK_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${LINK_ENV}" == *",OUTFITTER_RUN_KEY_FALLBACK=1,"* ]]; then
+  echo "ok: OUTFITTER_RUN_KEY_FALLBACK=1 from the environment brings the fallback back"
+else
+  echo "FAIL: expected OUTFITTER_RUN_KEY_FALLBACK=1 on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+
+# The link role gets the operators too: it mints device and run keys (operators' keys list the
+# gcloud MCP server), decides a Drive's operator admin tools and runs the operator-key reconcile.
+# Without it every link-side operator check saw an empty list (found 2026-10-08, #497).
+if [[ "${LINK_ENV}" == *",OUTFITTER_OPERATORS=mgm@mgms.eu;matej@mgms.eu,"* ]]; then
+  echo "ok: the link role gets OUTFITTER_OPERATORS"
+else
+  echo "FAIL: expected OUTFITTER_OPERATORS on link; got: ${LINK_ENV:-<no deploy call>}"
+  fails=$((fails + 1))
+fi
+
+# GB-3 (#539): the google_cloud toolset id reaches BOTH roles when set (the link role mints the keys);
+# unset, neither role carries it (the exact web string above proves the web side).
+for ROLE_UNDER_TEST in web link; do
+  : >"${GCLOUD_CALLS}"
+  status=0
+  OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=11111111-2222-3333-4444-555555555555 ./service.sh "${ROLE_UNDER_TEST}" 2>&1)" || status=$?
+  TS_ENV="$(grep "^run deploy outfitter-$([[ "${ROLE_UNDER_TEST}" == web ]] && echo api || echo link)" "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+  if [[ ${status} -eq 0 && "${TS_ENV}" == *",OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=11111111-2222-3333-4444-555555555555,"* ]]; then
+    echo "ok: the ${ROLE_UNDER_TEST} role gets OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID"
+  else
+    echo "FAIL: expected OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID on ${ROLE_UNDER_TEST} (exit ${status}); got: ${TS_ENV:-<no deploy call>}"
+    fails=$((fails + 1))
+  fi
+done
+# A malformed id fails the deploy before any gcloud call (finding: validate the UUID).
+: >"${GCLOUD_CALLS}"
+status=0
+OUT="$(cd "${REPO}/outfitter/deploy" && OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=not-a-uuid ./service.sh link 2>&1)" || status=$?
+if [[ ${status} -ne 0 && "${OUT}" == *"OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID"* ]] && ! grep -q '^run deploy' "${GCLOUD_CALLS}"; then
+  echo "ok: a malformed toolset id fails the deploy"
+else
+  echo "FAIL: a malformed toolset id should fail service.sh (exit ${status})"
+  fails=$((fails + 1))
+fi
+if [[ "${LINK_ENV}" != *"GOOGLE_CLOUD_TOOLSET"* ]]; then
+  echo "ok: no toolset id on link when unset"
+else
+  echo "FAIL: toolset id present on link although unset"
+  fails=$((fails + 1))
+fi
+
+# With the variable truly unset, config.env's live toolset id reaches the link role.
+: >"${GCLOUD_CALLS}"
+OUT="$(cd "${REPO}/outfitter/deploy" && env -u OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID ./service.sh link 2>&1)" || true
+DEFAULT_ENV="$(grep '^run deploy outfitter-link' "${GCLOUD_CALLS}" | grep -oE -- '--set-env-vars=[^ ]*' || true)"
+if [[ "${DEFAULT_ENV}" == *",OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=7fa58a73-990f-4de4-9005-ee0772d5811d"* ]]; then
+  echo "ok: the shipped toolset id reaches the link role when the variable is unset"
+else
+  echo "FAIL: expected config.env's toolset id on link; got: ${DEFAULT_ENV:-<no deploy call>}"
   fails=$((fails + 1))
 fi
 

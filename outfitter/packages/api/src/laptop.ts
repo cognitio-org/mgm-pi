@@ -7,13 +7,16 @@
 // optional push path (POST /api/hooks/ngrok, routes/hooks.ts) flip the cached value instantly
 // instead of waiting out the cache window.
 
+import { hostStatus, sharedModels, type LocalHost, type LocalHostsCollection } from "./store/local-hosts.ts";
+import { parseRouterModelName } from "./local-hosts/naming.ts";
+
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_CACHE_MS = 60_000;
 
 export interface LaptopProbeConfig {
   /** Domain the laptop's LM Studio is tunneled on, e.g. kernal-lmstudio.ngrok.app (no scheme). */
   tunnelDomain: string;
-  /** Bearer token tunnel.sh's traffic policy requires. */
+  /** Bearer token the legacy single-laptop tunnel requires. `local/...` names do not use it. */
   token: string;
   /** Probe request timeout in ms. Default 3000 per EPIC.md E2.8. */
   timeoutMs?: number;
@@ -21,6 +24,12 @@ export interface LaptopProbeConfig {
   cacheMs?: number;
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** #382 (docs/specs/local-host.md §1.8): the host registry, for `local/<prefix>/<model>` names
+   * (isOnlineFor). */
+  localHosts?: LocalHostsCollection;
+  /** Injectable for tests: the clock isOnlineFor judges a host's status by. Defaults to the system
+   * clock. */
+  now?: () => Date;
 }
 
 export class LaptopProbe {
@@ -31,6 +40,10 @@ export class LaptopProbe {
   private readonly fetchImpl: typeof fetch;
   private cachedOnline: boolean | undefined;
   private cachedAt: number | undefined;
+  private readonly localHosts: LocalHostsCollection | undefined;
+  private readonly now: () => Date;
+  /** Host records by router prefix (null: no such host), each trusted for `cacheMs`. */
+  private readonly hostCache = new Map<string, { at: number; host: LocalHost | null }>();
 
   constructor(config: LaptopProbeConfig) {
     this.tunnelDomain = config.tunnelDomain;
@@ -38,6 +51,33 @@ export class LaptopProbe {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cacheMs = config.cacheMs ?? DEFAULT_CACHE_MS;
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.localHosts = config.localHosts;
+    this.now = config.now ?? (() => new Date());
+  }
+
+  /**
+   * Whether `model` can be served right now. A Local Host router name (`local/<prefix>/<id>`, with
+   * or without Kernal's `litellm/`) is online when its host is online and the model is on the
+   * server the host's tunnel forwards to (local-host.md §1.8). The record is cached `cacheMs` per
+   * prefix; the status is worked out on each call. Any other name is the legacy tunnel's isOnline().
+   */
+  async isOnlineFor(model: string): Promise<boolean> {
+    const parsed = parseRouterModelName(model);
+    if (!parsed) return this.isOnline();
+    if (!this.localHosts) return false;
+    const now = this.now().getTime();
+    let entry = this.hostCache.get(parsed.routerPrefix);
+    if (!entry || now - entry.at >= this.cacheMs) {
+      try {
+        entry = { at: now, host: await this.localHosts.findByRouterPrefix(parsed.routerPrefix) };
+      } catch {
+        return false;
+      }
+      this.hostCache.set(parsed.routerPrefix, entry);
+    }
+    const host = entry.host;
+    if (!host || hostStatus(host, new Date(now)) !== "online") return false;
+    return sharedModels(host).some((m) => m.id === parsed.modelId);
   }
 
   /**
@@ -90,7 +130,7 @@ export interface ResolveRunModelInput {
   localModels: string[];
   /** Config.defaultCloudModel: used when the guru has no fallbackModel of its own. */
   defaultCloudModel: string;
-  /** Result of LaptopProbe.isOnline() for this decision. */
+  /** Result of LaptopProbe.isOnlineFor(wanted) for this decision. */
   laptopOnline: boolean;
 }
 
@@ -108,7 +148,9 @@ export interface ResolveRunModelResult {
  */
 export function resolveRunModel(input: ResolveRunModelInput): ResolveRunModelResult {
   const { wanted, guruFallbackModel, localModels, defaultCloudModel, laptopOnline } = input;
-  if (!localModels.includes(wanted) || laptopOnline) {
+  // Local Host router names (local-host.md §1.8) are laptop models whether listed or not.
+  const local = localModels.includes(wanted) || parseRouterModelName(wanted) !== undefined;
+  if (!local || laptopOnline) {
     return { model: wanted };
   }
   const used = guruFallbackModel ?? defaultCloudModel;

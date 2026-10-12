@@ -7,7 +7,7 @@ with a `/connect` command that switches between three backends:
 |---|---|---|
 | `lmstudio` | Local LM Studio (MLX) on `localhost:1234` | discovered live (`qwen/qwen3.6-35b-a3b`, ...) |
 | `litellm` | Cloud router `router.kernal.one` | discovered live, scoped to the agent key's team |
-| `openrouter` | openrouter.ai | curated list, override with `OPENROUTER_MODELS` |
+| `openrouter` | openrouter.ai | curated list you can add to (see *The OpenRouter list*), minus ids OpenRouter doesn't list |
 
 Everything here is extensions and settings on top of pi; pi's own source is never modified. How the
 pieces work inside, and why they are built that way, is in [docs/architecture.md](docs/architecture.md).
@@ -48,10 +48,71 @@ from. `--profile <name>` picks one of your account's named profiles for that pro
 the personal keys in Kernal's `.env` (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`; not `DEEPGRAM_API_KEY`, which bundles ship as a shared voice key) to your account and then remove them from `.env`. It also
 offers to remove a shared `LITELLM_AGENT_KEY` (once the device has its own key, which it would
-otherwise override) and a Dongle (`OUTFITTER_TOKEN`). Every answer defaults to no, nothing is asked
+otherwise override) and a leftover Dongle (`OUTFITTER_TOKEN`). Every answer defaults to no, nothing is asked
 without a terminal, and the file is copied to `.env.bak-<time>` before the first change. Only
 `~/localllm/.env` and the `.env` files next to the install are touched, never a project's own. Keys
 left in `.env` keep working, with a deprecation warning.
+
+**Keys exported by your shell.** A key variable in the shell's environment still wins over the
+login: `LITELLM_AGENT_KEY` or `LITELLM_API_KEY` over this device's router key, and
+`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` or `DEEPGRAM_API_KEY`
+over your account's key for that provider. A long-lived terminal can still hold old keys after
+`kernal login` removed them from `.env` (oh-my-zsh's `dotenv` plugin exports a `.env` when you `cd`
+into its folder). Signed in, Kernal warns once per process when that happens, as a notice at start-up
+or a stderr line without a UI: "LITELLM_AGENT_KEY from your shell overrides this device's own router
+key (spend isn't attributed to you). Unset it, or open a new terminal." It warns only when the device
+or account has a different key of its own; provider keys are checked once the account's keys arrive
+(a moment after start). `/config` and `/admin` show such a value's source as `shell (<NAME>)`.
+A value equal to one in a `.env` file Kernal reads counts as `.env`, not the shell (`bin/kernal`
+exports those files, and they have their own deprecation warning); `bin/kernal` records which of
+these variables the shell already had before it does (`KERNAL_SHELL_KEYS`).
+
+**Dongles are retired.** `kernal login` is the only way to connect Kernal to Outfitter. Kernal no
+longer reads `OUTFITTER_TOKEN`: one left in the environment or `.env` is ignored, with the one-line
+notice "Dongles are retired; run kernal login". The web app no longer creates Dongles; existing ones
+keep working for other clients until they expire or are revoked. A2A keys are unchanged.
+
+### Centrally managed settings
+
+Signed in, these come from your account (web app → Account, or `/admin` → Settings) and Kernal
+applies them: `model.provider`, `model.default`, `model.thinking`, `compaction.summaryModel`,
+`compaction.masking`, `memory.mode`, `voice.enabled`, `voice.language`. For each, the first of
+these that sets it wins:
+
+1. **this machine**: `~/.kernal/config.local.json` ("Only this machine" in `/connect` or `/admin`);
+2. **your account**: the device, then the profile (`--profile`), then the account itself;
+3. **what this machine set before**, shown as "(legacy)" in `/config`: `settings.json`'s
+   `defaultProvider`/`defaultModel`/`defaultThinkingLevel` (only when they differ from what the
+   release shipped, or in a source checkout from the committed `settings.json`),
+   `kernal.compaction`, `kernal.memory`, pi-listen's `voice` settings (not the values Kernal wrote
+   there itself: its voice seed, or a copy of the account's value) and `KERNAL_SUMMARY_MODEL`;
+4. the fleet's value, then the default.
+
+So a change on your account reaches a laptop that once ran `/connect`, while an explicit "only this
+machine" choice still wins there. When a change takes effect:
+
+- **compaction**: at once (start-up refresh, `/config reload`, an `/admin` save);
+- **model and thinking**: at the next session (`/new` or the next start). A new, empty session
+  switches once to that default at start; a running conversation never switches model, and
+  `--model`/`--models`/`--provider`/`--thinking` on the command line still win;
+- **voice**: written into pi-listen's settings, which it reads at the next session;
+- **memory**: at the next start (`bin/kernal` reads the resolved value from
+  `~/.kernal/config-cache/effective[.<profile>].json` before pi starts).
+
+Signed in, `/connect` and the `/admin` Model page ask where a new default goes: "Save to my account
+(profile X)" or "Only this machine" (both also update `settings.json`, pi's own default). Signed
+out, or without a terminal, nothing changes: the choice goes to `settings.json` as before. In a
+Drive the owner's settings arrive with the run (`KERNAL_RUN_SETTINGS`) and rank below the tape's
+own choices.
+
+A default set inside pi itself, Ctrl+S in the model picker ("set as default") or the default
+thinking level, also goes to your account when you are signed in: the active profile, else the
+account itself, so new sessions on every machine start with it. Kernal sees pi write it to
+`settings.json` and saves it with the same versioned request as `/admin` (a conflict is retried
+once). If this machine had pinned that key ("Only this machine"), the pin is removed so the new
+default applies here too, and the notice says so. Choosing a model for this session only (Enter,
+cycling) never touches the account. Signed out or in a Drive it stays in `settings.json`; if the
+save fails (offline, expired sign-in), a notice says it was kept on this machine.
 
 ## Run (from any repo)
 
@@ -72,8 +133,25 @@ Inside pi:
 /connect                         pick backend, then model
 /connect litellm                 pick a model on the router
 /connect lmstudio qwen/qwen3.6-35b-a3b
+/connect openrouter              ... ends with "Browse all OpenRouter models…"
 /model                           pi's own picker also lists all three providers
 ```
+
+**The OpenRouter list.** Kernal ships a short curated list of OpenRouter models. You can add or
+remove models on it:
+- in `/connect openrouter`, choose *Browse all OpenRouter models…*, search OpenRouter's whole
+  catalogue and pick a model. Kernal offers to add it to your account's list (every Kernal you
+  sign in to) or to this machine's, then switches to it.
+- on `/admin` → Model, each listed OpenRouter model has a × to remove it, and an *Add* box takes
+  any id from the catalogue. Changes are saved to your account or to this machine.
+
+The lists are central settings (`openrouter.models.*`; `/config` shows them).
+- The fleet can add models for everyone or hide them; a hidden model can't be added back.
+- Your account's changes and this machine's changes add up. Where they disagree, the nearer one
+  wins: a profile over your user list, this machine over both.
+- Ids are checked against OpenRouter's catalogue. A listed model OpenRouter later drops shows on
+  `/admin` under *Not on OpenRouter*, where you can remove it.
+- `OPENROUTER_MODELS` in `.env` still replaces the whole list, but the fleet's hidden models stay hidden.
 
 Model can also be given on the CLI: `pi --model litellm/claude-sonnet-5:high`.
 The choice is saved to `.pi/settings.json` (`defaultProvider` / `defaultModel`) and reused next start.
@@ -603,6 +681,17 @@ seed; re-pick another model, or set `KERNAL_VOICE=off`, to keep a local setup wi
 default model, `KERNAL_VOICE=off` leaves pi-listen's settings alone. Audio capture needs SoX
 (`brew install sox`) or ffmpeg; kernal and the installer say so when neither is found.
 
+## Share local models (`kernal local`)
+
+`kernal local enable` installs a background service (a LaunchAgent on macOS, a systemd user unit
+on Linux) that shares this machine's model server (LM Studio, Ollama, llama.cpp, mlx-lm, vLLM) with
+your Outfitter account through a tunnel, so cloud runs can use those models as
+`local/<you>-<machine>/<model>`. It needs `kernal login` and the `localHost.shareModels` setting
+turned on; `enable` prints that setting and where to change it. `kernal local status` shows the
+tunnel, models and last heartbeat; `kernal local disable` removes the service. `tunnel.sh` and
+`keepalive.mjs` are gone. The old `litellm/local-qwen-mlx` alias has been removed from the router.
+Details: [docs/local-host.md](docs/local-host.md).
+
 ## Reporting problems (`/report`)
 
 pi's own `/bug` uploads to the pi developers and is handled by the TUI before extensions see it,
@@ -619,8 +708,7 @@ notice says where it is.
 
 Off unless Outfitter turns it on. An Outfitter operator switches Sentry on or off for every machine
 at once, under Settings → Telemetry in the web app, and sets the DSN and trace sample rate there too.
-Kernal reads that setting with your login (`kernal login`), or a deprecated Dongle (`OUTFITTER_API` +
-`OUTFITTER_TOKEN`). With neither, nothing is sent. A change reaches the laptop by its next start, or during a session once the
+Kernal reads that setting with your login (`kernal login`). Signed out, nothing is sent. A change reaches the laptop by its next start, or during a session once the
 background check finishes. When on, Kernal sends failed agent runs, uncaught crashes in `-p` mode,
 and a sample of agent-run and tool timings. Tool timings carry the tool name only, never its
 arguments or output, unless the fleet turns on prompts and outputs (below). Every event leaves without your hostname, and with your home directory written
@@ -724,8 +812,8 @@ teleported.
 
 Sessions record which provider/model they were using. `pickModelForHost` looks at the last
 `model_change` on the imported session: if that provider is available on this host (has configured
-auth), it's kept; otherwise the session falls back to `litellm/local-qwen-mlx`, which every `kernal`
-install can reach. `/teleport pull` notifies which model it picked.
+auth), it's kept; otherwise the session falls back to `litellm/gpt-5.4-nano`. Shared models are
+`local/<you>-<machine>/<model>`. `/teleport pull` notifies which model it picked.
 
 ### What doesn't travel
 
@@ -749,12 +837,10 @@ pushing a laptop-only session id is fine.
 
 **Auth: `kernal login`.** Sent as `Authorization: Bearer <access token>`, refreshed as needed; set
 only `KERNAL_TELEPORT_STORE=outfitter` (and `OUTFITTER_API` for an Outfitter other than
-`https://link.kernal.one`). A Dongle (`OUTFITTER_TOKEN`, from the web UI's Tokens page) still works
-when this machine is not signed in, with a deprecation warning; the paste-a-Dongle flow is being
-retired.
+`https://link.kernal.one`). Dongles (`OUTFITTER_TOKEN`) are retired and no longer read.
 
 Neither token nor anything derived from it is ever written to disk by this module. A 401 from the
-API means the login or Dongle was rejected (signed out, revoked) -- run `kernal login` again. A 403
+API means the login was rejected (signed out, revoked) -- run `kernal login` again. A 403
 means that account isn't allowed to use this Outfitter deployment at all.
 
 An earlier version of this store also tried an `OUTFITTER_IAP_CLIENT_ID` mode (minting a Google
@@ -796,7 +882,7 @@ ephemeral `--no-session`) and only notifies on a real failure; it never blocks o
 
 ## Outfitter admin tools
 
-Signed in with `kernal login` (or with a deprecated Dongle, as for the Outfitter store above), Kernal
+Signed in with `kernal login`, Kernal
 can administer Outfitter itself: build and save a tape, manage environments, find and read past
 sessions. In a Drive whose tape has **Admin tools** turned on, the same tools work through agentd.
 The design is in `outfitter/docs/specs/sysop-tools.md`.
@@ -890,8 +976,8 @@ directory with any model (even a cloud one). Startup performs its two discovery 
 Studio `/v1/models`, router `/model/info`), both succeed, then pi stalls with no further network
 activity until LM Studio's generation finishes. It reproduces with all packages removed, so it is
 in pi itself or in this repo's extensions, not in an add-on. Not resolved yet. In practice it bites
-when two clients share the local model (e.g. an interactive session on `litellm/local-qwen-mlx`
-via the router plus a second `kernal` launch). Thinking off by default keeps generations short, so
+when two clients share the local model (e.g. an interactive session on `local/<you>-<machine>/<model>`
+plus a second `kernal` launch). Thinking off by default keeps generations short, so
 the wait is seconds rather than minutes. If a launch sits silent, check `lms ps --json` for
 `generating`/`processingPrompt` and wait or `lms unload --all`.
 
@@ -921,6 +1007,36 @@ network model discovery (used by the tests; also handy offline). `KERNAL_SANDBOX
 Outfitter's cloud sandbox image: it skips the local-server probe and the key re-check at start-up,
 fills the budget footer after pi is ready rather than before, and skips teleport's store prefetch
 (see `outfitter/docs/reports/startup-trim.md`). Never set it on a laptop.
+
+### Tests never see your real login (#433)
+
+A signed-in laptop runs `npm test` the same as CI: no manual `HOME=` needed. `tests/resolve-pi.mjs`
+imports `tests/isolate.mjs` first, in every test file's process, which:
+
+- points `HOME` (and `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`) at a
+  fresh temporary directory, removed when the process exits. Everything Kernal derives from the home
+  lands there: `~/.kernal/auth`, `config.local.json`, `config-cache`, `reports`, `bin`,
+  `~/.pi/agent` (pi-listen's voice settings), `~/.config/codebase-index`, `~/.kernal-sessions`,
+  `~/localllm/.env`;
+- drops inherited `KERNAL_*` / `MGM_*`, `PI_*`, `OUTFITTER_*` and `SENTRY_*` variables (except
+  `KERNAL_LIVE*`, `KERNAL_E2E` and `KERNAL_TEST_*`), so overrides like `KERNAL_HOME_DIR`,
+  `KERNAL_AUTH_DIR` or `PI_CODING_AGENT_DIR` from your shell cannot point a test at real state;
+- sets `KERNAL_AUTH_BACKEND=file`, and `KERNAL_TEST_NO_KEYCHAIN=1`, which makes the real
+  `security` / `secret-tool` runner (`_shared/keychain.ts`) fail as if the tool were missing. No
+  test can read or write the `kernal-outfitter` Keychain items; a test of the keychain backends
+  passes a fake runner.
+
+These are only starting values: a test that sets its own `HOME`, `KERNAL_AUTH_DIR`,
+`PI_CODING_AGENT_DIR` and so on still gets them. `tests/home-guard.mjs` runs as the runner's
+`--test-global-setup`: it snapshots the direct entries of the real `~/.kernal` (and its `auth`,
+`config-cache`, `reports`, `bin`), `~/.pi/agent`, `~/.kernal-sessions` and `~/.config/codebase-index`
+before the run and fails it, naming the paths, if any were created, removed or modified (entries a
+Kernal running in another shell touches itself, such as sessions and installed bundles, are not
+watched). `tests/real-home-guard.test.ts` checks the isolation and the snapshot mid-run.
+`npm run test:e2e` (`KERNAL_E2E=1`) opts out, since it uses the real keys in `~/localllm/.env` on
+purpose, and so does a non-test script that borrows the resolver (`scripts/index-eval.mjs`).
+Run a single file with the same flags, e.g.
+`node --test-global-setup=./tests/home-guard.mjs --import ./tests/resolve-pi.mjs --test tests/sentry.test.ts`.
 
 ## Where the rest is
 

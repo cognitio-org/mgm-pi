@@ -1,21 +1,17 @@
 /**
  * The laptop's Outfitter credentials, read once per process for teleport, the admin tools, Agent
- * Engine memory, fleet settings and Sentry (outfitter/docs/specs/central-auth.md §2.7):
+ * Engine memory, fleet settings and Sentry (outfitter/docs/specs/central-auth.md §2.7, §12):
  *
  * - Signed in with `kernal login` (outfitter-session.ts) to outfitterApi(): the session. `token` is
  *   the stored access token, maybe stale; a request takes its bearer from outfitterBearer(), which
  *   refreshes it when needed.
- * - Else OUTFITTER_API (the link service's origin) and OUTFITTER_TOKEN (a Dongle), deprecated: one
- *   warning per process says to run `kernal login`. CA-10 removes this fallback.
+ * - Else nothing. Dongles (OUTFITTER_TOKEN) are retired (CA-10, #399): Kernal never sends one. A
+ *   leftover OUTFITTER_TOKEN gets one notice per process ("Dongles are retired; run kernal login")
+ *   and is removed from process.env, so the shells and tools pi starts (the agent's `bash`) don't
+ *   inherit a credential nothing here uses. The person's own shell keeps it.
  *
- * The Dongle is then removed from process.env, so the shells and tools pi starts (the agent's
- * `bash`) don't inherit it. An agent that could read it could call the admin ops itself with
- * `confirmed`, past the TUI confirm (outfitter/docs/specs/sysop-tools.md). The person's own shell
- * keeps it.
- *
- * This is a speed bump, not a boundary: the agent's shell runs as the same user, so it can still
- * read the token from the .env file it came from, or from pi's original environment (`ps eww` on
- * macOS), or ask the keychain for the session. The API's `confirmed` is the client's word
+ * The session's tokens live in the keychain; the agent's shell runs as the same user, so it could
+ * still ask the keychain for them. The API's `confirmed` is the client's word
  * (atlas-agent-engine-and-a2a.md §3.5).
  */
 import { join } from "node:path";
@@ -24,7 +20,7 @@ import { currentAccessToken, getAccessToken, loginState, outfitterApi, type Sess
 export interface OutfitterCredentials {
   api?: string;
   token?: string;
-  source?: "session" | "dongle";
+  source?: "session";
 }
 
 /**
@@ -56,9 +52,15 @@ function read(env: NodeJS.ProcessEnv, storage: SessionStorage | undefined): Outf
       return creds;
     }
   }
-  const api = env.OUTFITTER_API?.trim() || undefined;
-  const token = env.OUTFITTER_TOKEN?.trim() || undefined;
-  return token ? { api, token, source: "dongle" } : { api, token };
+  return { api: env.OUTFITTER_API?.trim() || undefined, token: undefined };
+}
+
+/** The one-line notice for a leftover Dongle in the environment or a .env file. */
+export const DONGLE_RETIRED = "Dongles are retired; run kernal login";
+
+/** Whether `env` still carries a Dongle (OUTFITTER_TOKEN), which Kernal no longer reads. */
+export function hasRetiredDongle(env: NodeJS.ProcessEnv): boolean {
+  return !!env.OUTFITTER_TOKEN?.trim();
 }
 
 /** With no argument: this process's credentials, cached, and the token scrubbed from process.env.
@@ -72,21 +74,21 @@ export function outfitterCredentials(env?: NodeJS.ProcessEnv): OutfitterCredenti
   const g = globalThis as Slot;
   if (!g[SLOT]) {
     g[SLOT] = read(process.env, {});
-    delete process.env.OUTFITTER_TOKEN;
-    if (g[SLOT].source === "dongle" && !g[WARNED]) {
+    if (hasRetiredDongle(process.env) && !g[WARNED]) {
       g[WARNED] = true;
-      process.stderr.write("OUTFITTER_TOKEN is deprecated: run kernal login\n");
+      process.stderr.write(`${DONGLE_RETIRED}\n`);
     }
+    delete process.env.OUTFITTER_TOKEN;
   }
   return g[SLOT];
 }
 
-/** The bearer for one request: the session's access token, refreshed when it is nearly out, or the
- * Dongle. Undefined when there is neither (or the server refused the refresh). Never throws.
+/** The bearer for one request: the session's access token, refreshed when it is nearly out.
+ * Undefined when signed out (or the server refused the refresh). Never throws.
  *
  * `rejected`: the bearer a request just got a 401 for. A session re-reads the keychain once and
- * hands back a newer token (another process rotated it) or undefined; a Dongle gives the same one
- * back, which tells the caller not to retry (§2.4). */
+ * hands back a newer token (another process rotated it) or undefined (§2.4). Credentials without a
+ * source (a caller's own token, tests) give their token back, which tells the caller not to retry. */
 export async function outfitterBearer(creds: OutfitterCredentials = outfitterCredentials(), rejected?: string): Promise<string | undefined> {
   if (creds.source !== "session") return creds.token;
   return getAccessToken({ ...storageMap().get(creds), api: creds.api, ...(rejected ? { rejected } : {}) });

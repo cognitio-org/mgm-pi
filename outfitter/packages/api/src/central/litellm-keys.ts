@@ -21,6 +21,8 @@
 
 import type { Config } from "../config.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
+import { deliveredMcpServers as delivered, deviceKeyMcpServers, deviceKeyMcpToolsets } from "./gcloud-mcp.ts";
+import { LOCAL_HOST_ACCESS_GROUP } from "../local-hosts/contract.ts";
 import { metrics, type MetricAttributes } from "../sentry.ts";
 import type { RouterKey, RouterKeysCollection } from "../store/keys.ts";
 import type { Store } from "../store/types.ts";
@@ -46,6 +48,12 @@ export interface KeyLimits {
   maxBudget?: number;
   budgetDuration?: string;
   rpmLimit?: number;
+  /** The MCP servers the router admits this key to (`object_permission.mcp_servers`); absent means
+   * the key carries no list and sees only the servers open to every key (GA-2, gcloud-mcp.ts). */
+  mcpServers?: string[];
+  /** Router toolset ids (`object_permission.mcp_toolsets`), e.g. `google_cloud` (GB-3). A toolset
+   * path needs the key to list the toolset's id, whatever its mcp_servers say. */
+  mcpToolsets?: string[];
 }
 
 export interface SpendRow {
@@ -84,6 +92,22 @@ export interface LitellmKeys {
   userSpend(userId: string, month: string): Promise<UserSpend>;
   /** Every user's total for the month, for operators (§8). */
   allUsersSpend(month: string): Promise<Array<{ userId: string; email?: string; total: number }>>;
+  /** The person's OAuth MCP grants, wherever the router stores them (docs/specs/mcp-connections.md §2).
+   * No tokens: the router's list carries none. */
+  mcpUserCredentials(userId: string): Promise<McpUserCredential[]>;
+  /** Disconnects the person's grant for one router MCP server id. Gone already counts as done. */
+  deleteMcpUserCredential(userId: string, serverId: string): Promise<void>;
+}
+
+/** One row of the router's GET /v1/mcp/user-credentials, reduced to what Outfitter uses. */
+export interface McpUserCredential {
+  serverId: string;
+  serverName?: string;
+  alias?: string;
+  connectedAt?: string;
+  reconnectRequired: boolean;
+  reconnectRequiredAt?: string;
+  reconnectReason?: string;
 }
 
 // §5.2 / decision 5: a device key lives 90 days (Kernal re-mints before then), 50 USD per 30 days,
@@ -146,7 +170,11 @@ export function parseModelList(value: unknown): string[] | undefined {
  * and `router.runKey.maxBudgetUsd` (fleet level only, locked; defaults in settings-schema.ts). */
 export function routerKeyLimits(fleet: FleetSettings): RouterKeyLimits {
   const values = fleetLevelValues(fleet);
-  const models = parseModelList(fleetSetting(values, "router.keys.models"));
+  const listed = parseModelList(fleetSetting(values, "router.keys.models"));
+  // #384 (local-host.md §3.6): everyone signed in may use shared laptop models, Drives too. A fleet
+  // list that restricts keys gets the `local-hosts` model access group, which LiteLLM resolves to
+  // every deployment carrying model_info.access_groups ["local-hosts"].
+  const models = listed && !listed.includes(LOCAL_HOST_ACCESS_GROUP) ? [...listed, LOCAL_HOST_ACCESS_GROUP] : listed;
   return {
     device: {
       duration: `${numberSetting(values, "router.deviceKey.durationDays", DEVICE_KEY_DURATION_DAYS)}d`,
@@ -316,7 +344,7 @@ class HttpLitellmKeys implements LitellmKeys {
 
   /** One management call. Resolves with the status and parsed body (also for an error status, so
    * callers can tell "gone" or "exists" apart); throws a LitellmError only when nothing came back. */
-  private async call(method: "GET" | "POST", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
+  private async call(method: "GET" | "POST" | "DELETE", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<{ status: number; ok: boolean; body: unknown }> {
     const url = new URL(this.root + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
     let res: Response;
@@ -346,7 +374,7 @@ class HttpLitellmKeys implements LitellmKeys {
   }
 
   /** The call's body when it succeeded, else a LitellmError naming the route. */
-  private async ok(method: "GET" | "POST", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
+  private async ok(method: "GET" | "POST" | "DELETE", path: string, opts: { query?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
     const res = await this.call(method, path, opts);
     if (res.ok) return res.body;
     throw this.failure(path, res.status, res.body);
@@ -427,6 +455,7 @@ class HttpLitellmKeys implements LitellmKeys {
         budget_duration: budgetDuration,
         rpm_limit: args.rpmLimit ?? DEVICE_KEY_RPM_LIMIT,
         ...(args.models ? { models: args.models } : {}),
+        ...objectPermission(args),
         metadata: { outfitter: "device", deviceId: args.deviceId, deviceName: args.deviceName },
       },
       {
@@ -436,6 +465,8 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         deviceId: args.deviceId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
+        ...(args.mcpToolsets?.length ? { mcpToolsets: args.mcpToolsets } : {}),
         maxBudget,
         budgetDuration,
       },
@@ -460,6 +491,7 @@ class HttpLitellmKeys implements LitellmKeys {
         ...(args.budgetDuration ? { budget_duration: args.budgetDuration } : {}),
         ...(args.rpmLimit ? { rpm_limit: args.rpmLimit } : {}),
         ...(args.models ? { models: args.models } : {}),
+        ...objectPermission(args),
         metadata: { outfitter: "run", runId: args.runId, sessionId: args.sessionId },
       },
       {
@@ -469,6 +501,8 @@ class HttpLitellmKeys implements LitellmKeys {
         ownerEmail: args.email,
         runId: args.runId,
         ...(args.models ? { models: args.models } : {}),
+        ...(args.mcpServers?.length ? { mcpServers: args.mcpServers } : {}),
+        ...(args.mcpToolsets?.length ? { mcpToolsets: args.mcpToolsets } : {}),
         maxBudget,
         ...(args.budgetDuration ? { budgetDuration: args.budgetDuration } : {}),
       },
@@ -510,6 +544,28 @@ class HttpLitellmKeys implements LitellmKeys {
     }
     this.teams.set(teamAlias, teamId);
     return teamId;
+  }
+
+  async mcpUserCredentials(userId: string): Promise<McpUserCredential[]> {
+    const body = await this.ok("GET", "/v1/mcp/user-credentials", { query: { user_id: userId } });
+    return (Array.isArray(body) ? body : []).flatMap((row: Record<string, unknown>) => {
+      const serverId = str(row?.server_id);
+      if (!serverId) return [];
+      return [{
+        serverId,
+        ...optional("serverName", str(row.server_name)),
+        ...optional("alias", str(row.alias)),
+        ...optional("connectedAt", str(row.connected_at)),
+        reconnectRequired: row.reconnect_required === true,
+        ...optional("reconnectRequiredAt", str(row.reconnect_required_at)),
+        ...optional("reconnectReason", str(row.reconnect_reason)),
+      }];
+    });
+  }
+
+  async deleteMcpUserCredential(userId: string, serverId: string): Promise<void> {
+    const res = await this.call("DELETE", `/v1/mcp/user-credentials/${encodeURIComponent(serverId)}`, { query: { user_id: userId } });
+    if (!res.ok && res.status !== 404) throw this.failure("/v1/mcp/user-credentials", res.status, res.body);
   }
 
   async userSpend(userId: string, month: string): Promise<UserSpend> {
@@ -630,17 +686,35 @@ export function createLitellmKeys(
   return new HttpLitellmKeys(config.litellmBaseUrl, config.litellmAdminKey, store.routerKeys, opts);
 }
 
+/** The key body's `object_permission`: the servers and toolsets the router admits the key to. */
+function objectPermission(args: Pick<KeyLimits, "mcpServers" | "mcpToolsets">): { object_permission?: { mcp_servers?: string[]; mcp_toolsets?: string[] } } {
+  const mcp_servers = args.mcpServers?.length ? args.mcpServers : undefined;
+  const mcp_toolsets = args.mcpToolsets?.length ? args.mcpToolsets : undefined;
+  return mcp_servers || mcp_toolsets ? { object_permission: { ...(mcp_servers ? { mcp_servers } : {}), ...(mcp_toolsets ? { mcp_toolsets } : {}) } } : {};
+}
+
 /** A device's router key, freshly minted (the user first, then the key, which replaces the old one),
  * in the shape the device receives (§1.3 `delivery.routerKey`, §5.5). */
 export async function mintDeviceRouterKey(
   keys: LitellmKeys,
   device: Pick<LifecycleDevice, "id" | "userId" | "ownerEmail" | "name">,
-  config: Pick<Config, "litellmBaseUrl">,
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[]; googleCloudToolsetId?: string },
   limits: DeviceKeyLimits,
 ): Promise<NonNullable<DeviceDelivery["routerKey"]>> {
   await keys.ensureLitellmUser({ userId: device.userId, email: device.ownerEmail });
-  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits });
-  return { key: minted.key, baseUrl: config.litellmBaseUrl, alias: minted.alias, ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}) };
+  const mcpServers = deviceKeyMcpServers(device.ownerEmail, config.operators);
+  const mcpToolsets = deviceKeyMcpToolsets(device.ownerEmail, config.operators, config.googleCloudToolsetId);
+  const minted = await keys.mintDeviceKey({ userId: device.userId, email: device.ownerEmail, deviceId: device.id, deviceName: device.name, ...limits, mcpServers, mcpToolsets });
+  return {
+    key: minted.key,
+    baseUrl: config.litellmBaseUrl,
+    alias: minted.alias,
+    ...(minted.expiresAt ? { expiresAt: minted.expiresAt } : {}),
+    // Which MCP servers the router admits this key to, so Kernal can switch on the gated ones (GA-3).
+    // `google_cloud` is Kernal's mcp.json entry name, appended when the toolset is granted (not a router
+    // server name; the router sees only the toolset id).
+    ...(mcpServers ? { mcpServers: delivered(mcpServers, mcpToolsets) } : {}),
+  };
 }
 
 /** Registers CA-5's device hooks: mint at login (DeviceDelivery.routerKey) with the fleet's limits
@@ -648,7 +722,7 @@ export async function mintDeviceRouterKey(
 export function registerLitellmDeviceHooks(
   lifecycle: DeviceLifecycle,
   keys: LitellmKeys | undefined,
-  config: Pick<Config, "litellmBaseUrl">,
+  config: Pick<Config, "litellmBaseUrl"> & { operators?: readonly string[]; googleCloudToolsetId?: string },
   limits: RouterKeyLimitsSource,
 ): void {
   if (!keys) return;
@@ -684,4 +758,12 @@ export async function sweepRouterKeys(
     }
   }
   return result;
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function optional<K extends string>(key: K, value: string | undefined): { [P in K]?: string } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: string };
 }

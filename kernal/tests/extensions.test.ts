@@ -1,7 +1,7 @@
 /** Drives the real extension entry points through a fake pi/ctx (see harness.ts). */
-import { test, describe, beforeEach } from "node:test";
+import { test, describe, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -155,7 +155,6 @@ describe("connect extension", async () => {
     assert.equal(pi.providers.find((p) => p.name === "litellm")!.config.apiKey, "sk-test");
     assert.ok(pi.unregistered.includes("openrouter"), "stale registration removed if any");
     assert.equal(modelsOf("lmstudio")[0].thinkingLevelMap.off, "none");
-    assert.equal(modelsOf("litellm").find((m: any) => m.id === "local-qwen-mlx").thinkingLevelMap.off, "none");
     assert.equal(modelsOf("litellm").find((m: any) => m.id === "claude-sonnet-5").thinkingLevelMap.off, undefined);
   });
 
@@ -387,6 +386,7 @@ describe("connect extension", async () => {
       assert.deepEqual(p2.providers.map((p) => p.name).sort(), ["litellm", "lmstudio"]);
       assert.ok(calls.some((u) => u.includes("localhost:1234")), "local server probed");
       assert.ok(calls.some((u) => u.endsWith("router.kernal.one/v1/models")), "key checked");
+      assert.ok(!calls.some((u) => u.includes("/api/local-hosts")), "signed out: shared models are not fetched");
       const ctx = makeCtx({ hasUI: true, model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
       await p2.emit("session_start", {}, ctx);
       assert.match(ctx.statuses.get("budget") ?? "", /key \$1\.00\/\$10\.00/, "footer seeded before session_start returns");
@@ -397,6 +397,158 @@ describe("connect extension", async () => {
     const ctx = ctxWith({ hasUI: false });
     await pi.commands.get("setup")!.handler("", ctx);
     assert.match(ctx.notices.at(-1)!.msg, /Edit .*\.env/);
+  });
+
+  test("session_start shows sharing N models via the provider, and clears it when sharing stops", async () => {
+    const restore = stubFetch({});
+    const dir = join(tmp, ".kernal", "local-host");
+    try {
+      mkdirSync(dir, { recursive: true });
+      const state = {
+        version: 1,
+        shareModels: { value: true },
+        models: { total: 4 },
+        tunnel: { provider: "ngrok", managed: true, state: "up" },
+        heartbeat: { ok: true, routerModels: ["a", "b", "c"] },
+      };
+      writeFileSync(join(dir, "state.json"), JSON.stringify(state));
+      writeFileSync(join(dir, "run.lock"), String(process.pid));
+      const ctx = makeCtx({ hasUI: true, model: { provider: "litellm", id: "claude-sonnet-5", contextWindow: 1, maxTokens: 1 } });
+      await pi.emit("session_start", {}, ctx);
+      assert.equal(ctx.statuses.get("local-host"), "sharing 3 models via ngrok");
+      assert.equal(ctx.statuses.get("connect"), "⇄ litellm/claude-sonnet-5");
+      writeFileSync(join(dir, "state.json"), JSON.stringify({ ...state, shareModels: { value: false } }));
+      await pi.emit("session_start", {}, ctx);
+      assert.equal(ctx.statuses.get("local-host"), undefined);
+    } finally {
+      rmSync(join(tmp, ".kernal"), { recursive: true, force: true });
+      restore();
+    }
+  });
+
+  test("signed in, shared models join the litellm list and the picker marks them online or offline", async () => {
+    const { login } = await import("../.pi/extensions/_shared/outfitter-session.ts");
+    process.env.KERNAL_AUTH_BACKEND = "file";
+    delete (globalThis as any)[Symbol.for("kernal.outfitterCredentials")];
+    const authDir = join(tmp, ".kernal", "auth");
+    await login({
+      env: { ...process.env, KERNAL_AUTH_BACKEND: "file", HOME: tmp },
+      authDir,
+      api: "https://link.kernal.one",
+      print: () => {},
+      openBrowser: false,
+      sleep: async () => {},
+      fetch: (async (url: string) => {
+        const path = new URL(url).pathname;
+        const body = path.endsWith("/code")
+          ? { device_code: "kdc_abc", user_code: "BCDF-GHJK", verification_uri: "https://app.example/device", expires_in: 600, interval: 5 }
+          : { token_type: "Bearer", access_token: "kda_test", expires_in: 3600, refresh_token: "kdr_test", refresh_expires_in: 2592000, device: { id: "dev_aaaaaaaaaaaaaaa1", name: "mbp" }, account: { email: "a@example.com", userId: "u_1" } };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      }) as any,
+    });
+    const restore = stubFetch({
+      "/api/local-hosts": () => ({
+        hosts: [
+          { status: "offline", tunnel: { managed: true }, models: [
+            { id: "qwen", routerModel: "local/a-mbp/qwen", shared: true, contextLength: 131072, vision: false, kind: "lmstudio" },
+            { id: "hidden", routerModel: "local/a-mbp/hidden", shared: false },
+            { id: "embed", routerModel: "local/a-mbp/embed", shared: true, type: "embeddings" },
+          ] },
+          { status: "online", tunnel: { managed: true }, models: [{ id: "gemma", routerModel: "litellm/local/b-air/gemma", shared: true, vision: true, kind: "ollama" }] },
+          { status: "online", tunnel: { managed: false }, models: [{ id: "x", routerModel: "local/interim/x", shared: true }] },
+        ],
+      }),
+    });
+    try {
+      const p2 = makePi();
+      await mod.default(p2 as any);
+      const models = p2.providers.find((p) => p.name === "litellm")!.config.models;
+      const ids = models.map((m: any) => m.id);
+      assert.ok(ids.includes("gpt-5.4-nano"), "the router's own list stays");
+      assert.ok(ids.indexOf("gpt-5.4-nano") < ids.indexOf("local/a-mbp/qwen"), "extras are appended");
+      assert.ok(ids.includes("local/a-mbp/qwen"));
+      assert.ok(ids.includes("local/b-air/gemma"));
+      assert.ok(!ids.includes("local/a-mbp/hidden"));
+      assert.ok(!ids.includes("local/a-mbp/embed"));
+      assert.ok(!ids.includes("local/interim/x"));
+      assert.ok(!ids.includes("litellm/local/b-air/gemma"));
+      const qwen = models.find((m: any) => m.id === "local/a-mbp/qwen");
+      assert.equal(qwen.thinkingLevelMap.off, "none");
+      assert.equal(qwen.contextWindow, 131072);
+      assert.deepEqual(qwen.input, ["text"]);
+      assert.equal(qwen.cost.output, 0);
+      assert.deepEqual(models.find((m: any) => m.id === "local/b-air/gemma").input, ["text", "image"]);
+      const ctx = makeCtx({ models: models.map((m: any) => ({ ...m, provider: "litellm", contextWindow: m.contextWindow, maxTokens: m.maxTokens })) });
+      let options: string[] = [];
+      ctx.ui.select = async (_t: string, opts: string[]) => { options = opts; return opts.find((o) => o.startsWith("local/a-mbp/qwen")); };
+      const orig = p2.setModel.bind(p2);
+      p2.setModel = async (m: any) => { await orig(m); return false; };
+      await p2.commands.get("connect")!.handler("litellm", ctx);
+      assert.ok(options.includes("local/a-mbp/qwen  (offline)"));
+      assert.ok(options.includes("local/b-air/gemma  (online)"));
+      assert.ok(options.includes("gpt-5.4-nano"));
+      assert.equal(p2.setModelCalls.at(-1).id, "local/a-mbp/qwen");
+      assert.match(ctx.notices.at(-1)!.msg, /Could not switch/);
+    } finally {
+      restore();
+      delete process.env.KERNAL_AUTH_BACKEND;
+      delete (globalThis as any)[Symbol.for("kernal.outfitterCredentials")];
+      rmSync(join(tmp, ".kernal"), { recursive: true, force: true });
+    }
+  });
+
+  // pi crashed on /new: the 15 s Local Host footer timer called setStatus on the replaced session's
+  // ctx, which throws "This extension ctx is stale after session replacement or reload".
+  test("timers holding a session's ctx stop at session_shutdown, and a stale ctx never takes pi down", async () => {
+    const restore = stubFetch({});
+    mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+    try {
+      // Counts every ui call *before* the stale check, so a timer still firing after shutdown is seen
+      // even though the extension swallows the stale error.
+      const staleCtx = () => {
+        const ctx = makeCtx({ hasUI: true }) as any;
+        const state = { stale: false, localHost: 0, budgetClose: 0 };
+        const { setStatus, setWidget } = ctx.ui;
+        ctx.ui.setStatus = (k: string, t: string | undefined) => {
+          if (k === "local-host") state.localHost++;
+          if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+          setStatus(k, t);
+        };
+        ctx.ui.setWidget = (k: string, w: unknown, o?: unknown) => {
+          if (k === "budget" && w === undefined) state.budgetClose++;
+          if (state.stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+          setWidget(k, w, o);
+        };
+        return { ctx, state };
+      };
+
+      // /budget opens a panel with a 60 s close timer; then /new: session_shutdown("new"), the ctx goes stale.
+      const p2 = makePi(); await mod.default(p2 as any);
+      const a = staleCtx();
+      await p2.emit("session_start", {}, a.ctx);
+      await p2.commands.get("budget")!.handler("", a.ctx);
+      const seen = a.state.localHost;
+      assert.ok(seen >= 1, "the footer was filled in at start");
+      await p2.emit("session_shutdown", { reason: "new" }, a.ctx);
+      a.state.stale = true;
+      mock.timers.tick(120_000);
+      assert.equal(a.state.localHost, seen, "the Local Host timer stopped with the session");
+      assert.equal(a.state.budgetClose, 0, "the budget panel's close timer stopped with the session");
+
+      // Belt and braces: a tick that lands on a stale ctx before shutdown throws nothing, and ends the watch.
+      const p3 = makePi(); await mod.default(p3 as any);
+      const b = staleCtx();
+      await p3.emit("session_start", {}, b.ctx);
+      await p3.commands.get("budget")!.handler("", b.ctx);
+      b.state.stale = true;
+      const before = b.state.localHost;
+      assert.doesNotThrow(() => mock.timers.tick(60_000));
+      assert.equal(b.state.localHost, before + 1, "one stale tick, then the watch stopped itself");
+      await p3.emit("session_shutdown", { reason: "quit" }, b.ctx);
+    } finally {
+      mock.timers.reset();
+      restore();
+    }
   });
 });
 

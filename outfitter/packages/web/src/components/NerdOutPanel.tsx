@@ -54,12 +54,15 @@ export function NerdOutPanel({
   runState,
   startup,
   onClose,
+  embedded = false,
 }: {
   sessionId: string;
   /** The stream's run state: a change re-reads the details. */
   runState: string | undefined;
   startup: StartupSummary | null | undefined;
-  onClose: () => void;
+  onClose?: () => void;
+  /** #498: inside the Details tab, which has its own heading and no close button of its own. */
+  embedded?: boolean;
 }) {
   /** Undefined: the api's pick (the active run, else the latest). */
   const [pickedRun, setPickedRun] = useState<string | undefined>(undefined);
@@ -149,9 +152,9 @@ export function NerdOutPanel({
   const res = detail?.live?.resources;
 
   return (
-    <section className="panel nerd-out" aria-label="Nerd out">
-      <div className="panel-titlebar nerd-out-titlebar">
-        <span className="panel-label">Nerd out</span>
+    <section className={embedded ? "nerd-out is-embedded" : "panel nerd-out"} aria-label={embedded ? "Drive" : "Nerd out"}>
+      <div className={embedded ? "nerd-out-titlebar" : "panel-titlebar nerd-out-titlebar"}>
+        {!embedded && <span className="panel-label">Nerd out</span>}
         {detail && detail.runs.length > 1 && (
           <select
             className="nerd-out-run-picker"
@@ -172,9 +175,11 @@ export function NerdOutPanel({
             ))}
           </select>
         )}
-        <button type="button" className="btn btn-small nerd-out-close" onClick={onClose} aria-label="Close the nerd out panel">
-          ✕
-        </button>
+        {onClose && !embedded && (
+          <button type="button" className="btn btn-small nerd-out-close" onClick={onClose} aria-label="Close the nerd out panel">
+            ✕
+          </button>
+        )}
       </div>
       <div className="nerd-out-body">
         {!detail && !detailError && <p className="nerd-out-note">LOADING…</p>}

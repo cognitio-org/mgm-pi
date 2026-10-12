@@ -8,7 +8,8 @@ import type { VoiceEngine, VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
-import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import type { ProviderKeysCollection, RouterKeysCollection, SubscriptionSecretsCollection } from "./keys.ts";
+import type { LocalHostsCollection } from "./local-hosts.ts";
 
 export type RunState = "queued" | "provisioning" | "running" | "idle" | "stopping" | "stopped" | "failed";
 
@@ -34,7 +35,11 @@ export interface Session {
   /** Absent for a repo-less session; agentd then works out of a scratch /workspace instead. */
   branch?: string;
   prompt?: string;
-  /** Per-session model override, taking priority over the guru's own `model` (E2.8 laptop preflight). */
+  /** The floppy's model: the tape's `model` when it was created (or the one asked for), then
+   * whatever PUT /api/sessions/:id/model last set. A later edit of the tape doesn't change it.
+   * Absent on floppies from before the pin (and when the tape named none): those keep the last
+   * model their transcript records (session-model.ts's transcriptModel), else the tape's. The
+   * laptop preflight (E2.8) still applies at each run start. */
   modelOverride?: string;
   parentId?: string;
   status: "open" | "closed";
@@ -58,6 +63,11 @@ export interface Session {
     landed?: boolean;
     /** When a frame last landed; a later frame that didn't keeps it (and `head`). */
     landedAt?: string;
+    /** #501: this frame landed by sending commits (`pushed: true`), not by finding them there. */
+    pushed?: boolean;
+    /** #501: when a frame last pushed commits; kept by later frames that didn't. What the page shows
+     * as "Pushed 1m ago": a turn with nothing new re-lands the same head and moves only landedAt. */
+    pushedAt?: string;
   };
   /** E9 §1: when pi last reported the turn settled (`agent_settled`: nothing queued, no retry
    * left), and the last entry agentd had sent by then, when it said. Not run state `idle`, which a
@@ -83,8 +93,41 @@ export interface Session {
   /** #208: set by DELETE /api/sessions/:id when it claims the session, just before erasing it.
    * Restore refuses a session that has it, so a restore can't race a format. */
   formattingAt?: string;
+  /** #503: Auto-fix CI. On: when a check on the session's open pull request fails, Outfitter sends
+   * the agent one message with the failing checks' log tails (autofix.ts). Absent: off. */
+  autofixCi?: boolean;
+  /** #503: the watcher's bookkeeping, changed only through casAutofix / setAutofixCi. */
+  autofix?: AutofixState;
   createdAt: string;
   updatedAt: string;
+}
+
+/** #503: Auto-fix CI's state on a session. Every write bumps `rev` and is conditional on the rev it
+ * read (SessionsCollection.casAutofix), so of several API instances only one polls or sends. */
+export interface AutofixState {
+  rev: number;
+  /** When an instance last claimed this session's poll. */
+  polledAt?: string;
+  /** The pull request head the last message was sent for, and when. */
+  lastSha?: string;
+  lastAt?: string;
+  lastPr?: number;
+  lastChecks?: string[];
+  /** When messages were sent, oldest first; only the last AUTOFIX_MAX_PER_DAY are kept. */
+  sends?: string[];
+  /** A send was refused for the daily cap: when, and for which head. */
+  cappedAt?: string;
+  cappedSha?: string;
+  /** When the next poll is due (the back-off: longer unless a failure is settling). */
+  nextPollAt?: string;
+  /** When the watcher first saw this head fail (the settle cutoff for a check with no times). */
+  failSeen?: { sha: string; at: string };
+  /** A message whose insert failed, kept so the retry doesn't refetch logs. */
+  draft?: { sha: string; text: string };
+  /** The daily cap's run of consecutive (UTC) days. */
+  capDays?: { last: string; count: number };
+  /** Set when the watcher turned the switch off itself (the cap on too many days running). */
+  offNotice?: string;
 }
 
 /** A pi session entry, exactly as pi writes it to JSONL (message, model_change, compaction, custom...). */
@@ -810,11 +853,16 @@ export interface SessionListFilter {
 export interface SessionsCollection {
   insert(session: Session): Promise<void>;
   findById(id: string): Promise<Session | null>;
+  /** #501: only what sse.ts's SsePoller reads every poll (checkpoint, ownerEmail), projected. */
+  findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null>;
   list(filter?: SessionListFilter): Promise<Session[]>;
   update(id: string, patch: Partial<Session>): Promise<Session | null>;
   /** #207: sets archivedAt, or clears it for `null`. Returns the updated session, or null if it
    * doesn't exist -- or, when clearing, if it is being formatted (formattingAt). */
   setArchivedAt(id: string, archivedAt: string | null): Promise<Session | null>;
+  /** Sets the floppy's modelOverride, or clears it for `null`.
+   * Returns the updated session, or null if it doesn't exist. */
+  setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null>;
   /** #208: atomically sets formattingAt on an archived session that isn't already being formatted.
    * null if there is no such session (missing, restored, or claimed by another format). */
   claimForFormat(id: string, nowIso: string): Promise<Session | null>;
@@ -822,6 +870,19 @@ export interface SessionsCollection {
   releaseFormatClaim(id: string): Promise<void>;
   /** #208: removes the session document itself. false if there was none. */
   delete(id: string): Promise<boolean>;
+  /** #503: turns Auto-fix CI on or off. Bumps autofix.rev (so a watcher mid-poll can't send after
+   * an off). Turning it on clears the daily cap, its day streak, the turned-off notice and the poll
+   * back-off, and with `nowIso` also moves updatedAt (so the 7-day activity filter includes it).
+   * null if the session doesn't exist. */
+  setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null>;
+  /** #503: how many sessions of this owner have Auto-fix on and aren't archived. */
+  countAutofixForOwner(ownerEmail: string): Promise<number>;
+  /** #503: replaces `autofix` with `next` (whose rev must be `expectedRev + 1`) only if the stored
+   * rev is still `expectedRev` (0: none stored yet), Auto-fix is on and the session isn't archived.
+   * false when another writer got there first. */
+  casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean>;
+  /** #503: sessions with Auto-fix on, not archived, with a repository and branch, updated since. */
+  listAutofix(updatedSinceIso: string): Promise<Session[]>;
 }
 
 /** #208: a formatted (deleted) session's id, kept so teleport import can't bring it back. */
@@ -1416,5 +1477,8 @@ export interface Store {
   settings: SettingsCollection;
   routerKeys: RouterKeysCollection;
   providerKeys: ProviderKeysCollection;
+  subscriptionSecrets: SubscriptionSecretsCollection;
+  // Local Host (#378, docs/specs/local-host.md §1.5): owned by task A.
+  localHosts: LocalHostsCollection;
   close(): Promise<void>;
 }

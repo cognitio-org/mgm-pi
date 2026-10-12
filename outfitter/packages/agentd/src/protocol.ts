@@ -373,6 +373,14 @@ export interface RunSpecSettings {
   values: Record<string, { value: unknown; source: string; sourceName?: string }>;
 }
 
+/** Operator-only MCP servers to switch on for this run (#493). The image ships them disabled; the api
+ * lists one only when the tape has `adminTools: operator` and the owner is an operator, and the run
+ * key is admitted to it on the router. agentd (mcp-gate.ts) ignores names it doesn't gate; an older api
+ * omits it, which leaves them off. */
+export interface RunSpecMcp {
+  enable?: string[];
+}
+
 export interface RunSpecSnapshot {
   url?: string;
   jsonl?: string;
@@ -439,6 +447,7 @@ export interface RunSpec {
   ide?: RunSpecIde;
   telemetry?: RunSpecTelemetry;
   settings?: RunSpecSettings;
+  mcp?: RunSpecMcp;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -456,6 +465,7 @@ export interface DownRunSpec {
   ide?: RunSpecIde;
   telemetry?: RunSpecTelemetry;
   settings?: RunSpecSettings;
+  mcp?: RunSpecMcp;
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -640,6 +650,8 @@ export interface UpDiffResult {
   base?: string;
   patch?: string;
   files?: string[];
+  /** #499: `patch` stopped at a file boundary under 2 MB (git.ts's capPatch). */
+  truncated?: boolean;
 }
 
 export interface UpReadResult {

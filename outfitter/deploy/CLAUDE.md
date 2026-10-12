@@ -17,11 +17,24 @@
   a GitHub Release for Outfitter: Releases here are Kernal's, and `kernal update` reads the latest.
 - `litellm-admin.sh` (without `DRY_RUN=1`) is owner-run: it reads the router master key and mints
   Outfitter's scoped admin key into `outfitter-litellm-admin`. `DRY_RUN=1` reads nothing secret.
+- `litellm-retire-keys.sh` (`system-key`, `block`, `unblock`; without `DRY_RUN=1`) is owner-run
+  (#399): it reads the router master key, mints the `outfitter-system` key into
+  `outfitter-litellm-key-default`, and blocks the retired shared router keys. `DRY_RUN=1` reads
+  nothing secret and writes nothing.
 - `sentry-token.sh` (without `DRY_RUN=1`) is owner-run: it stores the Sentry upload token in
   `sentry-release-token` and grants `outfitter-builder@` access to that secret (README.md "Web source
   maps"). The token comes from the owner's clipboard; agents never handle it.
 - `secret-scope.sh` (without `DRY_RUN=1`) is owner-run: it changes outfitter-api's project IAM
   (secret roles limited to `outfitter-*` secrets). `DRY_RUN=1` is safe.
+- `gcloud-mcp-iam.sh` and `gcloud-mcp-router.sh` (gcloud MCP, epic #497; docs/runbooks/gcloud-mcp.md)
+  are owner-run without `DRY_RUN=1`: the first grants `roles/mcp.toolUser` and writes an IAM deny
+  policy; the second reads the router master key and registers the server (`CONFIRM=1`; editing an
+  existing one purges every user's grant, `FORCE_PURGE=1`). `DRY_RUN=1` reads no secret.
+- `google-cloud-mcp.sh` (google_cloud toolset, epic #544) is owner-run without `DRY_RUN=1`: it reads the
+  router master key, registers the Google product servers and the toolset (`CONFIRM=1`), and with
+  `ENABLE_APIS=1` enables APIs in kernal-oauth. It never edits `gcloud`. `DRY_RUN=1` reads no secret.
+- `mcp-identity-check.sh` (MO-7 #489, docs/runbooks/mcp-grants.md) is read-only but owner-run without
+  `DRY_RUN=1`: it reads Outfitter's scoped admin key to list router users. `DRY_RUN=1` reads no secret.
 - `atlas-search.sh` (session search indexes, #289) is owner-run without `DRY_RUN=1`: its vector
   index makes Atlas embed every chunk through Voyage (billed). `DRY_RUN=1` is safe.
 - GKE (README.md "GKE provider (optional)"): `gke-cluster.sh` (without `DRY_RUN=1`), `gke-iam.sh`

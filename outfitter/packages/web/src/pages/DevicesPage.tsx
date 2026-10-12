@@ -9,8 +9,8 @@ import { relativeTime } from "../lib/relative-time.ts";
 import { vocabSubtitle, vocabulary } from "../lib/vocabulary.ts";
 
 /** #389 CA-1 web (docs/specs/central-auth.md §1.5, §6): the computers where Kernal is signed in
- * with your account, each with Sign out. Replaces the Dongles page in the nav; Dongles still work
- * (and are still made on /tokens) until CA-10 retires them. */
+ * with your account, each with Sign out. Replaces the Dongles page in the nav. Dongles are retired
+ * (CA-10, #399): none are made any more; existing ones work until they expire or are revoked. */
 export function DevicesPage() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,14 +118,15 @@ export function DevicesPage() {
         </div>
       )}
 
-      <section className="panel device-dongles" aria-label={`${vocabulary.token.many} (deprecated)`}>
+      <section className="panel device-dongles" aria-label={`${vocabulary.token.many} (retired)`}>
         <div className="panel-titlebar">
-          <span className="panel-label">{vocabulary.token.many} (deprecated)</span>
+          <span className="panel-label">{vocabulary.token.many} (retired)</span>
         </div>
         <div className="panel-body">
           <p>
-            A {vocabulary.token.one} is the old pasted <code>OUTFITTER_TOKEN</code>. It still works for now, but{" "}
-            <code>kernal login</code> replaces it. A2A keys live there too.
+            A {vocabulary.token.one} is the old pasted <code>OUTFITTER_TOKEN</code>. They are retired:{" "}
+            <code>kernal login</code> replaced them, Kernal no longer reads one, and no new one can be made. Revoke the
+            ones you still have there; A2A keys live there too.
           </p>
           <p>
             <Link to="/tokens" className="btn">Manage {vocabulary.token.many} and A2A keys</Link>

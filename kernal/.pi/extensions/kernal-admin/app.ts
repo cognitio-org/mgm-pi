@@ -218,6 +218,24 @@ input[aria-invalid=true]:focus { box-shadow: 0 0 0 3px var(--err-soft); }
 .mlist button:hover { background: var(--hover); }
 .mlist button[aria-pressed=true] { background: var(--sel); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent-ink); }
 .mlist .id { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlist li.curated { display: flex; align-items: center; gap: 2px; }
+.mlist li[hidden] { display: none; }
+/* #458: a model-valued setting as a searchable dropdown (modelCombo) */
+.mcombo { display: flex; flex-direction: column; gap: 6px; }
+.mcombo .inline > input { font-family: var(--mono); }
+.mmenu { display: flex; flex-direction: column; max-height: 260px; overflow: auto; border: 1px solid var(--field-line); border-radius: var(--r-sm); background: var(--field); padding: 4px; }
+.mmenu[hidden] { display: none; }
+.mmenu .mgroup { padding: 6px 10px 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.mmenu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; cursor: pointer; font-size: 13px; }
+.mmenu button .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mmenu button:hover, .mmenu button.active { background: var(--sel); }
+.unlisted { padding: 0 16px 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.unlisted .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.mlist button.rm, .unlisted button.rm { border: 0; background: transparent; border-radius: var(--r-sm); cursor: pointer; }
+.mlist button.rm { width: auto; flex: none; min-height: 28px; padding: 0 8px; font-family: inherit; color: var(--muted); }
+.mlist button.rm:hover, .unlisted button.rm:hover { color: var(--err); background: var(--err-soft); }
+.curate { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 4px 16px 14px; }
+.curate input { flex: 1; min-width: 200px; max-width: 360px; }
 .empty { padding: 28px 20px; color: var(--muted); text-align: center; }
 
 table.t { width: 100%; border-collapse: collapse; font-size: 13.5px; }
@@ -398,8 +416,51 @@ kbd { font: 11px/1.5 var(--mono); border: 1px solid var(--line); border-bottom-w
 @media (max-width: 460px) { .nav a svg { display: none; } }
 `;
 
+/** #458: the Settings page's model dropdowns, the parts without the DOM: which settings get one,
+ * the options for the selected provider, and the menu for what is typed. Part of APP_JS; exported
+ * on its own so tests can run it. */
+export const MODEL_PICK_JS = String.raw`
+// model.default holds a model id of the provider model.provider names; compaction.summaryModel
+// names its provider too, as provider/id (compaction reads it that way).
+var MODEL_SETTINGS = { "model.default": "provider", "compaction.summaryModel": "qualified" };
+var PROVIDER_NAMES = { litellm: "Router (LiteLLM)", openrouter: "OpenRouter", lmstudio: "Local server (LM Studio)" };
+/** The options for a key with a provider selected: { choices: [{ value, group }], note? }, or null
+ * when there is no list at all (connect not loaded). */
+function modelChoices(key, provider, mo) {
+  if (!mo || !mo.providers || !mo.providers.length) return null;
+  if (MODEL_SETTINGS[key] === "provider") {
+    var p = mo.providers.filter(function (x) { return x.id === provider; })[0];
+    if (!p) return { choices: [], note: "No list for the provider " + provider + ": type the model's id with Other…" };
+    return { choices: p.models.map(function (m) { return { value: m, group: p.label }; }), note: p.note };
+  }
+  // "self": summarize with the working model (/compaction model self).
+  var out = [{ value: "self", group: "The working model" }];
+  mo.providers.slice().sort(function (a, b) { return (b.id === provider ? 1 : 0) - (a.id === provider ? 1 : 0); })
+    .forEach(function (p) { p.models.forEach(function (m) { out.push({ value: p.id + "/" + m, group: p.label }); }); });
+  return { choices: out };
+}
+function modelInList(choices, value) { return value === "" || choices.some(function (c) { return c.value === value; }); }
+/** The menu for a query: "not set here" (no query), the stored value when it isn't listed, the
+ * matches (case-insensitive, at most 100), then "Other…" (carrying the query when nothing is it). */
+function modelMenu(choices, value, query) {
+  var q = (query || "").trim(), ql = q.toLowerCase(), items = [];
+  if (!q) items.push({ kind: "unset" });
+  if (value && !modelInList(choices, value) && (!q || value.toLowerCase().indexOf(ql) >= 0)) items.push({ kind: "current", value: value });
+  choices.filter(function (c) { return !q || c.value.toLowerCase().indexOf(ql) >= 0; }).slice(0, 100)
+    .forEach(function (c) { items.push({ kind: "model", value: c.value, group: c.group }); });
+  items.push({ kind: "other", query: q && !choices.some(function (c) { return c.value === q; }) ? q : "" });
+  return items;
+}
+function modelItemLabel(item) {
+  if (item.kind === "unset") return "not set here";
+  if (item.kind === "other") return item.query ? "Other: use “" + item.query + "”" : "Other…";
+  return item.value;
+}
+`;
+
 export const APP_JS = String.raw`(function () {
 "use strict";
+${MODEL_PICK_JS}
 
 // ---------- token: from the URL fragment once, then this tab's sessionStorage ----------
 var TOKEN_KEY = "kernal-admin-token";
@@ -853,7 +914,7 @@ function renderSettings(view) {
 function sourceTag(r) {
   if (!r.sourceLabel) return el("span", { class: "note", text: "not set" });
   var central = ["fleet", "group", "user", "profile", "device"].indexOf(r.source) >= 0;
-  return el("span", { class: "tag" + (central ? " accent" : r.source === "dotenv" ? " warn" : ""), title: r.source === "dotenv" ? ".env is deprecated for this: save it to your account or this machine" : null, text: r.sourceLabel });
+  return el("span", { class: "tag" + (central ? " accent" : r.source === "dotenv" ? " warn" : ""), title: r.source === "dotenv" ? ".env is deprecated for this: save it to your account or this machine" : r.source === "legacy" ? "Set on this machine before it had an account: a value saved to your account or this machine wins over it" : null, text: r.sourceLabel });
 }
 function shownValue(r) {
   if (r.value === undefined) return "—";
@@ -891,17 +952,35 @@ function drawSettings(view, d) {
     : "Saved in " + d.localFile + " on this machine only; it wins over your account where the setting allows it. Takes effect at the next start.";
   add(view, card("Save to", null, null, el("div", { class: "rows" }, seg, el("p", { class: "note", text: where }))));
 
+  // #458: model.default's list follows model.provider: this form's choice, else the value in effect.
+  var providerRow = d.rows.filter(function (r) { return r.key === "model.provider"; })[0];
+  var combos = {};
+  // Clearing the target's own provider: the value in effect is the one about to go, so the default stands in.
+  function currentProvider() {
+    var v = fs.get("model.provider");
+    if (v) return v;
+    var own = providerRow && (target === "account" ? providerRow.account : providerRow.machine);
+    if (v === "" && own !== undefined) return (providerRow && providerRow.default) || "litellm";
+    return (providerRow && providerRow.value) || "litellm";
+  }
+  function refreshCombos() { for (var k in combos) combos[k].setChoices(modelChoices(k, currentProvider(), d.modelOptions)); }
+
   var list = el("div", { class: "rows" });
   d.rows.forEach(function (r) {
     var editable = target === "account" ? r.canAccount : r.canMachine;
     var here = target === "account" ? r.account : r.machine;
     var initial = here === undefined ? "" : String(here);
     var control;
-    if (r.type === "boolean" || r.type === "enum") {
-      var opts = r.type === "boolean" ? [["true", "on"], ["false", "off"]] : (r.choices || []).map(function (c) { return [c, c]; });
+    if (MODEL_SETTINGS[r.key] && !r.secret) {
+      var combo = modelCombo({ key: r.key, value: initial, disabled: !editable, placeholder: r.value !== undefined ? shownValue(r) : "not set here",
+        set: modelChoices(r.key, currentProvider(), d.modelOptions), onChange: function (v) { fs.set(r.key, v); row.setError(null); } });
+      combos[r.key] = combo;
+      control = combo.el;
+    } else if (r.type === "boolean" || r.type === "enum") {
+      var opts = r.type === "boolean" ? [["true", "on"], ["false", "off"]] : (r.choices || []).map(function (c) { return [c, r.key === "model.provider" && PROVIDER_NAMES[c] ? c + ": " + PROVIDER_NAMES[c] : c]; });
       control = el("select", { disabled: !editable }, el("option", { value: "", text: "not set here" }), opts.map(function (o) { return el("option", { value: o[0], text: o[1] }); }));
       control.value = initial;
-      control.addEventListener("change", function () { fs.set(r.key, control.value); row.setError(null); });
+      control.addEventListener("change", function () { fs.set(r.key, control.value); row.setError(null); if (r.key === "model.provider") refreshCombos(); });
     } else {
       control = el("input", { type: r.type === "number" ? "number" : r.type === "url" ? "url" : "text", value: initial, class: "mono", placeholder: r.value !== undefined && !r.secret ? shownValue(r) : "not set here", autocomplete: "off", spellcheck: "false", disabled: !editable, step: r.type === "number" ? "any" : null, min: r.min, max: r.max });
       control.addEventListener("input", function () { fs.set(r.key, control.value); row.setError(null); });
@@ -990,15 +1069,66 @@ function renderModel(view) {
   loading(view);
   api("GET", "/models").then(function (d) { drawModels(view, d); }, function (e) { failed(view, e); });
 }
+// #440: the curated OpenRouter list. Adds and removes go to the account or to this machine only.
+var curateTarget = "account", curateChosen = false;
+function curateRow(view, d) {
+  var c = d.curation;
+  if (c.replacedByEnv) return el("p", { class: "note", style: "padding: 0 16px 14px" }, "OPENROUTER_MODELS in .env sets this whole list; edit it there, or remove it to curate the list here.");
+  // Signed out: only this machine. Signed in again later: back to the account unless chosen by hand.
+  if (!c.canAccount) curateTarget = "machine";
+  else if (!curateChosen) curateTarget = "account";
+  var input = el("input", { type: "text", list: "or-catalogue", placeholder: "Add any OpenRouter model, e.g. deepseek/deepseek-v4-pro", "aria-label": "OpenRouter model to add", autocomplete: "off" });
+  var dl = el("datalist", { id: "or-catalogue" });
+  (c.catalogue || []).forEach(function (id) { dl.appendChild(el("option", { value: id })); });
+  var seg = el("div", { class: "seg sm", role: "group", "aria-label": "Where list changes are saved" });
+  [["account", "My account"], ["machine", "This machine"]].forEach(function (t) {
+    var b = el("button", { type: "button", "aria-pressed": curateTarget === t[0] ? "true" : "false", text: t[1] });
+    if (t[0] === "account" && !c.canAccount) { b.disabled = true; b.title = "Run kernal login to save to your account"; }
+    b.addEventListener("click", function () { curateTarget = t[0]; curateChosen = true; Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); }); });
+    seg.appendChild(b);
+  });
+  var addBtn = el("button", { type: "button", class: "btn sm", text: "Add" });
+  function submit() { var id = input.value.trim(); if (id) curate(view, "add", id, addBtn); }
+  addBtn.addEventListener("click", submit);
+  input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+  var row = el("div", { class: "curate" }, input, dl, addBtn, el("span", { class: "note", text: "Save to" }), seg);
+  if (!(c.unavailable || []).length) return row;
+  // On a list but not offered (OpenRouter doesn't list them): still removable here.
+  var un = el("div", { class: "unlisted" }, el("span", { class: "note warnnote", text: "Not on OpenRouter:" }));
+  c.unavailable.forEach(function (id) { un.appendChild(el("span", { class: "chip" }, id, curateButton(view, d, "remove", id))); });
+  return el("div", {}, un, row);
+}
+function curateButton(view, d, action, id) {
+  var b = el("button", { type: "button", class: "rm", title: "Remove " + id + " from the list", "aria-label": "Remove " + id + " from the list", text: "×" });
+  b.addEventListener("click", function () { curate(view, action, id, b); });
+  return b;
+}
+function curate(view, action, id, btn) {
+  btn.disabled = true;
+  api("POST", "/model/curate", { action: action, id: id, target: curateTarget }).then(function (r) {
+    toast(r.message, "ok");
+    api("GET", "/models").then(function (fresh) { drawModels(view, fresh); });
+  }, function (e) { btn.disabled = false; toast(e.message, "error"); });
+}
 function drawModels(view, d) {
   clear(view);
-  add(view, head("Model", "Choosing a model switches this session now and saves it as the default for the next start, like /connect."));
+  add(view, head("Model", "Choosing a model switches this session now and saves it as the default for the next session, like /connect."));
   var cur = d.current;
-  add(view, card("Current", null, null, kv([
+  var defText = d.default ? d.default.provider + (d.default.model ? "/" + d.default.model : "") : "not set";
+  var rows = [
     ["In use", el("span", { class: "mono", text: cur ? cur.provider + "/" + cur.id : "none" })],
-    ["Default at start", el("span", { class: "mono", text: d.default ? d.default.provider + "/" + d.default.model : "not set" })],
+    ["Default at start", el("span", {}, el("span", { class: "mono", text: defText }), d.default && d.default.source ? el("span", { class: "note", text: "  from " + d.default.source }) : null)],
     ["Thinking", el("span", { text: d.thinking || "—" })]
-  ])));
+  ];
+  // Signed in (#437): where a chosen default goes, as on the Settings page.
+  var target = null;
+  if (d.saveTargets && d.saveTargets.length) {
+    var pickTarget = el("select", { "aria-label": "Save the default to" });
+    d.saveTargets.forEach(function (t) { pickTarget.appendChild(el("option", { value: t.id, text: t.label })); });
+    target = pickTarget;
+    rows.push(["Save the default to", pickTarget]);
+  }
+  add(view, card("Current", null, null, kv(rows)));
   var search = el("input", { type: "search", placeholder: "Filter models", "aria-label": "Filter models", autocomplete: "off" });
   add(view, el("div", { class: "toolbar" }, search));
   var lists = [];
@@ -1015,15 +1145,20 @@ function drawModels(view, d) {
         btn.addEventListener("click", function () {
           if (isCur) return;
           btn.disabled = true; btn.appendChild(spinner());
-          api("POST", "/model", { provider: p.id, id: id }).then(function () {
-            toast("Switched to " + p.id + "/" + id + " and saved it as the default", "ok");
+          var body = { provider: p.id, id: id };
+          if (target) body.target = target.value;
+          api("POST", "/model", body).then(function (r) {
+            if (r && r.message) toast("Switched to " + p.id + "/" + id + ": " + r.message, r.savedAsDefault === false ? "error" : "ok");
+            else toast("Switched to " + p.id + "/" + id + " and saved it as the default", "ok");
             api("GET", "/models").then(function (fresh) { drawModels(view, fresh); });
           }, function (e) { btn.disabled = false; var s = btn.querySelector(".spin"); if (s) s.remove(); toast(e.message, "error"); });
         });
-        ul.appendChild(el("li", {}, btn));
+        var cu = p.id === "openrouter" && d.curation && !d.curation.replacedByEnv;
+        ul.appendChild(cu ? el("li", { class: "curated" }, btn, curateButton(view, d, "remove", id)) : el("li", {}, btn));
       });
       lists.push(ul);
       body = p.models.length ? ul : el("div", { class: "empty", text: "No models reported." });
+      if (p.id === "openrouter" && d.curation) body = el("div", {}, body, curateRow(view, d));
     }
     add(view, el("section", { class: "card", "aria-label": p.label },
       el("div", { class: "group-h" }, el("h3", { text: p.label }), el("span", { class: "n", text: p.registered ? p.models.length + " models" : "" }), el("span", { style: null, class: "grow" }), pill(p.pill, p.text)),
@@ -1331,6 +1466,115 @@ function modelPicker(o) {
   other.addEventListener("input", function () { if (o.onChange) o.onChange(get()); });
   if (o.disabled) { sel.disabled = true; other.disabled = true; }
   return { el: el("div", { class: "picker" }, sel, other), select: sel, get: get };
+}
+/** #458: a model-valued setting as a searchable dropdown. Typing searches the list; arrows, Enter
+ * or a click pick. "Other…" turns the same box into free text for an id the list doesn't have, and
+ * "Choose from the list" turns it back. A stored value that isn't listed is kept and tagged "not in
+ * the list". With no list (connect not loaded, or a provider with none) it is a plain text box.
+ * o: { key, value, placeholder, disabled, set, onChange }. */
+function modelCombo(o) {
+  var value = o.value || "", set = o.set, mode = "list", open = false, query = "", active = 0, items = [];
+  var uid = "mc-" + o.key.replace(/[^a-zA-Z0-9]/g, "-");
+  var input = el("input", { type: "text", class: "mono", autocomplete: "off", spellcheck: "false", "aria-label": o.key + " value", disabled: o.disabled });
+  var marker = el("span", { class: "tag warn", text: "not in the list", title: "Saved as typed: no connected provider lists it right now" });
+  var back = el("button", { class: "btn sm ghost", type: "button" }, "Choose from the list");
+  var menu = el("div", { class: "mmenu", role: "listbox", id: uid + "-menu", "aria-label": o.key + " models", hidden: true });
+  var note = el("div", { class: "note" });
+  menu.addEventListener("mousedown", function (e) { e.preventDefault(); });
+  function choices() { return (set && set.choices) || []; }
+  function listMode() { return mode === "list" && choices().length > 0; }
+  function setValue(v) { value = v; if (o.onChange) o.onChange(v); }
+  function paint() {
+    var lm = listMode();
+    if (lm) {
+      input.setAttribute("role", "combobox"); input.setAttribute("aria-autocomplete", "list"); input.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) input.setAttribute("aria-controls", menu.id); else input.removeAttribute("aria-controls");
+    } else ["role", "aria-autocomplete", "aria-expanded", "aria-controls"].forEach(function (a) { input.removeAttribute(a); });
+    var shown = lm && open ? query : value;
+    if (input.value !== shown) input.value = shown;
+    input.placeholder = lm && open ? (value || o.placeholder) : o.placeholder;
+    marker.hidden = !(choices().length && value && !modelInList(choices(), value));
+    back.hidden = lm || !choices().length || !!o.disabled;
+    note.hidden = !(set && set.note); note.textContent = (set && set.note) || "";
+    menu.hidden = !(lm && open);
+    clear(menu);
+    input.removeAttribute("aria-activedescendant");
+    if (!(lm && open)) return;
+    items = modelMenu(choices(), value, query);
+    if (active >= items.length) active = items.length - 1;
+    var lastGroup = null;
+    items.forEach(function (item, i) {
+      if (item.kind === "model" && item.group !== lastGroup) { lastGroup = item.group; menu.appendChild(el("div", { class: "mgroup", role: "presentation", text: item.group })); }
+      var mono = item.kind === "model" || item.kind === "current";
+      var b = el("button", { type: "button", role: "option", id: uid + "-opt-" + i, tabindex: "-1", "aria-selected": i === active ? "true" : "false", class: i === active ? "active" : null },
+        el("span", { class: mono ? "mono" : null, text: modelItemLabel(item) }),
+        item.kind === "current" ? el("span", { class: "tag warn", text: "not in the list" }) : null,
+        mono && item.value === value ? el("span", { class: "tag accent", text: "current" }) : null);
+      b.addEventListener("click", function () { choose(item); });
+      menu.appendChild(b);
+    });
+    input.setAttribute("aria-activedescendant", uid + "-opt-" + active);
+    var act = document.getElementById(uid + "-opt-" + active);
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: "nearest" });
+  }
+  function show() {
+    if (o.disabled || !listMode()) return;
+    if (!open) {
+      query = "";
+      var start = -1;
+      modelMenu(choices(), value, "").forEach(function (it, i) { if (start < 0 && it.kind !== "unset" && it.value === value) start = i; });
+      active = start >= 0 ? start : 0;
+    }
+    open = true; paint();
+  }
+  function close() { open = false; query = ""; paint(); }
+  // Leaving the box (Tab, a click elsewhere, Save) with something typed keeps it: a listed model
+  // when it is one (any case), else the text as typed, as Other… would.
+  function commitTyped() {
+    var q = query.trim();
+    if (open && q) {
+      var hit = choices().filter(function (c) { return c.value.toLowerCase() === q.toLowerCase(); })[0];
+      if (hit) setValue(hit.value); else { setValue(q); mode = "other"; }
+    }
+    close();
+  }
+  function choose(item) {
+    if (item.kind === "unset") setValue("");
+    else if (item.kind === "model") setValue(item.value);
+    else if (item.kind === "other") { if (item.query) setValue(item.query); mode = "other"; }
+    close();
+    if (item.kind === "other") input.focus();
+  }
+  input.addEventListener("click", show);
+  input.addEventListener("input", function () {
+    if (listMode()) {
+      query = input.value; open = true;
+      // The first listed match, not the unlisted stored value, is what Enter picks.
+      var first = -1; modelMenu(choices(), value, query).forEach(function (it, i) { if (first < 0 && it.kind === "model") first = i; });
+      active = first >= 0 ? first : 0;
+      paint();
+    }
+    else { setValue(input.value); paint(); }
+  });
+  input.addEventListener("blur", function () { if (open) commitTyped(); });
+  input.addEventListener("keydown", function (e) {
+    if (!listMode()) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) { show(); return; }
+      active = e.key === "ArrowDown" ? Math.min(items.length - 1, active + 1) : Math.max(0, active - 1);
+      paint();
+    } else if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === "Enter" && open) { e.preventDefault(); if (items[active]) choose(items[active]); }
+  });
+  back.addEventListener("click", function () { mode = "list"; paint(); input.focus(); show(); });
+  paint();
+  return {
+    el: el("div", { class: "mcombo" }, el("div", { class: "inline" }, input, marker, back), menu, note),
+    input: input,
+    setChoices: function (s) { set = s; paint(); },
+    get: function () { return value; }
+  };
 }
 function thinkingSelect(value, none, levels, label) {
   var s = el("select", { "aria-label": label || "Thinking" }, el("option", { value: "", text: none }), levels.map(function (l) { return el("option", { value: l, text: l }); }));

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Mint Outfitter's scoped LiteLLM admin key and store it in Secret Manager as outfitter-litellm-admin
-# (mounted as LITELLM_ADMIN_KEY by service.sh). Run by hand, as the owner. Idempotent.
-#   ./litellm-admin.sh                 # create the service user + key if the key doesn't exist yet
-#   ROTATE=1 ./litellm-admin.sh        # mint a new key, add it as a new secret version, delete the old key
-#   DRY_RUN=1 ./litellm-admin.sh       # show what would happen; reads nothing secret, writes nothing
+# Mint one of Outfitter's scoped LiteLLM keys and store it in Secret Manager. Run by hand, as the
+# owner. Idempotent. KEY picks which:
+#   KEY=admin (default)  outfitter-litellm-admin, mounted as LITELLM_ADMIN_KEY on both roles by
+#                        service.sh: device/run key minting, spend, the router probe (#389)
+#   KEY=local-hosts      outfitter-litellm-admin-key, mounted as LOCAL_HOST_ROUTER_KEY on the link
+#                        role only: the Local Host router entries, /model/* routes only (#384,
+#                        docs/specs/local-host.md §3.5). It can't mint or delete keys.
+#   ./litellm-admin.sh                       # create the service user + key if the key doesn't exist yet
+#   KEY=local-hosts ./litellm-admin.sh       # the same for the Local Host key
+#   ROTATE=1 ./litellm-admin.sh              # mint a new key, add it as a new secret version, delete the old key
+#   DRY_RUN=1 ./litellm-admin.sh             # show what would happen; reads nothing secret, writes nothing
 #
 # Why a scoped key instead of the master key (epic #389, #394; #378/#384):
 # - The key belongs to the LiteLLM user `outfitter-svc` with user_role proxy_admin, so it may mint
@@ -26,24 +32,52 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 ROUTER_URL="${ROUTER_URL:-https://router.kernal.one}"
 MASTER_KEY_SECRET="${MASTER_KEY_SECRET:-kernal-litellm-prod-master-key}"
 MASTER_KEY_PROJECT="${MASTER_KEY_PROJECT:-${PROJECT}}"
-ADMIN_SECRET="outfitter-litellm-admin"
 SVC_USER="outfitter-svc"
-ALIAS_PREFIX="outfitter-admin"
 DRY_RUN="${DRY_RUN:-0}"
 ROTATE="${ROTATE:-0}"
+KEY="${KEY:-admin}"
 
-# Exactly the routes the api calls with this key (litellm-keys.ts, providers-status.ts, models.ts);
-# test/litellm-admin.test.sh fails if the two drift apart in either direction. The key is mounted on
-# both roles, the public link service included, so nothing beyond these: no /key/update, /key/list,
-# /key/block or /model/new|update|delete. #384's model reconciliation adds its routes with its code.
-ALLOWED_ROUTES='[
-  "/key/generate", "/key/delete", "/key/info",
-  "/user/new", "/user/info", "/user/list",
-  "/team/new", "/team/list",
-  "/spend/logs",
-  "/model/info",
-  "/health/liveliness"
-]'
+# Each key's routes are exactly the routes the api calls with it; test/litellm-admin.test.sh fails
+# if a list and the code drift apart in either direction.
+case "${KEY}" in
+  admin)
+    # litellm-keys.ts, providers-status.ts, models.ts. Mounted on both roles, the public link
+    # service included, so nothing beyond these: no /key/update, /key/list, /key/block or any
+    # /model/new|update|delete (those are the local-hosts key's).
+    # /v1/mcp/user-credentials (MO-5, docs/specs/mcp-connections.md §2): a person's OAuth MCP grant
+    # state and disconnect, by prefix. Never anything under /v1/mcp/server: editing a server there
+    # purges every user's grant.
+    ADMIN_SECRET="outfitter-litellm-admin"
+    ALIAS_PREFIX="outfitter-admin"
+    PURPOSE="device/run key minting, router probe"
+    EPIC="389"
+    ALLOWED_ROUTES='[
+      "/key/generate", "/key/delete", "/key/info",
+      "/user/new", "/user/info", "/user/list",
+      "/team/new", "/team/list",
+      "/spend/logs",
+      "/model/info",
+      "/health/liveliness",
+      "/v1/mcp/user-credentials"
+    ]'
+    ;;
+  local-hosts)
+    # local-hosts/router-sync.ts: the Local Host router entries (local/<user>-<host>/<model>).
+    # Mounted on the link role only. allowed_routes is route-level, so the key itself could rewrite
+    # any deployment: router-sync.ts only touches entries whose model_info.metadata it wrote
+    # (outfitter: "local-host", env), and a router-fork guard limiting this key to those is a
+    # follow-up (#466, local-host.md §3.5). A separate key from outfitter-litellm-admin (owner decision
+    # 2026-10-05): that one mints keys and is on both roles.
+    ADMIN_SECRET="outfitter-litellm-admin-key"
+    ALIAS_PREFIX="outfitter-localhosts"
+    PURPOSE="local host model entries (local/*), link role only"
+    EPIC="384"
+    ALLOWED_ROUTES='[
+      "/model/info", "/model/new", "/model/update", "/model/delete"
+    ]'
+    ;;
+  *) deploy_fail "KEY must be admin or local-hosts, not ${KEY}" ;;
+esac
 
 command -v jq >/dev/null || deploy_fail "jq is required"
 
@@ -53,7 +87,7 @@ secret_exists=0
 gcloud_exists secrets describe "${ADMIN_SECRET}" --project="${PROJECT}" && secret_exists=1
 
 echo "router=${ROUTER_URL} master=${MASTER_KEY_PROJECT}/${MASTER_KEY_SECRET} target=${PROJECT}/${ADMIN_SECRET} (exists=${secret_exists})"
-echo "service user=${SVC_USER} (proxy_admin), routes=$(jq -c . <<<"${ALLOWED_ROUTES}")"
+echo "key=${KEY} service user=${SVC_USER} (proxy_admin), alias=${ALIAS_PREFIX}-*, routes=$(jq -c . <<<"${ALLOWED_ROUTES}")"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "DRY_RUN=1: stopping before reading the master key."
   exit 0
@@ -86,9 +120,9 @@ else
     '{user_id: $u, user_role: "proxy_admin", auto_create_key: false, metadata: {owner: "outfitter", epic: "389"}}')" >/dev/null
 fi
 
-# 2. Existing keys of that user under our alias prefix.
+# 2. Existing keys of that user under this key's alias prefix (the two prefixes don't overlap).
 existing="$(api GET "/key/list?user_id=${SVC_USER}&return_full_object=true&size=100" \
-  | jq -r --arg p "${ALIAS_PREFIX}" '[.keys[]? | select((.key_alias // "") | startswith($p)) | .key_alias] | join(" ")')"
+  | jq -r --arg p "${ALIAS_PREFIX}-" '[.keys[]? | select((.key_alias // "") | startswith($p)) | .key_alias] | join(" ")')"
 if [[ -n "${existing}" && "${ROTATE}" != 1 ]]; then
   echo "~ key(s) already exist: ${existing}. Nothing to do (ROTATE=1 to replace)."
   [[ "${secret_exists}" == 1 ]] || echo "  warning: ${ADMIN_SECRET} does not exist; the key value can't be recovered, rerun with ROTATE=1." >&2
@@ -99,7 +133,8 @@ fi
 alias="${ALIAS_PREFIX}-$(date -u +%Y%m%d%H%M%S)"
 echo "+ mint key ${alias}"
 new_key="$(api POST /key/generate "$(jq -nc --arg u "${SVC_USER}" --arg a "${alias}" --argjson r "${ALLOWED_ROUTES}" \
-  '{user_id: $u, key_alias: $a, allowed_routes: $r, metadata: {owner: "outfitter", purpose: "device/run key minting, router probe", epic: "389"}}')" \
+  --arg p "${PURPOSE}" --arg e "${EPIC}" \
+  '{user_id: $u, key_alias: $a, allowed_routes: $r, metadata: {owner: "outfitter", purpose: $p, epic: $e}}')" \
   | jq -r '.key // empty')"
 [[ "${new_key}" == sk-* ]] || deploy_fail "router returned no key"
 
@@ -107,9 +142,8 @@ new_key="$(api POST /key/generate "$(jq -nc --arg u "${SVC_USER}" --arg a "${ali
 if [[ "${secret_exists}" == 1 ]]; then
   store=(gcloud secrets versions add "${ADMIN_SECRET}" --project="${PROJECT}" --data-file=-)
 else
-  # shellcheck disable=SC2054 # the commas belong to --labels, not array separators
   store=(gcloud secrets create "${ADMIN_SECRET}" --project="${PROJECT}" --replication-policy=automatic \
-    --labels=app=outfitter,purpose=litellm-admin --data-file=-)
+    "--labels=app=outfitter,purpose=litellm-${KEY}" --data-file=-)
 fi
 if ! printf '%s' "${new_key}" | "${store[@]}" >/dev/null; then
   api POST /key/delete "$(jq -nc --arg a "${alias}" '{key_aliases: [$a]}')" >/dev/null || true

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import register from "../.pi/extensions/outfitter-agentengine/index.ts";
 import { MEMORY_TOOL, memoryOp, runMemory } from "../.pi/extensions/outfitter-agentengine/memory.ts";
 import type { AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
+import { signedInEnv } from "./signed-in.ts";
 
 function fakePi() {
   const tools: any[] = [];
@@ -48,18 +49,22 @@ describe("registration", () => {
     assert.equal(tools.length, 0);
   });
 
-  test("from the environment: the Drive's socket; a Dongle only as the laptop's own setting says", () => {
+  test("from the environment: the Drive's socket; a login only as the laptop's own setting says", async () => {
+    const login = await signedInEnv("https://x");
     const drive = fakePi();
     register(drive.pi, { env: { OUTFITTER_ADMIN_SOCKET: "/run/outfitter/admin.sock", OUTFITTER_ADMIN_CAPS: "memory" } });
     assert.deepEqual(drive.tools.map((t) => t.name), ["memory"]);
     const off = fakePi();
-    register(off.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: { kernal: { memory: "off" } } });
+    register(off.pi, { env: login, settings: { kernal: { memory: "off" } } });
     assert.equal(off.tools.length, 0);
     const laptop = fakePi();
-    register(laptop.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: {} });
-    assert.deepEqual(laptop.tools.map((t) => t.name), ["memory"], "a Dongle's default is auto: the tool, never agent_engine");
+    register(laptop.pi, { env: login, settings: {} });
+    assert.deepEqual(laptop.tools.map((t) => t.name), ["memory"], "a login's default is auto: the tool, never agent_engine");
+    const dongle = fakePi();
+    register(dongle.pi, { env: { OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: {} });
+    assert.equal(dongle.tools.length, 0, "a retired Dongle gives no tools");
     const inDrive = fakePi();
-    register(inDrive.pi, { env: { OUTFITTER_SESSION_ID: "s1", OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }, settings: {} });
+    register(inDrive.pi, { env: { ...login, OUTFITTER_SESSION_ID: "s1" }, settings: {} });
     assert.equal(inDrive.tools.length, 0, "inside a Drive it is the socket or nothing");
   });
 

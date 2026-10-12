@@ -3,15 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { PiEntry } from "../src/api/client.ts";
-import { BeatView } from "../src/components/TranscriptRail.tsx";
-import { groupBeats } from "../src/lib/beats.ts";
+import { TranscriptFlow } from "../src/components/TranscriptFlow.tsx";
+import { buildFlow, entryIdOf } from "../src/lib/flow.ts";
 import { entriesToViews } from "../src/lib/entry-view.ts";
-import {
-  HtmlPreviewAccessContext,
-  beatEntryId,
-  previewAccessByEntry,
-  previewAccessFor,
-} from "../src/lib/html-preview-access.ts";
+import { previewAccessByEntry, previewAccessFor } from "../src/lib/html-preview-access.ts";
 import { groupThinkingBlocks } from "../src/lib/thinking.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,24 +31,14 @@ function assistantHtml(id: string, marker: string, runId?: string): PiEntry {
   };
 }
 
-/** Renders a transcript the way SessionPage does: one access provider per beat. */
+/** Renders a transcript the way SessionPage does: TranscriptFlow, one access provider per entry. */
 function renderTranscript(entries: PiEntry[], accessByRun: Record<string, boolean>, sessionAllows: boolean) {
-  const beats = groupBeats(groupThinkingBlocks(entriesToViews(entries)));
+  const items = buildFlow(groupThinkingBlocks(entriesToViews(entries)));
   const access = previewAccessByEntry(entries, accessByRun, previewAccessFor(sessionAllows));
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() =>
-    root!.render(
-      <>
-        {beats.map((beat) => (
-          <HtmlPreviewAccessContext.Provider key={beat.id} value={access(beatEntryId(beat))}>
-            {beat.kind === "passthrough" ? null : <BeatView beat={beat} />}
-          </HtmlPreviewAccessContext.Provider>
-        ))}
-      </>,
-    ),
-  );
+  act(() => root!.render(<TranscriptFlow items={items} sessionId="s1" previewAccess={access} />));
 }
 
 /** Opens the fence whose source contains `marker` and returns whether the preview starts external. */
@@ -96,8 +81,8 @@ describe("#147: each fence starts from the run that wrote it", () => {
   });
 });
 
-describe("beatEntryId", () => {
-  it("names the entry an assistant beat's prose came from, even when its rail starts in an earlier entry", () => {
+describe("the entry a transcript item came from", () => {
+  it("is the prose's own entry, even right after a tool call from an earlier one", () => {
     const entries: PiEntry[] = [
       {
         id: "call",
@@ -108,9 +93,8 @@ describe("beatEntryId", () => {
       { id: "result", parentId: "call", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: "ok" } },
       assistantHtml("prose", "p"),
     ];
-    const [beat] = groupBeats(groupThinkingBlocks(entriesToViews(entries)));
-    expect(beat!.kind).toBe("assistant");
-    expect(beat!.id.startsWith("call")).toBe(true);
-    expect(beatEntryId(beat!)).toBe("prose");
+    const items = buildFlow(groupThinkingBlocks(entriesToViews(entries)));
+    const prose = items.find((i) => i.kind === "prose")!;
+    expect(entryIdOf(prose.id)).toBe("prose");
   });
 });

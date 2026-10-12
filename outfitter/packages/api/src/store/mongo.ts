@@ -5,6 +5,7 @@ import { Binary, MongoClient, type Collection as MongoCollection, type Db, type 
 import type {
   Store,
   Session,
+  AutofixState,
   SessionListFilter,
   SessionsCollection,
   Entry,
@@ -77,10 +78,11 @@ import { SearchUnavailableError } from "./types.ts";
 import { CHUNKS_COLLECTION, CHUNKS_TEXT_INDEX, CHUNKS_VECTOR_INDEX } from "../search/indexes.ts";
 import { MongoDeviceCodes, MongoDevices, ensureDeviceIndexes, type DeviceCodeDoc, type DeviceDoc } from "./devices.ts";
 import { MongoSettings, ensureSettingsIndexes, type SettingsDocMongo } from "./settings.ts";
-import { MongoProviderKeys, MongoRouterKeys, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc } from "./keys.ts";
+import { MongoProviderKeys, MongoRouterKeys, MongoSubscriptionSecrets, ensureKeyIndexes, type ProviderKeyDoc, type RouterKeyDoc, type SubscriptionSecretDoc } from "./keys.ts";
 import type { DeviceCodesCollection, DevicesCollection } from "./devices.ts";
 import type { SettingsCollection } from "./settings.ts";
-import type { ProviderKeysCollection, RouterKeysCollection } from "./keys.ts";
+import type { ProviderKeysCollection, RouterKeysCollection, SubscriptionSecretsCollection } from "./keys.ts";
+import { MongoLocalHosts, ensureLocalHostIndexes, type LocalHostDoc, type LocalHostsCollection } from "./local-hosts.ts";
 
 // Typed as RunState[], not inferred as string[]: used in a Mongo `$in` filter against Run.state,
 // which the mongodb driver's Filter<T> types as a union of the literal RunState strings.
@@ -119,6 +121,11 @@ class MongoSessions implements SessionsCollection {
     return stripId<Session>(await this.col.findOne({ _id: id }));
   }
 
+  async findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null> {
+    const row = await this.col.findOne({ _id: id }, { projection: { _id: 0, checkpoint: 1, ownerEmail: 1 } });
+    return row ? (row as Pick<Session, "checkpoint" | "ownerEmail">) : null;
+  }
+
   async list(filter?: SessionListFilter): Promise<Session[]> {
     const query: Record<string, unknown> = {};
     if (filter?.status) query.status = filter.status;
@@ -134,6 +141,15 @@ class MongoSessions implements SessionsCollection {
     const result = await this.col.findOneAndUpdate(
       { _id: id },
       { $set: patch },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      model ? { $set: { modelOverride: model, updatedAt: nowIso } } : { $set: { updatedAt: nowIso }, $unset: { modelOverride: "" } },
       { returnDocument: "after" },
     );
     return stripId<Session>(result);
@@ -163,6 +179,49 @@ class MongoSessions implements SessionsCollection {
 
   async delete(id: string): Promise<boolean> {
     return (await this.col.deleteOne({ _id: id })).deletedCount > 0;
+  }
+
+  async setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null> {
+    const result = await this.col.findOneAndUpdate(
+      { _id: id },
+      on
+        ? {
+            $set: { autofixCi: true, ...(nowIso ? { updatedAt: nowIso } : {}) },
+            $inc: { "autofix.rev": 1 },
+            $unset: {
+              "autofix.cappedAt": "",
+              "autofix.cappedSha": "",
+              "autofix.sends": "",
+              "autofix.capDays": "",
+              "autofix.offNotice": "",
+              "autofix.nextPollAt": "",
+            },
+          }
+        : { $set: { autofixCi: false }, $inc: { "autofix.rev": 1 } },
+      { returnDocument: "after" },
+    );
+    return stripId<Session>(result);
+  }
+
+  async countAutofixForOwner(ownerEmail: string): Promise<number> {
+    return this.col.countDocuments({ autofixCi: true, archivedAt: null, ownerEmail } as Record<string, unknown>);
+  }
+
+  async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {
+    // `null` matches a missing field: rev 0 is "nothing stored yet".
+    const rev = expectedRev === 0 ? { $in: [null, 0] } : expectedRev;
+    const result = await this.col.updateOne(
+      { _id: id, autofixCi: true, archivedAt: null, "autofix.rev": rev } as Record<string, unknown>,
+      { $set: { autofix: next } },
+    );
+    return result.modifiedCount > 0;
+  }
+
+  async listAutofix(updatedSinceIso: string): Promise<Session[]> {
+    const rows = await this.col
+      .find({ autofixCi: true, archivedAt: null, repo: { $type: "string" }, branch: { $type: "string" }, updatedAt: { $gte: updatedSinceIso } } as Record<string, unknown>)
+      .toArray();
+    return rows.map((r) => stripIdStrict<Session>(r));
   }
 }
 
@@ -1789,6 +1848,8 @@ export class MongoStore implements Store {
   readonly settings: SettingsCollection;
   readonly routerKeys: RouterKeysCollection;
   readonly providerKeys: ProviderKeysCollection;
+  readonly subscriptionSecrets: SubscriptionSecretsCollection;
+  readonly localHosts: LocalHostsCollection;
   private readonly client: MongoClient;
 
   private constructor(client: MongoClient, db: Db) {
@@ -1827,6 +1888,8 @@ export class MongoStore implements Store {
     this.settings = new MongoSettings(db.collection<SettingsDocMongo>("settings"));
     this.routerKeys = new MongoRouterKeys(db.collection<RouterKeyDoc>("routerKeys"));
     this.providerKeys = new MongoProviderKeys(db.collection<ProviderKeyDoc>("providerKeys"));
+    this.subscriptionSecrets = new MongoSubscriptionSecrets(db.collection<SubscriptionSecretDoc>("subscriptionSecrets"));
+    this.localHosts = new MongoLocalHosts(db.collection<LocalHostDoc>("localHosts"));
   }
 
   /** `dbName` wins over the database in the URI; the stored URI has none, so the default keeps
@@ -1852,6 +1915,8 @@ export class MongoStore implements Store {
       db.collection("entries").createIndex({ sessionId: 1, seq: 1 }),
       db.collection("entries").createIndex({ sessionId: 1, _id: -1 }),
       db.collection("sessions").createIndex({ updatedAt: -1 }),
+      // #503: the Auto-fix CI watcher's list (only sessions with it on are indexed).
+      db.collection("sessions").createIndex({ updatedAt: -1 }, { name: "autofix_updatedAt", partialFilterExpression: { autofixCi: true } }),
       db.collection("runs").createIndex({ sessionId: 1, state: 1 }),
       db.collection("previews").createIndex({ runId: 1, closedAt: 1 }),
       db.collection("previews").createIndex({ sessionId: 1, closedAt: 1 }),
@@ -1889,6 +1954,7 @@ export class MongoStore implements Store {
       ensureDeviceIndexes(db),
       ensureSettingsIndexes(db),
       ensureKeyIndexes(db),
+      ensureLocalHostIndexes(db),
     ]);
     // Non-fatal: a deployment that already holds two active runs for one session (the race this
     // index closes) would otherwise fail every boot. Until the duplicates are cleaned up,

@@ -57,25 +57,21 @@ Candidates: `qwen/qwen3.6-27b` coding variant (dense, stronger at code, slower),
 Qwen 3.6 reasons by default and spends 400-1600 tokens on trivial prompts. Send
 `"reasoning_effort": "none"` to turn it off (the LiteLLM deployment does this by default).
 
-## Exposing the model to the cloud LiteLLM router
+## Sharing the model (`kernal local`)
 
-LiteLLM (`router.kernal.one`, GCP Cloud Run) reaches the laptop through ngrok on a
-stable domain (`TUNNEL_DOMAIN_LMSTUDIO` in `.env`, pay-as-you-go plan). A bearer token
-(`LOCAL_TUNNEL_TOKEN`) is enforced by an ngrok traffic policy, so unauthenticated requests never
-reach the laptop. The router model is `local-qwen-mlx`; its payload lives in
-`~/code/openllm/litellm-config/deployments/local-qwen-mlx.json`.
+`kernal local enable` installs a background service that shares this machine's model server with
+your Outfitter account. The router name is `local/<you>-<machine>/<model>` (for this laptop,
+something like `local/mgm-matthews-macbook-pro/qwen/qwen3.6-35b-a3b`). `kernal local status` shows
+the tunnel, the models, and the last heartbeat. Details: [`kernal/docs/local-host.md`](kernal/docs/local-host.md).
 
 ```bash
-./tunnel.sh                                                   # leave running
-cd ~/code/openllm/litellm-config && LITELLM_MASTER_KEY=... ./apply-local.sh   # only if URL/token change
+kernal login            # once per machine
+kernal local enable     # install + start; turn on localHost.shareModels (the command says where)
+kernal local status
 ```
 
 Keep the laptop awake (`caffeinate -s`) while the model should be reachable.
 
-`tunnel.sh` also starts `keepalive.mjs` and points ngrok at it (port 1235), not at LM Studio (1234)
-directly. ngrok drops a stream that has carried no data for 300 s. LM Studio sends a tool call's
-arguments in one chunk once the call is complete, so a long tool call (a report written in one
-`write`) leaves the stream silent for minutes, and every such call used to fail at five minutes
-with LiteLLM's `Response payload is not completed … SSLError record layer failure`
-(mgmonteleone/openllm#10). The shim passes everything through and, while a stream is silent,
-writes an SSE comment (`: keep-alive`) every 15 s, which OpenAI-compatible clients ignore.
+`tunnel.sh`, `keepalive.mjs`, and `apply-local.sh` are gone. The service's guard proxy keeps long
+streams alive, which is what `keepalive.mjs` used to do. The old `litellm/local-qwen-mlx` alias
+has been removed from the router. Shares use the `local/...` names above.

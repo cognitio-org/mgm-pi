@@ -175,8 +175,11 @@ test("a floppy: create, get a reply, talk to it, archive, format", { skip: proce
     floppyId = page.url().split("/").pop();
     await snap("Session page, starting");
 
-    // A cold Drive start plus one turn.
-    await page.locator(".entry.assistant-text").first().waitFor({ timeout: REPLY_TIMEOUT_MS });
+    // A cold Drive start plus one turn. #514: the reply is a prose block in the transcript (its
+    // screen-reader label says "Assistant:"), and the turn ends on the READY. line.
+    const transcript = page.getByLabel("Transcript");
+    await transcript.locator(".flow-ai", { hasText: "Assistant:" }).first().waitFor({ timeout: REPLY_TIMEOUT_MS });
+    await transcript.getByRole("status").filter({ hasText: /^READY\.$/ }).waitFor({ timeout: REPLY_TIMEOUT_MS });
     await snap("The reply arrived");
 
     // #254: the mic, on this floppy's page, in review mode (nothing is sent).
@@ -188,7 +191,9 @@ test("a floppy: create, get a reply, talk to it, archive, format", { skip: proce
       t.diagnostic(`voice checks skipped: ${skipped}`);
     }
 
-    await page.locator(".run-controls").getByRole("button", { name: "Archive" }).click();
+    // #514: Archive lives in the header's ⋯ menu (desktop width; phones open a bottom sheet).
+    await page.getByRole("button", { name: "More actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
     await page.locator(".archived-note").waitFor();
     await snap("Archived");
     assert.equal((await api("GET", `/api/sessions/${floppyId}`)).body.archivedAt !== undefined, true);

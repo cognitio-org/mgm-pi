@@ -14,15 +14,20 @@ import type { ProviderStatusService } from "../providers-status.ts";
 import type { ModelsService } from "../models.ts";
 import type { SecretAdmin } from "../secrets.ts";
 import type { MailService } from "../mail.ts";
+import type { AutofixWatcher } from "../autofix.ts";
 import type { SandboxProviders } from "../providers/registry.ts";
 import type { SandboxTelemetry } from "../sandbox-telemetry.ts";
 import type { VoiceService } from "../voice.ts";
 import type { VoiceUsage } from "../voice-usage.ts";
 import type { GithubCatalog } from "../github-catalog.ts";
+import type { GithubBroker } from "../github-broker.ts";
 import type { AgentEngine } from "../agentengine/index.ts";
 import type { FleetSettingsCache } from "../fleet-settings.ts";
 import type { DeviceLifecycle } from "../central/device-lifecycle.ts";
 import type { LitellmKeys } from "../central/litellm-keys.ts";
+import type { McpConnections } from "../central/mcp-connections.ts";
+import type { LocalHostEvents } from "../local-hosts/events.ts";
+import type { NgrokApi } from "../ngrok-api.ts";
 
 /** Dependencies every route module needs; built once in server.ts and threaded through. */
 export interface RouteContext {
@@ -74,9 +79,22 @@ export interface RouteContext {
   /** Repositories the GitHub App can reach, plus creating one and a Floppy's live status.
    * Mints its own tokens; a Drive's installation token is unchanged. */
   githubCatalog: GithubCatalog;
+  /** The GitHub broker (agentd's github.request frames). #500: the session pull request routes
+   * (create, merge, sync, re-run, checks and their logs) go through its gates and credential. */
+  github: GithubBroker;
   /** #389 (docs/specs/central-auth.md §5.3): device login and revoke hooks. routes/device.ts
    * announces; CA-5's router keys listen. */
   deviceLifecycle: DeviceLifecycle;
   /** CA-5: LiteLLM key minting and spend; undefined while LITELLM_ADMIN_KEY is unset. */
   litellmKeys?: LitellmKeys;
+  /** MO-5/MO-6 (docs/specs/mcp-connections.md): the person's OAuth MCP grants; with litellmKeys. */
+  mcpConnections?: McpConnections;
+  /** #378 Local Host (docs/specs/local-host.md §5): the registry (task A) announces host changes
+   * here; the router reconciliation (task B) listens. The tick runs its sweep. */
+  localHostEvents: LocalHostEvents;
+  /** #383: the ngrok API for per-host tunnel credentials; undefined while NGROK_API_KEY is unset.
+   * Credentials are provisioned only when this and config.localHostDomain are both set. */
+  localHostNgrok?: NgrokApi;
+  /** #503 Auto-fix CI: the tick runs its sweep. */
+  autofix: AutofixWatcher;
 }

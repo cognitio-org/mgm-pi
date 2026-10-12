@@ -540,6 +540,8 @@ export default async function (pi: ExtensionAPI, deps: Deps = {}) {
     }
   } catch {}
 
+  // The progress watcher polls with the session's ctx: it ends with that session.
+  pi.on("session_shutdown", async () => { watching?.stop(); });
   pi.on("session_start", async (_e, ctx) => {
     if (!ctx.hasUI) return;
     if (seeded) ctx.ui.notify(`Codebase search ready; embeddings come from your local model server (${seeded}). /index shows the panel.`, "info");

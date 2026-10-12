@@ -3,6 +3,7 @@
  * LiteLLM /model/info parsing, spend-header parsing, and budget panel rendering.
  * Everything here is unit-tested in ../../../tests without pi or network.
  */
+import { type LocalModel, bareScheme, parseLmStudioNative } from "../_shared/local-discovery.ts";
 
 // ---------- env ----------
 export function parseEnvText(text: string): Record<string, string> {
@@ -69,18 +70,22 @@ export function parseModelInfo(json: any): { ids: string[]; meta: Map<string, Mo
 // ---------- LM Studio native /api/v0/models: the served context window ----------
 export type LmStudioMeta = { contextWindow: number; loaded: boolean; vision?: boolean; toolUse?: boolean };
 
-/** `loaded_context_length` is what the server will actually accept; `max_context_length` is the model's ceiling. */
-export function parseLmStudioModels(json: any): Map<string, LmStudioMeta> {
+/**
+ * `loaded_context_length` is what the server will actually accept; `max_context_length` is the model's ceiling.
+ * The reading itself is the shared discovery library's (_shared/local-discovery.ts); this keeps the
+ * chat models (llm/vlm) with a known window, as connect always has.
+ */
+export function lmStudioMeta(models: LocalModel[]): Map<string, LmStudioMeta> {
   const out = new Map<string, LmStudioMeta>();
-  for (const m of json?.data ?? []) {
-    if (!m?.id || (m.type && !["llm", "vlm"].includes(m.type))) continue;
-    const loaded = m.state === "loaded";
-    const ctx = (loaded && m.loaded_context_length) || m.max_context_length;
+  for (const m of models) {
+    if ((m.type && !["llm", "vlm"].includes(m.type)) || m.loaded === undefined) continue;   // embeddings; or listed by /v1/models only
+    const ctx = m.contextLength;
     if (typeof ctx !== "number" || ctx <= 0) continue;
-    out.set(m.id, { contextWindow: ctx, loaded, vision: m.type === "vlm", toolUse: Array.isArray(m.capabilities) ? m.capabilities.includes("tool_use") : undefined });
+    out.set(m.id, { contextWindow: ctx, loaded: m.loaded, vision: m.type === "vlm", toolUse: m.toolUse });
   }
   return out;
 }
+export const parseLmStudioModels = (json: any): Map<string, LmStudioMeta> => lmStudioMeta(parseLmStudioNative(json));
 
 // ---------- backend definitions ----------
 export type BackendId = "lmstudio" | "litellm" | "openrouter";
@@ -112,16 +117,150 @@ export function isZeroCost(cost: Cost | undefined): boolean {
 
 /** Qwen 3.6 reasoning knobs: pi's `off` must reach the server as reasoning_effort "none". */
 export const QWEN_THINKING_MAP = { off: "none", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" };
+
+/** Laptop routes: a shared host's `local/<user>-<host>/<model>`, and the retired `local-qwen-mlx` name. */
+export function isLocalRoute(id: string): boolean {
+  return id.startsWith("local-") || id.startsWith("local/");
+}
+
+/** `reasoning_effort: "none"` only where the server accepts it. */
+function localThinkingMap(id: string, kind: string | undefined) {
+  if (!isLocalRoute(id)) return GENERIC_THINKING_MAP;
+  if (id === "local-qwen-mlx") return QWEN_THINKING_MAP;
+  if (id.startsWith("local/") && (kind === "lmstudio" || kind === "ollama")) return QWEN_THINKING_MAP;
+  return GENERIC_THINKING_MAP;
+}
+
+/** Context and vision for a shared model the router isn't listing right now (offline hosts drop out of /model/info). */
+export type LocalModelFact = { contextWindow?: number; vision?: boolean; online: boolean; kind?: string };
+
+/** Chat types the router will serve. An embedding is not a chat model. */
+const CHAT_TYPES = new Set(["llm", "vlm"]);
+
+/** Shared models from GET /api/local-hosts. First id wins. `litellm/` is stripped; unshared models are skipped.
+ * Interim tunnels are up on the laptop but have no router deployment, so they stay off this list. */
+export function localModelsFromHosts(body: unknown): Map<string, LocalModelFact> {
+  const hosts = (body as { hosts?: unknown } | null)?.hosts;
+  const out = new Map<string, LocalModelFact>();
+  if (!Array.isArray(hosts)) return out;
+  for (const h of hosts) {
+    const host = h as { status?: string; tunnel?: { managed?: boolean }; models?: unknown };
+    if (host?.tunnel?.managed !== true) continue;
+    const online = host.status === "online";
+    const models = host.models;
+    if (!Array.isArray(models)) continue;
+    for (const m of models) {
+      const row = m as { shared?: boolean; routerModel?: unknown; contextLength?: unknown; vision?: unknown; type?: unknown; kind?: unknown };
+      if (row?.shared !== true || typeof row.routerModel !== "string" || !row.routerModel) continue;
+      if (typeof row.type === "string" && row.type !== "" && !CHAT_TYPES.has(row.type)) continue;
+      const id = row.routerModel.startsWith("litellm/") ? row.routerModel.slice("litellm/".length) : row.routerModel;
+      if (out.has(id)) continue;
+      const fact: LocalModelFact = { online };
+      if (typeof row.contextLength === "number" && Number.isFinite(row.contextLength) && row.contextLength > 0) fact.contextWindow = row.contextLength;
+      if (typeof row.vision === "boolean") fact.vision = row.vision;
+      if (typeof row.kind === "string" && row.kind) fact.kind = row.kind;
+      out.set(id, fact);
+    }
+  }
+  return out;
+}
+
+/** Append host models the router didn't list. The discovered order stays put when there is nothing to add. */
+export function mergeLitellmModels(discovered: string[], extras: Iterable<string>): string[] {
+  const have = new Set(discovered);
+  const add = [...extras].filter((id) => id && !have.has(id)).sort();
+  return add.length ? [...discovered, ...add] : discovered;
+}
+
+/** Picker label. The id pi registers stays clean; only the menu string carries online/offline. */
+export function localModelLabel(id: string, online: boolean): string {
+  return `${id}  (${online ? "online" : "offline"})`;
+}
+
+export function localModelIdFromLabel(label: string): string {
+  return label.replace(/\s+\((online|offline)\)$/, "");
+}
+
+/**
+ * Footer when this machine's `kernal local` service is up and sharing.
+ * A successful heartbeat counts the models the router accepted; otherwise the discovered total.
+ * Quiet (undefined) when the service isn't running or sharing is off.
+ */
+export function localHostFooter(
+  state: { shareModels?: { value?: boolean }; models?: { total?: number }; tunnel?: { provider?: string | null }; heartbeat?: { ok?: boolean | null; routerModels?: string[] } } | undefined,
+  running: boolean,
+): string | undefined {
+  if (!running || !state?.shareModels?.value) return undefined;
+  const n = state.heartbeat?.ok === true ? (state.heartbeat.routerModels?.length ?? 0) : (state.models?.total ?? 0);
+  const provider = state.tunnel?.provider;
+  const via = provider ? ` via ${provider}` : "";
+  return `sharing ${n} model${n === 1 ? "" : "s"}${via}`;
+}
 const GENERIC_THINKING_MAP = { minimal: "low", xhigh: "high", max: "high" };
 /** Proxies forward OpenAI-only `store` and the developer role to backends that reject them. */
 const PROXY_COMPAT = { supportsDeveloperRole: false, supportsReasoningEffort: true, thinkingFormat: "openai", supportsUsageInStreaming: true, supportsStore: false };
 
 export const DEFAULT_OPENROUTER_MODELS = [
   "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-3.8-flash",
-  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4", "moonshotai/kimi-k3", "z-ai/glm-5.1",
+  "qwen/qwen3.6-35b-a3b", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "moonshotai/kimi-k3",
+  "z-ai/glm-5.1",
 ];
 
-export function backends(env: Record<string, string>, litellmMeta: Map<string, ModelMeta>, lmstudioMeta: Map<string, LmStudioMeta> = new Map()): Backend[] {
+/**
+ * The curated OpenRouter ids that OpenRouter still lists, and the ones it doesn't. A retired or
+ * mistyped id would otherwise show up in /model and only fail on the first prompt ("... is not a
+ * valid model ID"). Keeps everything when the catalogue could not be read.
+ */
+export function keepListed(curated: string[], catalogue: any): { kept: string[]; dropped: string[] } {
+  const live = new Set(((catalogue?.data ?? []) as any[]).map((m) => String(m?.id)));
+  if (!live.size) return { kept: curated, dropped: [] };
+  // Routing variants (":nitro", ":floor", ":online", ...) work on any model but aren't listed.
+  const listed = (id: string) => live.has(id) || live.has(id.replace(/:[^/:]+$/, ""));
+  return { kept: curated.filter(listed), dropped: curated.filter((id) => !listed(id)) };
+}
+
+/** #440: the curated OpenRouter list's central settings, one add and one remove key per level. */
+export const CURATION_KEYS = {
+  fleetAdd: "openrouter.models.fleetAdd", fleetRemove: "openrouter.models.fleetRemove",
+  add: "openrouter.models.add", remove: "openrouter.models.remove",
+  profileAdd: "openrouter.models.profileAdd", profileRemove: "openrouter.models.profileRemove",
+  localAdd: "openrouter.models.localAdd", localRemove: "openrouter.models.localRemove",
+} as const;
+export type CurationLists = Record<keyof typeof CURATION_KEYS, string[]>;
+export const NO_CURATION: CurationLists = { fleetAdd: [], fleetRemove: [], add: [], remove: [], profileAdd: [], profileRemove: [], localAdd: [], localRemove: [] };
+/** Each level's own pair, farthest first: a nearer level's add or remove wins over a farther one's. */
+export const CURATION_LEVELS = [["fleetAdd", undefined], ["add", "remove"], ["profileAdd", "profileRemove"], ["localAdd", "localRemove"]] as const;
+
+/** "a/b, c/d,,a/b" → ["a/b", "c/d"]: trimmed, empties and repeats dropped. */
+export function parseIdList(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  return [...new Set(text.split(",").map((s) => s.trim()).filter(Boolean))];
+}
+
+/**
+ * The OpenRouter models to offer: the base list (Kernal's defaults), then each level's removes and
+ * adds from the fleet's down to this machine's, so a nearer level wins (this machine can add back
+ * what the account removed). The fleet's removals come last and always win, so "hidden from
+ * everyone" holds. When OPENROUTER_MODELS replaced the base (`replaced`), only those still apply.
+ */
+export function curateOpenRouter(base: string[], lists: CurationLists, replaced = false): string[] {
+  const out = new Set(base);
+  if (!replaced) {
+    for (const [add, remove] of CURATION_LEVELS) {
+      if (remove) for (const id of lists[remove]) out.delete(id);
+      for (const id of lists[add]) out.add(id);
+    }
+  }
+  for (const id of lists.fleetRemove) out.delete(id);
+  return [...out];
+}
+
+export function backends(
+  env: Record<string, string>,
+  litellmMeta: Map<string, ModelMeta>,
+  lmstudioMeta: Map<string, LmStudioMeta> = new Map(),
+  localFacts: Map<string, LocalModelFact> = new Map(),
+): Backend[] {
   // LMSTUDIO_CONTEXT caps the window pi budgets against; the served window comes from /api/v0/models
   const lmCap = Number(env.LMSTUDIO_CONTEXT) || Infinity;
   return [
@@ -146,11 +285,13 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       apiKey: cleanKey(env.LITELLM_AGENT_KEY || env.LITELLM_API_KEY),  // agent-specific key first
       keyVar: "LITELLM_AGENT_KEY",
       discover: true,
-      fallback: ["local-qwen-mlx", "gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
+      fallback: ["gpt-5.4-nano", "claude-auto-llm", "claude-auto-agentic", "gemini-auto-llm", "claude-sonnet-5", "claude-opus-5-high"],
       model: (id) => {
-        const local = id.startsWith("local-");
+        const local = isLocalRoute(id);
         const claude = /claude/.test(id);
         const meta = litellmMeta.get(id);
+        const facts = localFacts.get(id);
+        const vision = meta?.vision ?? facts?.vision;
         // An auto-router group's own /model/info entry prices every field at 0 (its underlying
         // model is only picked per call -- see isZeroCost); showing that as $0/token in /budget
         // would tell the user an auto-routed model is free, which it isn't. Treat it as
@@ -160,12 +301,14 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
         // /budget panel already uses for any other unpriced model.
         const cost = local ? FREE : isZeroCost(meta?.cost) && id.includes("auto") ? DEFAULT_PAID : meta?.cost ?? DEFAULT_PAID;
         return {
-          id, name: id, input: meta?.vision === false ? ["text"] : ["text", "image"],
+          id, name: id, input: vision === false ? ["text"] : ["text", "image"],
           cost,
-          contextWindow: meta?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
+          contextWindow: meta?.contextWindow ?? facts?.contextWindow ?? (local ? 32768 : claude ? 200000 : 1000000),
           maxTokens: Math.min(meta?.maxTokens ?? (local ? 8192 : 32000), 64000),
           reasoning: meta?.reasoning ?? true,
-          thinkingLevelMap: local ? QWEN_THINKING_MAP : GENERIC_THINKING_MAP,
+          // `none` is what LM Studio and Ollama read. vLLM rejects it, so only those kinds (and the
+          // retired local-qwen-mlx name) send it. Every other local server keeps the generic map.
+          thinkingLevelMap: localThinkingMap(id, facts?.kind),
           compat: PROXY_COMPAT,
         };
       },
@@ -176,7 +319,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
       baseUrl: normalizeBaseUrl(env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
       apiKey: cleanKey(env.OPENROUTER_API_KEY),
       keyVar: "OPENROUTER_API_KEY",
-      discover: false,
+      discover: false,                 // curated: discovery only drops ids OpenRouter no longer lists
       fallback: (env.OPENROUTER_MODELS || DEFAULT_OPENROUTER_MODELS.join(",")).split(",").map((s) => s.trim()).filter(Boolean),
       model: (id) => ({
         id, name: id, input: ["text", "image"], reasoning: true, cost: DEFAULT_PAID, contextWindow: 200000, maxTokens: 32000,
@@ -194,7 +337,7 @@ export function backends(env: Record<string, string>, litellmMeta: Map<string, M
 export function normalizeBaseUrl(input: string, fallback: string): string {
   let u = (input || "").trim();
   if (!u) return fallback;
-  if (!/^https?:\/\//i.test(u)) u = (/^(localhost|127\.|10\.|192\.168\.|0\.0\.0\.0|\[::1\])/.test(u) ? "http://" : "https://") + u;
+  if (!/^https?:\/\//i.test(u)) u = bareScheme(u) + u;   // the rule local discovery's serverRoot uses too
   u = u.replace(/\/+$/, "");
   if (!/\/v\d+$/i.test(u)) u += "/v1";
   return u;

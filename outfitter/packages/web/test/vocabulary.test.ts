@@ -18,6 +18,13 @@ describe("vocabulary", () => {
     expect(vocabSubtitle("session", "one")).toBe("Floppy · a conversation with an agent you can continue later");
   });
 
+  it("names the subscription logins", () => {
+    expect(vocabulary.subscription.one).toBe("Subscriptions");
+    expect(vocabulary.subscription.many).toBe("Subscriptions");
+    expect(vocabulary.subscription.hint).toBe("your Claude, Grok, Codex, and Antigravity logins");
+    expect(vocabSubtitle("subscription")).toBe("Subscriptions · your Claude, Grok, Codex, and Antigravity logins");
+  });
+
   it("names the laptop/cloud agent Kernal, not mgm", () => {
     expect(vocabulary.kernal.one).toBe("Kernal");
     expect(vocabulary.kernal.hint).toContain("laptop");

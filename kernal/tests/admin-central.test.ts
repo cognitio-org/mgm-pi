@@ -15,8 +15,9 @@ import {
   _resetCentralConfig, _setCentralConfigDeps, configCachePath, localOverridesPath, reloadConfig, resolve, setLocalOverride, type ConfigResponse,
 } from "../.pi/extensions/_shared/central-config.ts";
 import {
-  _setAdminCentralDeps, accountTarget, parseEtag, saveSettings, settingsRows, settingsView, validateSettingValues, writeProviderKey, listProviderKeys,
+  _setAdminCentralDeps, accountTarget, parseEtag, saveSettings, settingModelOptions, settingsRows, settingsView, validateSettingValues, writeProviderKey, listProviderKeys,
 } from "../.pi/extensions/kernal-admin/central.ts";
+import { busServe } from "../.pi/extensions/connect/lib.ts";
 import { createApi } from "../.pi/extensions/kernal-admin/index.ts";
 
 const API = "https://link.outfitter.test";
@@ -72,7 +73,7 @@ function setup(f: typeof fetch = (async () => { throw new Error("no network in t
   };
   let tokenCalls = 0;
   _resetCentralConfig();
-  _setCentralConfigDeps({ session, env: () => shell, dotenv: () => dotenv, settings: () => ({}), now: () => now, warn: () => {}, fetch: f });
+  _setCentralConfigDeps({ session, env: () => shell, dotenv: () => dotenv, settings: () => ({}), shippedSettings: () => ({}), voiceSettings: () => ({}), now: () => now, warn: () => {}, fetch: f });
   _setAdminCentralDeps({});
   _setAdminCentralDeps({ session, fetch: f, reload: async () => { reloads++; return resolve(); } });
 }
@@ -80,6 +81,7 @@ function setup(f: typeof fetch = (async () => { throw new Error("no network in t
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "kernal-admin-central-"));
   process.env.KERNAL_HOME_DIR = home;
+  process.env.KERNAL_VOICE_SETTINGS = join(home, "pi-listen", "settings.json");   // never the real pi-listen settings
   delete process.env.KERNAL_CONFIG_CACHE_DIR;
   signedIn = true;
   tokens = ["kda_one"];
@@ -106,7 +108,7 @@ describe("rows: each value's source and whether it can be edited", () => {
     const row = (k: string) => rows.find((x) => x.key === k)!;
     assert.equal(row("model.default").sourceLabel, "profile work");
     assert.equal(row("voice.language").sourceLabel, "your account");
-    assert.equal(row("compaction.summaryModel").sourceLabel, "shell (KERNAL_SUMMARY_MODEL)");
+    assert.equal(row("compaction.summaryModel").sourceLabel, "KERNAL_SUMMARY_MODEL in the shell (legacy)");
     assert.equal(row("router.baseUrl").sourceLabel, "fleet");
     assert.equal(row("router.baseUrl").locked, true);
     assert.equal(row("router.baseUrl").readOnly, "set by your Sysop");
@@ -173,9 +175,10 @@ describe("rows: each value's source and whether it can be edited", () => {
     const r = await saveSettings({ target: "machine", values: { "router.baseUrl": "https://mine.test/v1", "compaction.summaryModel": "mine", "model.default": "fine" } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const w = r.body.warnings as string[];
-    assert.equal(w.length, 2);
+    // #437: this machine's choice beats a legacy KERNAL_SUMMARY_MODEL, so only the router warns.
+    assert.equal(w.length, 1);
     assert.match(w[0], /LITELLM_BASE_URL in \.env still wins/);
-    assert.match(w[1], /KERNAL_SUMMARY_MODEL in the shell still wins/);
+    assert.equal(resolve().values["compaction.summaryModel"].value, "mine");
   });
 
   test("form values are checked against the schema; strings from a form are parsed; empty removes", () => {
@@ -493,6 +496,81 @@ describe("/admin routes", () => {
     const g = await api({ method: "GET", path: "/settings", query: new URLSearchParams(), body: {} });
     assert.equal((g.body as any).signedIn, false);
     assert.equal((g.body as any).providerKeys, undefined);
+  });
+});
+
+describe("#458: the Settings page's model dropdowns", () => {
+  const STATE = [
+    { id: "lmstudio", label: "LM Studio", baseUrl: "http://localhost:1234/v1", hasKey: true, registered: true, answered: true, models: ["qwen/qwen3.6-35b-a3b"] },
+    { id: "litellm", label: "LiteLLM", baseUrl: "https://router.kernal.one/v1", hasKey: true, registered: true, answered: true, models: ["claude-auto-llm", "gpt-5.4-nano"] },
+    { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", hasKey: false, registered: false, answered: false, rejected: "401", models: ["anthropic/claude-sonnet-5"] },
+  ];
+
+  test("settingModelOptions: connect's discovered models per provider, router first; not connected has none and says why", () => {
+    const { providers } = settingModelOptions(STATE);
+    assert.deepEqual(providers.map((p) => p.id), ["litellm", "openrouter", "lmstudio"]);
+    assert.deepEqual(providers[0], { id: "litellm", label: "Router", models: ["claude-auto-llm", "gpt-5.4-nano"] });
+    assert.deepEqual(providers[1].models, []);
+    assert.match(providers[1].note!, /OpenRouter is not connected \(401\): set it up under Connections/);
+    assert.deepEqual(providers[2], { id: "lmstudio", label: "Local server", models: ["qwen/qwen3.6-35b-a3b"] });
+    assert.deepEqual(settingModelOptions([]).providers, []);
+  });
+
+  test("GET /settings carries them, asked of connect over the kernal:connect bus (op state)", async () => {
+    const pi = makePi();
+    const asked: string[] = [];
+    busServe(pi.events as any, "kernal:connect", (req: { op: string }) => { asked.push(req.op); return req.op === "state" ? STATE : undefined; });
+    const api = createApi({ pi: pi as any, ctx: () => undefined, server: () => undefined, stop: () => {} });
+    signedIn = false;
+    setup();
+    const g = await api({ method: "GET", path: "/settings", query: new URLSearchParams(), body: {} });
+    assert.deepEqual(asked, ["state"]);
+    const mo = (g.body as any).modelOptions;
+    assert.deepEqual(mo.providers.find((p: any) => p.id === "litellm").models, ["claude-auto-llm", "gpt-5.4-nano"]);
+    // No connect at all: no providers, and the page keeps plain text boxes.
+    const bare = createApi({ pi: makePi() as any, ctx: () => undefined, server: () => undefined, stop: () => {} });
+    assert.deepEqual(((await bare({ method: "GET", path: "/settings", query: new URLSearchParams(), body: {} })).body as any).modelOptions, { providers: [] });
+  });
+
+  test("the page's options: filtered by provider, searchable, the unlisted value kept, Other… last", async () => {
+    const { MODEL_PICK_JS, APP_JS } = await import("../.pi/extensions/kernal-admin/app.ts");
+    const pick = new Function(`${MODEL_PICK_JS}; return { modelChoices, modelMenu, modelInList, modelItemLabel };`)();
+    const mo = settingModelOptions(STATE.map((s) => ({ ...s, registered: true })));
+    assert.deepEqual(pick.modelChoices("model.default", "litellm", mo).choices.map((c: any) => c.value), ["claude-auto-llm", "gpt-5.4-nano"]);
+    assert.deepEqual(pick.modelChoices("model.default", "openrouter", mo).choices.map((c: any) => c.value), ["anthropic/claude-sonnet-5"]);
+    assert.deepEqual(pick.modelChoices("model.default", "lmstudio", mo).choices.map((c: any) => c.value), ["qwen/qwen3.6-35b-a3b"]);
+    // The summarizer names its provider: every provider's models as provider/id, the selected one first.
+    const summary = pick.modelChoices("compaction.summaryModel", "openrouter", mo).choices.map((c: any) => c.value);
+    assert.deepEqual(summary.slice(0, 2), ["self", "openrouter/anthropic/claude-sonnet-5"], "self (the working model) first");
+    assert.ok(summary.includes("litellm/gpt-5.4-nano") && summary.includes("lmstudio/qwen/qwen3.6-35b-a3b"));
+    assert.equal(pick.modelChoices("model.default", "litellm", { providers: [] }), null, "connect not loaded: no list, a text box");
+    assert.match(pick.modelChoices("model.default", "openrouter", settingModelOptions(STATE)).note, /not connected/);
+
+    const choices = pick.modelChoices("model.default", "litellm", mo).choices;
+    const kinds = (items: any[]) => items.map((i) => i.kind);
+    assert.deepEqual(kinds(pick.modelMenu(choices, "my-model", "")), ["unset", "current", "model", "model", "other"]);
+    assert.deepEqual(pick.modelMenu(choices, "", "NANO").map((i: any) => i.value ?? i.kind), ["gpt-5.4-nano", "other"]);
+    const other = pick.modelMenu(choices, "", "brand-new");
+    assert.deepEqual(other, [{ kind: "other", query: "brand-new" }]);
+    assert.equal(pick.modelItemLabel(other[0]), "Other: use “brand-new”");
+    assert.equal(pick.modelItemLabel({ kind: "other", query: "" }), "Other…");
+    assert.equal(pick.modelInList(choices, ""), true);
+    assert.equal(pick.modelInList(choices, "my-model"), false);
+
+    // The page builds them for the model keys, follows model.provider, and still parses.
+    assert.doesNotThrow(() => new Function(APP_JS));
+    assert.ok(APP_JS.includes(MODEL_PICK_JS));
+    assert.match(APP_JS, /function modelCombo\(o\)/);
+    assert.match(APP_JS, /MODEL_SETTINGS\[r\.key\]/);
+    assert.match(APP_JS, /if \(r\.key === "model\.provider"\) refreshCombos\(\)/);
+    assert.match(APP_JS, /"not in the list"/);
+    assert.match(APP_JS, /role: "listbox"/);
+    assert.match(APP_JS, /"Choose from the list"/);
+    // Leaving the box keeps what was typed; typing makes Enter pick the first listed match.
+    assert.match(APP_JS, /input\.addEventListener\("blur", function \(\) \{ if \(open\) commitTyped\(\); \}\)/);
+    assert.match(APP_JS, /if \(first < 0 && it\.kind === "model"\) first = i/);
+    // Clearing the target's own provider falls back to the default provider.
+    assert.match(APP_JS, /if \(v === "" && own !== undefined\) return/);
   });
 });
 

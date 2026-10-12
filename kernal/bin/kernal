@@ -141,6 +141,14 @@ EOF
 SRC="${BASH_SOURCE[0]}"
 while [[ -L "$SRC" ]]; do DIR="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"; [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"; done
 ROOT="$(cd -P "$(dirname "$SRC")/.." && pwd)"
+# #432: the key variables the shell already exported, before the .env files are exported over them
+# (central-config's SHELL_WATCHED and SHELL_KEYS_MARKER): signed in, Kernal warns when one of them
+# overrides this device's router key or the account's provider key. Always exported, even empty.
+KERNAL_SHELL_KEYS=""
+for _k in LITELLM_AGENT_KEY LITELLM_API_KEY OPENROUTER_API_KEY DEEPGRAM_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY; do
+  if [[ -n "${!_k:-}" ]]; then KERNAL_SHELL_KEYS="${KERNAL_SHELL_KEYS:+$KERNAL_SHELL_KEYS }$_k"; fi
+done
+export KERNAL_SHELL_KEYS
 # Secrets: ~/localllm/.env in a source checkout, ./.env in a release bundle (/setup writes it).
 found_env=0
 if [[ -f "$ROOT/../.env" ]]; then set -a; source "$ROOT/../.env"; set +a; found_env=1; fi
@@ -164,20 +172,83 @@ if [[ -x "$ROOT/pi/pi" ]]; then PI="$ROOT/pi/pi"; else PI="$ROOT/node_modules/.b
 # Agent Engine memory on a laptop (#349, .pi/extensions/outfitter-agentengine/laptop.ts): while it is
 # on, pi-memory's prompt injection and exit summary are off. That has to happen here, before pi
 # starts, because pi-memory reads its directory when it is imported. On means `kernal.memory` is
-# "tool" or "auto" in settings.json, or unset with a Dongle (OUTFITTER_API and OUTFITTER_TOKEN)
-# configured; the extension reads the same setting the same way. Never inside a Drive (agentd decides
+# "tool" or "auto" in settings.json, or unset while signed in (`kernal login`); the extension reads the same setting the same way. Never inside a Drive (agentd decides
 # there). The real directory goes on in KERNAL_PI_MEMORY_SOURCE for `/memory import`.
+# Signed in, `memory.mode` is a central setting (#437): central-config writes its resolution, with
+# each value's source, to effective[.<profile>].json in the config cache (non-secret), and the
+# account's or this machine's value (sources user, profile, device, local) wins over kernal.memory,
+# which wins over the fleet's, exactly as outfitter-agentengine/laptop.ts chosenMode decides.
+# effective_file: prints the effective[.<profile>].json central-config wrote (#437), or nothing. Only
+# while signed in (accounts.json exists), and only when the file is for the account signed in now on
+# this OUTFITTER_API (its `api` and `account`): after a sign-out and a sign-in to another account the
+# previous account's file is still there until pi resolves again, which is after this script decided.
+# The directory is central-config's configCacheDir, with the same KERNAL_*/MGM_* fallback (kenv).
+effective_file() {
+  local auth="${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}" home cache f api eapi eacct
+  [[ -f "$auth/accounts.json" ]] || return 0
+  home="$(kenv HOME_DIR || printf '%s' "$HOME/.kernal")"
+  cache="$(kenv CONFIG_CACHE_DIR || printf '%s/config-cache' "$home")"
+  f="$cache/effective${KERNAL_PROFILE:+.$KERNAL_PROFILE}.json"
+  [[ -f "$f" ]] || return 0
+  api="${OUTFITTER_API:-https://link.kernal.one}"
+  while [[ "$api" == */ ]]; do api="${api%/}"; done
+  if command -v node >/dev/null 2>&1; then
+    # outfitter-session.ts's pickEntry without an email: the API's default account, or its only one.
+    node -e '
+      const fs = require("fs"); const [index, effective, api] = process.argv.slice(1);
+      const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return undefined; } };
+      const i = read(index) || {}, e = read(effective) || {};
+      const here = (Array.isArray(i.accounts) ? i.accounts : []).filter((a) => a && a.api === api && typeof a.email === "string");
+      const def = i.defaults && i.defaults[api];
+      const cur = here.find((a) => a.email === def) || (here.length === 1 ? here[0] : undefined);
+      process.exit(cur && e.api === api && e.account === cur.email ? 0 : 1);' "$auth/accounts.json" "$f" "$api" 2>/dev/null || return 0
+  else
+    # Without node: the file's top-level `api` and `account` lines, and that account and API in the
+    # index (one field per line, as JSON.stringify(…, null, 2) writes both files).
+    eapi="$(sed -nE 's/^  "api": "([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+    eacct="$(sed -nE 's/^  "account": "([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+    [[ -n "$eacct" && "$eapi" == "$api" ]] || return 0
+    grep -qF "\"email\": \"$eacct\"" "$auth/accounts.json" 2>/dev/null || return 0
+    grep -qF "\"api\": \"$api\"" "$auth/accounts.json" 2>/dev/null || return 0
+  fi
+  printf '%s' "$f"
+}
+
 pi_memory_env() {
   [[ -z "${OUTFITTER_SESSION_ID:-}" && -z "${OUTFITTER_ADMIN_SOCKET:-}" ]] || return 0
-  # A Dongle, or a stored login (`kernal login`, central-auth.md §2.7: its index exists only while one does).
-  [[ -n "${OUTFITTER_API:-}" && -n "${OUTFITTER_TOKEN:-}" ]] || [[ -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]] || return 0
-  local mode empty parent settings="$PI_CODING_AGENT_DIR/settings.json"
+  # A stored login (`kernal login`, central-auth.md §2.7: its index exists only while one does).
+  # Dongles (OUTFITTER_TOKEN) are retired (§12) and no longer count.
+  local effective
+  effective="$(effective_file)"
+  [[ -f "${KERNAL_AUTH_DIR:-$HOME/.kernal/auth}/accounts.json" ]] || return 0
+  local mode empty parent emode esrc legacy settings="$PI_CODING_AGENT_DIR/settings.json"
   # Exactly kernal.memory, the way the extension reads it (unparseable JSON reads as unset there too).
-  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it.
+  # Without node, the first `"memory": "off|tool|auto"` line, which is where /memory writes it, and
+  # the effective file's `"memory.mode"` lines (one under values, one under sources).
   if command -v node >/dev/null 2>&1; then
-    mode="$(node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).kernal; const m = k && k.memory; if (["off", "tool", "auto"].includes(m)) process.stdout.write(m); } catch {}' "$settings" 2>/dev/null || true)"
+    mode="$(node -e '
+      const fs = require("fs"); const [settingsFile, effectiveFile] = process.argv.slice(1);
+      const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return undefined; } };
+      const ok = (m) => (["off", "tool", "auto"].includes(m) ? m : undefined);
+      const s = read(settingsFile); const legacy = ok(s && s.kernal && s.kernal.memory);
+      const e = effectiveFile ? read(effectiveFile) : undefined;
+      const v = e && e.version === 1 && e.values ? ok(e.values["memory.mode"]) : undefined;
+      const src = e && e.sources ? e.sources["memory.mode"] : undefined;
+      const fleet = e && e.fleet ? ok(e.fleet["memory.mode"]) : undefined;
+      const m = v && ["local", "user", "profile", "device"].includes(src) ? v : legacy || fleet;
+      if (m) process.stdout.write(m);' "$settings" "$effective" 2>/dev/null || true)"
   else
-    mode="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
+    local efleet=""
+    legacy="$(sed -nE 's/^[[:space:]]*"memory":[[:space:]]*"(off|tool|auto)".*/\1/p' "$settings" 2>/dev/null | head -1)"
+    if [[ -n "$effective" ]]; then
+      emode="$(sed -nE '/"values"/,/^  }/ s/^[[:space:]]*"memory\.mode":[[:space:]]*"(off|tool|auto)".*/\1/p' "$effective" 2>/dev/null | head -1)"
+      esrc="$(sed -nE '/"sources"/,/^  }/ s/^[[:space:]]*"memory\.mode":[[:space:]]*"([a-z]+)".*/\1/p' "$effective" 2>/dev/null | head -1)"
+      efleet="$(sed -nE '/"fleet"/,/^  }/ s/^[[:space:]]*"memory\.mode":[[:space:]]*"(off|tool|auto)".*/\1/p' "$effective" 2>/dev/null | head -1)"
+    fi
+    case "${esrc:-}" in
+      local|user|profile|device) mode="${emode:-$legacy}" ;;
+      *) mode="${legacy:-$efleet}" ;;
+    esac
   fi
   [[ "${mode:-auto}" != off ]] || return 0
   # A fresh empty directory per start (pi-memory writes compaction handoffs into it, which must not
@@ -336,10 +407,34 @@ while [[ $# -gt 0 ]]; do
 done
 set -- ${_args[@]+"${_args[@]}"}
 
+# `kernal local` (#381, local-host.md §4.3): the Local Host loop and its service units import only
+# node: built-ins and relative .ts files, so they run under Node 22.18+ (type stripping on by default:
+# KERNAL_LOCAL_NODE, recorded by `kernal local enable`, else node on PATH) or, in a release bundle
+# without Node, under the bundled pi binary as Bun.
+exec_local_runtime() {
+  local script="$1" n
+  shift
+  for n in "${KERNAL_LOCAL_NODE:-}" "$(command -v node 2>/dev/null || true)"; do
+    [[ -n "$n" && -x "$n" ]] || continue
+    if "$n" -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' 2>/dev/null; then
+      exec "$n" "$script" "$@"
+    fi
+  done
+  if [[ -x "$ROOT/pi/pi" ]]; then BUN_BE_BUN=1 exec "$ROOT/pi/pi" "$script" "$@"; fi
+  echo "kernal local needs Node 22.18+ or a release bundle" >&2
+  exit 1
+}
+
 case "${1:-}" in
   login|logout|whoami)
     # Sign-in to Outfitter (#391, central-auth.md §2.5): before pi starts, with node.
     exec node "$ROOT/.pi/extensions/kernal-login/cli.ts" "$@" ;;
+  subscriptions)
+    # Personal subscription workers (subscriptions.md §5): before pi starts, with node.
+    exec node "$ROOT/.pi/extensions/kernal-subscriptions/cli.ts" "$@" ;;
+  local)
+    shift
+    exec_local_runtime "$ROOT/.pi/extensions/kernal-local/cli.ts" "$@" ;;
   github)
     # The same setup /github runs inside the agent, from a plain terminal.
     if command -v gh >/dev/null 2>&1; then
@@ -450,6 +545,14 @@ esac
 # loading a 20 GB model would otherwise delay every start); KERNAL_PRELOAD_LMS=1 forces it.
 LMS="${LMS:-$HOME/.lmstudio/bin/lms}"; MODEL="${LMSTUDIO_MODEL:-qwen/qwen3.6-35b-a3b}"
 default_provider="$(sed -n 's/^ *"defaultProvider": *"\([^"]*\)".*/\1/p' "$ROOT/.pi/settings.json" 2>/dev/null | head -1)"
+# Signed in, the account's (or this machine's) model.provider decides the start-up backend (#437;
+# kernal-config switches the new session to it), so it decides the preload too.
+_eff="$(effective_file)"
+if [[ -n "$_eff" ]]; then
+  _p="$(sed -nE '/"values"/,/^  }/ s/^[[:space:]]*"model\.provider":[[:space:]]*"(litellm|lmstudio|openrouter)".*/\1/p' "$_eff" 2>/dev/null | head -1)"
+  _s="$(sed -nE '/"sources"/,/^  }/ s/^[[:space:]]*"model\.provider":[[:space:]]*"([a-z]+)".*/\1/p' "$_eff" 2>/dev/null | head -1)"
+  case "$_s" in local|user|profile|device) [[ -z "$_p" ]] || default_provider="$_p" ;; esac
+fi
 skip_lms="$(kenv SKIP_LMS || true)"; preload_lms="$(kenv PRELOAD_LMS || true)"
 if [[ "$skip_lms" != 1 && -x "$LMS" && ( "$default_provider" == lmstudio || "$preload_lms" == 1 ) ]]; then
   if ! "$LMS" ps --json 2>/dev/null | grep -q "\"identifier\":\"$MODEL\""; then

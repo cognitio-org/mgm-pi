@@ -42,6 +42,108 @@ Decisions (confirmed with the owner):
 - **Agent-created tape ids** are slugs (`[a-z0-9-]`), so later calls stay short; UUID ids print
   as 8-character prefixes and any unique prefix of 4+ characters resolves.
 
+## Changes since the plan (GA-2/GA-3: gcloud MCP for operators, #492/#493, epic #497)
+- **Router admission is the boundary.** Google's remote gcloud is the router MCP server `gcloud`
+  (per-user OAuth vault, like `sentry`). Outfitter admits it through `object_permission.mcp_servers`
+  on `/key/generate` (a field of the existing route: no new admin route, no admin-key rotation).
+  Operator device keys (`OUTFITTER_OPERATORS` owner) and run keys of an `adminTools: operator` tape
+  with an operator owner (the `operator` test of `admin/drive.ts`) list `gcloud`; every other key is
+  minted exactly as before, with no list. `central/gcloud-mcp.ts` holds both tests.
+- **The operator list also names `ce_knowledge_base`, `headroom` and `sentry`.** A key with its own
+  list is "scoped" on the router; naming the servers every key uses keeps an operator's access to them
+  if the router ever restricts open servers to a key's scope.
+- **Existing keys don't change.** A device key gets `gcloud` at its next login or re-mint, a run key
+  at the next run. The router still checks the caller's own grant, so a key never reaches another
+  user's token.
+- **Order matters: register `gcloud` on the router first.** `/key/generate` silently drops an
+  `mcp_servers` name it can't resolve (router `object_permission_utils.py`), so a key minted before the
+  server exists never gets it. Register it (`gcloud-mcp-router.sh`, PR #505) BEFORE the Outfitter
+  release; any operator key minted earlier needs a re-mint (`/config` reload, or `kernal login` again).
+- **Router requirements (checked by the owner, not by Outfitter):** `gcloud` is `allow_all_keys: false`,
+  is granted to no team or access group, and is not in `default_key_generate_params`. A user with the
+  `proxy_admin` role and a key with no list sees the whole registry (`admin_view_unscoped`), so keep
+  proxy admins to people who are operators anyway.
+- **Removing an operator:** the key record stores the list it was minted with (`RouterKey.mcpServers`),
+  and the tick (`/api/hooks/tick`, next to `sweepRouterKeys`) deletes every live device key with
+  `gcloud` whose owner is no longer in `OUTFITTER_OPERATORS` (`reconcileOperatorKeys`). Access ends at
+  the next tick, not after 90 days. The device then holds a dead key until it re-mints (`/config`
+  reload or `kernal login`). Run keys end with their run (24 h at most). With an empty operator list
+  nothing is revoked.
+- **Drives:** the image's `mcp.json` ships `gcloud` with `disabled: true` and `approveTools: true`
+  (`render-mcp.sh`). The api sends `run.spec.mcp.enable: ["gcloud"]` only for such an operator run whose
+  spec carries the run's own key (not after a fall-back to the shared key), and agentd (`mcp-gate.ts`,
+  atomic write) flips `disabled` before pi starts. `approveTools: true` makes pi-mcp-adapter ask before
+  every call; without the approval extension (#507) a TUI gets its own dialog and a Drive or `-p` run is
+  denied (`approval_required_headless`), so a missing extension fails closed. That file is a tidy-up (pi can edit it); the run key is the
+  boundary. An older api or agentd leaves the server off.
+- **Laptop:** `kernal/.pi/mcp.json` ships `gcloud` (OAuth through the router) `disabled: true` with
+  `approveTools: true`. pi-mcp-adapter connects every enabled server at start-up, so an enabled entry
+  would show non-operators "Failed to connect to gcloud". Laptops can't ask `/api/me` (a Dongle is never
+  an operator there); instead the device's router key delivery carries `mcpServers` (login and
+  `/api/device/router-key`), Kernal stores it with the key, and connect (`_shared/mcp-gate.ts`) flips
+  `disabled` at start-up, so a change shows from the next start. Skipped in a source checkout (the file
+  is tracked; `/mcp enable gcloud` there). Claude-subscription children never get gcloud
+  (`EXCLUDED_MCP`), nor any `disabled` server. Usage rules are in the `gcloud-mcp` skill.
+
+## Changes since the plan (GB-3/GB-4: the `google_cloud` toolset, #539/#540, epic #544)
+- **One toolset, one sign-in.** The router serves `gcloud` plus Cloud Run, Logging, Monitoring and
+  Firestore product servers as the toolset `google_cloud` at `/google_cloud/mcp`. `kernal/.pi/mcp.json`
+  ships a `google_cloud` entry (disabled, `approveTools`) next to `gcloud`, which stays as the fallback
+  for a key without the toolset (id unset, an older Outfitter, a device key not yet re-minted).
+  The gates prefer `google_cloud` and then leave `gcloud` off; sign in once with `/mcp-auth google_cloud`. Tools are named `<server>-<tool>`. The `gcloud-mcp` skill says when to use a
+  product tool and when `run_gcloud_command`.
+- **Grant by id.** The router answers 403 on a toolset path unless the key lists the toolset's id in
+  `object_permission.mcp_toolsets`. Inside toolset scope the toolset's servers replace the key's
+  `mcp_servers`, so the secondary servers are not listed on the key; `gcloud` and the base servers stay
+  in `mcp_servers` as before. The id (a UUID) is `OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID` (config.env, both
+  roles in `service.sh`, only when set). Empty grants nothing and changes no key. No new admin route:
+  `/key/generate` already takes `object_permission`, so no admin-key rotation.
+- **Who:** the same two tests as `gcloud`: operator device keys, and run keys of `adminTools: operator`
+  tapes with an operator owner. `RouterKey.mcpToolsets` records the grant, and `reconcileOperatorKeys`
+  revokes a former operator's key whether it carries `gcloud`, a toolset, or both.
+- **Client-side entry name.** `routerKey.mcpServers` delivered to Kernal gets `google_cloud` appended when
+  the toolset was granted. It is Kernal's entry name, not a router server name (never sent to the
+  router). Kernal's gate, agentd's gate and `render-mcp.sh` gate both `gcloud` and `google_cloud`
+  (a test compares the four lists). A Drive's `run.spec.mcp.enable` is `["google_cloud"]` when the
+  toolset is granted, else `["gcloud"]` (an image whose `mcp.json` has no such entry ignores it).
+- **Rollout:** set the id from the GB-2 script's output before the Outfitter release; operators re-login
+  (`kernal login`, after the id is set) so the device key is re-minted with the toolset. Claude-subscription children exclude
+  `google_cloud` (`EXCLUDED_MCP`).
+
+## gcloud MCP approval cards (GA-4, #494)
+- **Not an admin tool, but the same approval flow.** Google's remote gcloud MCP server (`gcloud`) is
+  reached through the router, so its calls never pass the API. Kernal's `gcloud-approval` extension
+  brokers pi-mcp-adapter's approval event for that server and asks first for any command
+  `classify.ts` doesn't call a plain read (default: ask).
+- **Drive:** `gcloud.run`, an `operator` op, raises the owner's `admin:<approvalId>` web card with the
+  project and command; the answer, including a decline or timeout, is an `adminAudit` row whose
+  `target` is `<tool> <project> :: <command>`.
+- **Laptop:** a TUI confirm, then `gcloud.note` records the decision. It is an `auditNote` op (the one
+  laptop-callable op outside memory and web approvals): a side-effect-free write that needs a listed
+  operator, is limited to 60 per hour per user, and is stored as a self-reported row (`approved: false`,
+  `detail: "self-reported: ..."`), because a laptop's agent can send it too. No TUI (`kernal -p`): denied.
+- **Fail-closed layering.** The hook claims every call to the gcloud server and to either command tool
+  on any server name, answering reads `allow_once`. The server entry should also carry
+  `approveTools: true`, so an absent or broken hook falls back to the adapter's own dialog or a
+  headless refusal; Kernal warns at session start when a gcloud-looking server lacks it.
+- **Audit meaning.** On a `gcloud.run` row, `ok` means the owner approved (or the refusal that was
+  audited), not that the command ran or succeeded: the call goes agent -> router -> Google afterwards.
+- **Aborts.** When the model's call is cancelled while a card waits, Kernal calls `gcloud.cancel`, which
+  withdraws the card; if Kernal is gone, the card expires after 10 minutes.
+- **Classifier hardening.** Only plain printable ASCII and the space are parsed (anything else asks);
+  forbidden flags are looked for in every whitespace piece, quoted or not; intermediate path words must
+  be resource nouns; a `bq query` is a read only with `--maximum_bytes_billed` of at most 10 GB and no
+  dotted function call (UDF, `ML.`, `AI.`), `EXTERNAL_QUERY`, `VECTOR_SEARCH` or `NEXTVAL`.
+
+### Limits
+- The card guards the MCP path only. An agent with a shell can still reach the router directly (for
+  example with curl and the key in its environment) and skip the card. Owner decision 2026-10-07
+  (#497): accepted. The cards guard against an agent's mistakes, and a bypass still runs as that
+  operator under their own IAM, with Google's audit logs naming the person.
+- A read verb is not harmless in every case: `describe` on a Cloud Run service, a function, a VM or
+  similar can return plaintext environment variables or secrets. Whether `describe` should ask is an
+  owner policy question; today it runs without a card.
+
 ## Changes since the plan (PR5: skill, Sysop tape, UI)
 - **The skill lives in `kernal/skills/`** (committed), not `.pi/skills/` (generated and gitignored).
   Kernal's `settings.json` loads it with `"skills": ["../skills"]`; the release bundle and the image

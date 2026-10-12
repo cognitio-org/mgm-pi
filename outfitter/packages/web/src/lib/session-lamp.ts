@@ -30,7 +30,7 @@ export function sessionLamp(input: {
   phase: ActivityPhase;
   /** An interactive question (select, confirm, input, editor) is waiting on the person. */
   pendingQuestion: boolean;
-  /** Header status line. READY. and "stopped · press Play" add nothing the lamp does not. */
+  /** Header status line. READY. and "stopped · sending wakes it" add nothing the lamp does not. */
   statusLine: string | null;
 }): SessionLamp {
   const loadError = input.statusLine?.startsWith("LOAD ERROR") ? input.statusLine : null;

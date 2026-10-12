@@ -40,6 +40,10 @@ fi
 
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+# GB-3 (#539): fail before any gcloud call on a malformed toolset id (config.env; empty is fine).
+if [[ -n "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID:-}" && ! "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}" =~ ^[0-9a-f-]{36}$ ]]; then
+  deploy_fail "OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID must be empty or a toolset UUID (got '${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}')"
+fi
 AR_REPO="${AR_REPO:-outfitter}"
 CLOUDRUN_JOB="${CLOUDRUN_JOB:-outfitter-agent}"
 if [[ "${ROLE}" == "web" ]]; then
@@ -81,6 +85,14 @@ SECRETS="$(existing_secrets MONGODB_URI=outfitter-mongodb-uri:latest GITHUB_PAT=
 if [[ "${ROLE}" == "web" ]]; then
   VOICE_SECRET="$(existing_secrets DEEPGRAM_API_KEY=outfitter-deepgram-key:latest)"
   [[ -n "${VOICE_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${VOICE_SECRET}"
+fi
+# #384 Local Host router entries (docs/specs/local-host.md §3.5): a separate /model/*-only key
+# (KEY=local-hosts ./litellm-admin.sh), link role only, where heartbeats and the tick run router
+# sync. Never on web: unlike LITELLM_ADMIN_KEY it can rewrite router deployments. Mounted once the
+# secret exists; without it the api registers no router listener.
+if [[ "${ROLE}" == "link" ]]; then
+  ROUTER_SECRET="$(existing_secrets LOCAL_HOST_ROUTER_KEY=outfitter-litellm-admin-key:latest)"
+  [[ -n "${ROUTER_SECRET}" ]] && SECRETS="${SECRETS:+${SECRETS},}${ROUTER_SECRET}"
 fi
 # E9 Agent Engine (config.env): link role only, where the admin socket's memory and ae ops run. Each
 # service account secret is mounted only when its project id is set and the secret exists.
@@ -214,6 +226,9 @@ fi
 LOGIN_ALLOW="$(tr ',' ';' <<<"${IAP_MEMBERS:-}")${OUTFITTER_OPERATORS:+;${OUTFITTER_OPERATORS}}"
 ENV_VARS="${ENV_VARS},OUTFITTER_LOGIN_ALLOW=${LOGIN_ALLOW#;}"
 echo "   device login open to: ${LOGIN_ALLOW#;}"
+# #399 CA-10: Drives get per-run LiteLLM keys only (config.env; 0 = no shared-key fallback when a
+# mint fails). Both roles, so whichever builds a run.spec reads the same value.
+ENV_VARS="${ENV_VARS},OUTFITTER_RUN_KEY_FALLBACK=${OUTFITTER_RUN_KEY_FALLBACK:-0}"
 if [[ "${ROLE}" == "link" ]]; then
   # Where POST /api/device/code sends the person to approve: the web role's public origin
   # (app.kernal.one), read from its Ready domain mapping (env.sh public_origin) unless given.
@@ -254,18 +269,23 @@ if [[ "${ROLE}" == "web" ]]; then
   fi
   echo "   link origin: ${OUTFITTER_LINK_ORIGIN}"
   ENV_VARS="${ENV_VARS},OUTFITTER_LINK_ORIGIN=${OUTFITTER_LINK_ORIGIN}"
-  # OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts): emails allowed to manage secrets
-  # and deploy-level settings via /api/operator/* (src/auth.ts's requireOperator). Separated by
-  # ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on commas, so a
-  # comma-separated operator list would be sliced into separate env vars; config.ts's parser also
-  # accepts ',' and whitespace for a locally-set env var, but this script must use ';'. Defaults to
-  # the two current operators (see the same Decisions table entry); override by exporting
-  # OUTFITTER_OPERATORS before running this script.
-  ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
   # #252/#257 web voice (config.env): the Deepgram project the voice key belongs to, for per-person
   # usage. Not secret. Empty leaves it out.
   [[ -n "${DEEPGRAM_PROJECT_ID:-}" ]] && ENV_VARS="${ENV_VARS},DEEPGRAM_PROJECT_ID=${DEEPGRAM_PROJECT_ID}"
 fi
+# OUTFITTER_OPERATORS (EPIC.md Decisions table, src/config.ts), on BOTH roles. The web role uses it
+# for /api/operator/* (src/auth.ts's requireOperator); the link role needs it too, because it mints
+# device keys (operators' keys list the gcloud MCP server, GA-2), mints Drive run keys (operator tapes),
+# decides a Drive's operator admin tools (admin/drive.ts) and runs the operator-key reconcile on the
+# tick. Link identities come from verified device/run tokens, so the list grants nothing by itself.
+# Separated by ';' here, not ',' -- `gcloud run deploy --set-env-vars` splits its whole value on
+# commas, so a comma-separated operator list would be sliced into separate env vars; config.ts's
+# parser also accepts ',' and whitespace for a locally-set env var, but this script must use ';'.
+# Defaults to the two current operators (config.env); override by exporting OUTFITTER_OPERATORS.
+ENV_VARS="${ENV_VARS},OUTFITTER_OPERATORS=${OUTFITTER_OPERATORS}"
+# GB-3 (#539, config.env): the router's google_cloud toolset id, on BOTH roles for the same reason as the
+# operators (the link role mints the device and run keys). Only when set, so an unset id changes nothing.
+[[ -n "${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID:-}" ]] && ENV_VARS="${ENV_VARS},OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID=${OUTFITTER_GOOGLE_CLOUD_TOOLSET_ID}"
 # E9 Agent Engine (config.env): link role only, each var only when set. Not secret.
 if [[ "${ROLE}" == "link" ]]; then
   [[ -n "${AGENT_ENGINE_BASE_URL:-}" ]] && ENV_VARS="${ENV_VARS},AGENT_ENGINE_BASE_URL=${AGENT_ENGINE_BASE_URL}"

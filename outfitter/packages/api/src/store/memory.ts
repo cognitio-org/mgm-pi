@@ -5,6 +5,7 @@ import { isTokenActive, ownerMatches } from "../tokens.ts";
 import type {
   Store,
   Session,
+  AutofixState,
   SessionListFilter,
   SessionsCollection,
   Entry,
@@ -72,7 +73,8 @@ import type { VoicePrefs } from "../voice.ts";
 import type { FleetSettings } from "../fleet-settings.ts";
 import { MemoryDeviceCodes, MemoryDevices } from "./devices.ts";
 import { MemorySettings } from "./settings.ts";
-import { MemoryProviderKeys, MemoryRouterKeys } from "./keys.ts";
+import { MemoryProviderKeys, MemoryRouterKeys, MemorySubscriptionSecrets } from "./keys.ts";
+import { MemoryLocalHosts } from "./local-hosts.ts";
 import { A2A_OPEN_STATES, BROWSER_CAPTURES_PER_SESSION, SearchUnavailableError, entryInsertFields, type EntryInsertOptions } from "./types.ts";
 
 function clone<T>(value: T): T {
@@ -100,6 +102,15 @@ class MemorySessions implements SessionsCollection {
     return row ? clone(row) : null;
   }
 
+  async findStreamFacts(id: string): Promise<Pick<Session, "checkpoint" | "ownerEmail"> | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    return clone({
+      ...(row.checkpoint ? { checkpoint: row.checkpoint } : {}),
+      ...(row.ownerEmail !== undefined ? { ownerEmail: row.ownerEmail } : {}),
+    });
+  }
+
   async list(filter?: SessionListFilter): Promise<Session[]> {
     let out = [...this.rows.values()];
     if (filter?.status) out = out.filter((s) => s.status === filter.status);
@@ -113,6 +124,15 @@ class MemorySessions implements SessionsCollection {
     const row = this.rows.get(id);
     if (!row) return null;
     const next = { ...row, ...patch };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async setModelOverride(id: string, model: string | null, nowIso: string): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { modelOverride: _previous, ...rest } = row;
+    const next: Session = model ? { ...rest, modelOverride: model, updatedAt: nowIso } : { ...rest, updatedAt: nowIso };
     this.rows.set(id, next);
     return clone(next);
   }
@@ -143,6 +163,34 @@ class MemorySessions implements SessionsCollection {
 
   async delete(id: string): Promise<boolean> {
     return this.rows.delete(id);
+  }
+
+  async setAutofixCi(id: string, on: boolean, nowIso?: string): Promise<Session | null> {
+    const row = this.rows.get(id);
+    if (!row) return null;
+    const { cappedAt: _c, cappedSha: _s, sends: _sends, capDays: _d, offNotice: _o, nextPollAt: _n, ...kept } = row.autofix ?? { rev: 0 };
+    const autofix: AutofixState = on ? { ...kept, rev: kept.rev + 1 } : { ...(row.autofix ?? { rev: 0 }), rev: kept.rev + 1 };
+    const next: Session = { ...row, autofixCi: on, autofix, ...(on && nowIso ? { updatedAt: nowIso } : {}) };
+    this.rows.set(id, next);
+    return clone(next);
+  }
+
+  async countAutofixForOwner(ownerEmail: string): Promise<number> {
+    return [...this.rows.values()].filter((s) => s.autofixCi === true && !s.archivedAt && s.ownerEmail === ownerEmail).length;
+  }
+
+  async casAutofix(id: string, expectedRev: number, next: AutofixState): Promise<boolean> {
+    const row = this.rows.get(id);
+    if (!row || row.autofixCi !== true || row.archivedAt) return false;
+    if ((row.autofix?.rev ?? 0) !== expectedRev) return false;
+    this.rows.set(id, { ...row, autofix: clone(next) });
+    return true;
+  }
+
+  async listAutofix(updatedSinceIso: string): Promise<Session[]> {
+    return [...this.rows.values()]
+      .filter((s) => s.autofixCi === true && !s.archivedAt && s.repo && s.branch && s.updatedAt >= updatedSinceIso)
+      .map(clone);
   }
 }
 
@@ -1388,6 +1436,8 @@ export class MemoryStore implements Store {
   readonly settings = new MemorySettings();
   readonly routerKeys = new MemoryRouterKeys();
   readonly providerKeys = new MemoryProviderKeys();
+  readonly subscriptionSecrets = new MemorySubscriptionSecrets();
+  readonly localHosts = new MemoryLocalHosts();
 
   constructor() {
     const tables: BrowserTables = {

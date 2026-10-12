@@ -122,7 +122,18 @@ After `release.sh` succeeds, the deploy workflow creates the Sentry release name
 (`outfitter-vYYYY.MM.DD.N`, the `OUTFITTER_RELEASE` the api, link, Drives and, through
 `GET /api/fleet-settings`, the web app report under), links its commits, finalizes it and records
 a `production` deploy. A manual re-run or rollback of an existing tag records another deploy on
-that release. Kernal's release workflow (`.github/workflows/release.yml`) does the same for
+that release.
+
+The release runs in its own `sentry-release` job after `deploy`, beside the live tests (it gates
+nothing), with `contents: read` only: no `id-token`, no GCP auth. The deploy job is the wrong place
+for it: `google-github-actions/auth` writes the deployer service account's credentials file
+(`gha-creds-*.json`) into that job's workspace and exports `GOOGLE_APPLICATION_CREDENTIALS` to every
+later step, and `getsentry/action-release`, though pinned by commit SHA, runs a Docker image it pulls
+by tag (`ghcr.io/getsentry/action-release-image:3.7.0`), so whoever could move that tag would run
+with production deploy rights. In its own job that image sees only the Sentry token and a fresh
+checkout of the shipped commit.
+
+Kernal's release workflow (`.github/workflows/release.yml`) does the same for
 `kernal@X.Y.Z`, the name a bundle reports, without a deploy marker. A Sentry failure never fails a
 deploy or a Kernal release.
 
@@ -169,6 +180,7 @@ Sentry plugin in the image build, a separate follow-up.
    | `outfitter-local-tunnel-token` | `LOCAL_TUNNEL_TOKEN` | `config.ts` → `src/laptop.ts`'s `LaptopProbe` | required for the E2.8 laptop preflight to mean anything in prod |
    | `outfitter-github-pat` | `GITHUB_PAT` | **nothing yet** | deployed as a placeholder only — see (b) |
    | `outfitter-litellm-admin` | `LITELLM_ADMIN_KEY` | `config.ts` → `src/providers-status.ts`'s LiteLLM probe (E2.10); `src/central/litellm-keys.ts`'s device/run key minting and spend (#389), both roles. Written only by `litellm-admin.sh` | the probe calls `/health/liveliness`, `/model/info`, `/key/info` and falls back to `outfitter-litellm-key-default` (b) when unset. Minting calls `/user/info`, `/user/new`, `/user/list`, `/key/generate`, `/key/delete`, `/team/list`, `/team/new`, `/spend/logs` (`litellm-admin.sh`'s `ALLOWED_ROUTES` is exactly the routes the api calls); unset means no minting: logins carry no router key and runs keep the shared keys. Personal provider keys (#393) are written by the api itself as `outfitter-user-<userId>-<provider>`; nothing to create |
+   | `outfitter-litellm-admin-key` | `LOCAL_HOST_ROUTER_KEY` | `config.ts` → `src/local-hosts/router-sync.ts`, the Local Host router entries (#384), **link role only**. Written only by `KEY=local-hosts ./litellm-admin.sh` | optional; a separate key from `outfitter-litellm-admin` (owner decision 2026-10-05) whose routes are only `/model/info`, `/model/new`, `/model/update`, `/model/delete`. Unset means no `local/...` router entries (heartbeats still work). The router must run with `STORE_MODEL_IN_DB=True` and keep a caller-supplied `model_info.id` (see "Router admin key") |
    | `outfitter-ngrok-api-key` | `NGROK_API_KEY` | `config.ts` → `src/providers-status.ts`'s ngrok probe (E2.10) | optional; `GET https://api.ngrok.com/endpoints` reconciler. Unset means the "ngrok" row reports `unknown`/"not configured", not a poll failure |
    | `outfitter-deepgram-key` | `DEEPGRAM_API_KEY` | `config.ts` → `src/voice.ts`'s `VoiceService` (#252), **web role only** | optional; a Deepgram **Member** key with `usage:read`, in the same Deepgram project as kernal's bundle key (`DEEPGRAM_PROJECT_ID` in `config.env`). The bundle key is usage-only and can't mint the browser tokens. Unset means `POST /api/voice/token` answers 404 `voice_disabled` |
    | `outfitter-agentengine-memory-sa` | `AGENT_ENGINE_MEMORY_SA` | `config.ts` → `src/agentengine/` (E9), **link role only** | optional; JSON `{client_id, client_secret}` of the Agent Engine service account in the memory project (`AGENT_ENGINE_MEMORY_PROJECT_ID` in `config.env`, the Atlas project `outfitter`). Role `AGENT_DEVELOPER` is enough for memory. Mounted only while that project id is set. Record its expiry in `AGENT_ENGINE_MEMORY_SA_EXPIRES_AT`; the api warns from 14 days before |
@@ -706,8 +718,10 @@ redirect URI. The landing page's CSP pins the hash of its inline theme script
      Domains match exactly (not subdomains), and shared mail providers such as `@gmail.com` are
      refused: revoke those users by email. Tokens also expire on their own 90 days after creation
      (`TOKEN_TTL_MS` in `packages/api/src/tokens.ts`), so this is the fast path, not the only one.
-     Dongles are deprecated (`kernal login` replaces them, central-auth.md §12); new Kernals warn
-     while one is still in use.
+     Dongles are retired (`kernal login` replaces them, central-auth.md §12): the web app no
+     longer creates them and `POST /api/me/tokens` refuses kind `dongle`, Kernal no longer reads
+     `OUTFITTER_TOKEN`, and existing Dongles keep working (for older clients) until they expire
+     or are revoked. A2A keys are unchanged.
   3. Signed-in Kernals (`kernal login`, central-auth.md §1.6): with `OUTFITTER_LOGIN_ALLOW` set by
      the deploy, a person dropped from `IAP_MEMBERS` loses every device at its next token refresh
      (within an hour), and their Dongles are refused too. To cut them off at once, revoke their
@@ -736,21 +750,81 @@ The api calls these routes with it (`src/central/litellm-keys.ts`, `src/provider
 `/model/info`, `/health/liveliness`. The key is mounted on both roles, the public link service
 included, so it carries nothing broader: no `/key/update`, `/key/list`, `/key/block`/`unblock`,
 `/user/update` or `/model/new`/`update`/`delete`. `test/litellm-admin.test.sh` fails if the list and
-the code drift apart in either direction. #384's model reconciliation adds the `/model/*` write
-routes in the PR that adds its code; if the owner needs broader routes by hand, mint a separate key
-that is never mounted on Cloud Run. A key's routes are fixed when it is minted: after `ALLOWED_ROUTES` changes, run
-`ROTATE=1 ./litellm-admin.sh` so the stored key carries the new list.
+the code drift apart in either direction. If the owner needs broader routes by hand, mint a separate
+key that is never mounted on Cloud Run. A key's routes are fixed when it is minted: after
+`ALLOWED_ROUTES` changes, run `ROTATE=1 ./litellm-admin.sh` so the stored key carries the new list.
+
+**The Local Host key** (`KEY=local-hosts`, #384, `docs/specs/local-host.md` §3.5) is a second key of
+the same `outfitter-svc` user (alias `outfitter-localhosts-*`), stored in `outfitter-litellm-admin-key`
+and mounted as `LOCAL_HOST_ROUTER_KEY` on the **link role only** (where heartbeats and the tick run;
+the api registers the router listener only there). Its routes are exactly what
+`src/local-hosts/router-sync.ts` calls: `/model/info`, `/model/new`, `/model/update`,
+`/model/delete`. That is a wider capability than its route count suggests: `allowed_routes` is
+route-level, so the key can add, repoint (`api_base`) or delete **any** router deployment, including
+ones that hold provider keys. It is accepted because the key never leaves the link service, can't mint
+or read keys, and `router-sync.ts` only writes `local/...` entries whose `model_info.metadata` it
+stamped (`outfitter: "local-host"`, `env`). Follow-up #466: a guard in our router fork so this key's
+writes may only touch `local/*` entries carrying that metadata. Before it is useful, check the
+router: `STORE_MODEL_IN_DB=True` (the `/model/*` writes need DB-backed models), and a `/model/new`
+with a caller-supplied `model_info.id` keeps that id (if not, `router-sync.ts` logs an error naming
+`STORE_MODEL_IN_DB` and leaves those entries alone instead of re-adding them every tick).
 
 ```bash
 DRY_RUN=1 ./litellm-admin.sh                      # shows the plan, reads nothing secret
 ./litellm-admin.sh                                # first time: creates the user + key, stores it
 ROTATE=1 ./litellm-admin.sh                       # new key, old secret versions disabled, old key deleted
+DRY_RUN=1 KEY=local-hosts ./litellm-admin.sh      # the Local Host key's plan
+KEY=local-hosts ./litellm-admin.sh                # first time: the /model/*-only key into outfitter-litellm-admin-key
 MASTER_KEY_PROJECT=<project> ./litellm-admin.sh   # if kernal-litellm-prod-master-key lives elsewhere
 ```
 
 The master key goes to curl through a process substitution and the new key straight into
 `gcloud secrets versions add`; neither is printed. Running services pick the new version up on their
 next revision. Test: `bash test/litellm-admin.test.sh`.
+
+Local Host entries (#384, `docs/specs/local-host.md` §3) register every downloaded model on a
+sharing laptop, loaded or not, and say in their description whether it was loaded at the last
+heartbeat. A request to a model that isn't loaded makes LM Studio load it first (JIT loading), which
+can take minutes for a large model and, with LM Studio's "Auto-Evict" setting on (its default for
+JIT-loaded models), unloads the model that was loaded before. People sharing a laptop that they also
+use themselves may want to turn JIT loading off in LM Studio's developer settings, which limits the
+router to the loaded models in practice.
+
+## Retiring the shared router keys (`litellm-retire-keys.sh`, owner-run)
+
+#399 (CA-10, `docs/specs/central-auth.md` §12, §14). Drives now get a per-run key each
+(`OUTFITTER_RUN_KEY_FALLBACK=0` in `config.env`: a failed mint is a retryable run.spec failure, never
+the shared key), and laptops get per-device keys at `kernal login`. What is left is to move
+Outfitter's own model calls off `MGM-Pi` and block the old shared keys:
+
+```bash
+DRY_RUN=1 ./litellm-retire-keys.sh system-key    # the plan; reads nothing secret, writes nothing
+./litellm-retire-keys.sh system-key              # outfitter-system key -> outfitter-litellm-key-default
+# ... release, check a Drive run and Outfitter's own calls ...
+DRY_RUN=1 ./litellm-retire-keys.sh block
+./litellm-retire-keys.sh block                   # blocks MGM-Pi, agent-testing, litellm-autorouter-testing-c
+./litellm-retire-keys.sh unblock <alias>         # undo one block
+```
+
+- **`system-key`**: `outfitter-litellm-key-default` (what `secrets.ts`'s
+  `SecretsBroker.defaultLitellmKey` reads: the router probe and model list when `LITELLM_ADMIN_KEY` is
+  unset, tapes without a key of their own in a run without an owner) held `MGM-Pi`, a key of the
+  owner's proxy_admin login. The script makes the LiteLLM user `outfitter-system` with
+  `user_role: internal_user` (a key takes its role from its user, so never proxy_admin), adds it to
+  the team with alias `outfitter-system`, mints a key for it in that team (`outfitter-system-<UTC
+  time>`, metadata `owner: outfitter`), stores it as a new version of the secret (created if missing),
+  and disables the older versions; a failed store deletes the new key again. The api reads the secret
+  live, so no deploy is needed for this step. A rerun does nothing while the stored key already is an
+  `outfitter-system-*` key (checked with `/key/info` as that key; only its alias is printed);
+  `ROTATE=1` mints a fresh one.
+- **`block`**: looks each alias up with `/key/list?key_alias=` and blocks it with `POST /key/block`
+  (master key), printing `blocked`, `already blocked` or `not found` per alias. It refuses to block
+  `MGM-Pi` while `outfitter-litellm-key-default` still holds it. Not blocked for now:
+  `UPSTREAM_LITELLM_API_KEY`, `ROUTER_ADMIN_KEY`, `local-test`, `cognitio-mgmsr`.
+
+Both read the master key (`kernal-litellm-prod-master-key`, `MASTER_KEY_PROJECT` as for
+`litellm-admin.sh`) into a variable and hand it to curl through a process substitution; no key value
+is printed. Test: `bash test/litellm-retire-keys.test.sh`.
 
 ## Web source maps (`sentry-token.sh`, owner-run)
 

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client.ts";
 import { accountApi, type ConfigResponse, type SettingDecl, type SettingsDocView, type SettingValue } from "../api/account.ts";
@@ -105,6 +106,10 @@ export function AccountPage() {
             these settings there; <code>kernal --profile &lt;name&gt;</code> picks a {vocabulary.profile.one.toLowerCase()}.
             A value set on a computer itself still wins over these, unless your {vocabulary.operator.one} locked it.
           </p>
+          <p className="session-meta">
+            Sign-ins to tools like Sentry, for your Drives and Kernal, are under{" "}
+            <Link to="/connections">{vocabulary.connection.many}</Link>.
+          </p>
 
           <section className="account-section" aria-labelledby="account-wide">
             <h3 id="account-wide">Account-wide settings</h3>
@@ -170,7 +175,7 @@ export function AccountPage() {
 
           <section className="account-section" aria-labelledby="account-local">
             <h3 id="account-local">Local models</h3>
-            <LocalModelsPanel doc={userDoc} effective={effective} onSave={saveUser} onReload={reloadUser} />
+            <LocalModelsPanel doc={userDoc} effective={effective} operator={operator} onSave={saveUser} onReload={reloadUser} />
           </section>
 
           <section className="account-section" aria-labelledby="account-spend">

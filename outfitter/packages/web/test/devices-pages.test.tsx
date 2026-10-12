@@ -268,11 +268,11 @@ describe("DevicesPage", () => {
     expect(text()).toContain("kernal login");
   });
 
-  it("keeps Dongles reachable, marked deprecated", async () => {
+  it("keeps Dongles reachable, marked retired", async () => {
     stubFetch((url) => (url === "/api/me/devices" ? json([]) : undefined));
     await render(<DevicesPage />, "/devices");
     expect(text()).toContain("No devices signed in yet.");
-    expect(text()).toContain("Dongles (deprecated)");
+    expect(text()).toContain("Dongles (retired)");
     expect(container!.querySelector("a[href='/tokens']")).not.toBeNull();
   });
 

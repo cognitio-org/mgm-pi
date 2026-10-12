@@ -24,6 +24,7 @@ import type { SseHub } from "./sse.ts";
 import { verifyAgentToken, bearerFromHeader } from "./auth.ts";
 import type { LaptopProbe } from "./laptop.ts";
 import { resolveRunModel } from "./laptop.ts";
+import { floppyModel, tapeThinking } from "./session-model.ts";
 import { validateSnapshotUrl, snapshotHostAllowlist } from "./snapshot-url.ts";
 import { MAIL_LEASE_MS, MAIL_MAX_ATTEMPTS, type MailService } from "./mail.ts";
 import { isBrowserActionKind, parseBrowserAction } from "./browser-action.ts";
@@ -47,6 +48,8 @@ import { isAssistantMessageEntry, liveThoughtTextFromEvent } from "./live-though
 import { sentryOn, sentrySignals, signalsOnWire, type FleetSettingsCache, type SentrySignals } from "./fleet-settings.ts";
 import { countRunEnd, isTerminal } from "./runs.ts";
 import { runSpecSettings, type RunKeys, type RunSpecSettings } from "./central/run-keys.ts";
+import { gcloudRun, mcpEnableFor, mcpEnableList, runKeyMcpToolsets } from "./central/gcloud-mcp.ts";
+import { checkpointEvent } from "./checkpoint-wire.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 /** #285: how often the open thought is written onto the run. The poller already lags by its
@@ -288,6 +291,9 @@ export interface RunSpecMessage {
    * device level; central/run-keys.ts runSpecSettings). Absent without an owner, for an A2A
    * session, or when they can't be resolved. agentd applies the keys it knows (settings.ts). */
   settings?: RunSpecSettings;
+  /** GA-3 (#493): operator-only MCP servers to switch on in the Drive (agentd/src/mcp-gate.ts). Present
+   * only for a tape with `adminTools: operator` whose owner is an operator; absent leaves them off. */
+  mcp?: { enable: string[] };
   idleStopSeconds: number;
   checkpointEvery: string;
 }
@@ -1220,10 +1226,12 @@ export class AgentLink {
         throw new A2ARunRefusedError(`a2a session ${session.id}: bad branch`, "this A2A session's branch isn't an outfitter/a2a-* branch, so it can't run.");
       }
     }
-    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model for the guru's cloud
-    // fallback when the laptop tunnel probes offline, and record it on the run for the UI.
-    const wanted = session.modelOverride ?? guru.model;
-    const online = await this.laptopProbe.isOnline();
+    // The floppy's own model (session-model.ts): pinned at creation, then whatever was switched to.
+    // A floppy from before the pin is pinned on its first spec here, from its transcript.
+    const wanted = await floppyModel(this.store, session, guru);
+    // E2.8 laptop model preflight (src/laptop.ts): swap a laptop-only model (`local/...`, or the
+    // `local-qwen-mlx` alias) for the guru's cloud fallback when that model is offline.
+    const online = await this.laptopProbe.isOnlineFor(wanted);
     const resolved = resolveRunModel({
       wanted,
       guruFallbackModel: guru.fallbackModel,
@@ -1331,17 +1339,21 @@ export class AgentLink {
             log: (msg, err) => console.warn(`[agentlink] ${msg}: ${String(err)}`),
           })
         : undefined;
-    const litellmKey = this.runKeys
-      ? (
-          await this.runKeys.keyForRun({
-            run,
-            session,
-            specSent: specSent ? "yes" : run.startup ? "no" : "unknown",
-            sharedKey: secrets.litellmKey,
-            a2a: a2aSession,
-          })
-        ).key
-      : secrets.litellmKey;
+    // GA-2/GA-3 (#492, #493): the tape has `adminTools: operator` and the owner is an operator. It
+    // admits the run key to the router's gcloud MCP server and switches the Drive's copy on.
+    const gcloud = gcloudRun(guru, session.ownerEmail, this.config.operators, a2aSession);
+    const keyChoice = this.runKeys
+      ? await this.runKeys.keyForRun({
+          run,
+          session,
+          specSent: specSent ? "yes" : run.startup ? "no" : "unknown",
+          sharedKey: secrets.litellmKey,
+          a2a: a2aSession,
+          gcloud,
+          googleCloudToolsetId: this.config.googleCloudToolsetId,
+        })
+      : undefined;
+    const litellmKey = keyChoice ? keyChoice.key : secrets.litellmKey;
     return {
       githubTokenExpiresAt: secrets.githubTokenExpiresAt,
       keepCurrentGithubToken,
@@ -1365,7 +1377,8 @@ export class AgentLink {
         systemPrompt: guru.systemPrompt,
         appendSystemPrompt: guru.appendSystemPrompt,
         model: resolved.model,
-        thinking: guru.thinking,
+        // A tape's `:level` model suffix is its thinking level; the floppy's model is bare.
+        thinking: tapeThinking(guru),
         tools: guru.tools,
         excludeTools: guru.excludeTools,
         packages: guru.packages,
@@ -1402,6 +1415,9 @@ export class AgentLink {
           }
         : {}),
       ...(settings ? { settings } : {}),
+      // Only when this spec carries the run's own key (gcloud-mcp.ts mcpEnableFor): a fallback to the
+      // shared key, or a spec that sends no key, has no router grant to enforce it.
+      ...(mcpEnableFor(gcloud, keyChoice) ? { mcp: { enable: mcpEnableList(runKeyMcpToolsets(gcloud, this.config.googleCloudToolsetId)) } } : {}),
       idleStopSeconds: this.config.idleStopSeconds,
       // Deviation from protocol.md (checkpointEvery isn't specced further, and agentd's
       // protocol.ts types it as a string rather than a number): checkpoint after every turn.
@@ -1769,6 +1785,10 @@ export class AgentLink {
           // hide the push before it.
           const landedAt = landed ? now : session?.checkpoint?.landedAt;
           if (landedAt) checkpoint.landedAt = landedAt;
+          // #501: the page's "Pushed 1m ago". Only a frame that sent commits moves it.
+          checkpoint.pushed = landed && pushed;
+          const pushedAt = landed && pushed ? now : session?.checkpoint?.pushedAt;
+          if (pushedAt) checkpoint.pushedAt = pushedAt;
         }
         // Finding #3 (docs/reports/security-review-pr1.md): snapshotUrl/workspaceUrl round-trip
         // back out as run.spec.snapshot.url / run.spec.workspace.snapshotUrl on the *next* run and
@@ -1799,7 +1819,9 @@ export class AgentLink {
         const sessionPatch: Partial<Session> = { checkpoint, updatedAt: now };
         if (takeBranch && reported && reported !== current) sessionPatch.branch = reported;
         await this.store.sessions.update(sessionId, sessionPatch);
-        this.sse.publish(sessionId, { type: "checkpoint", data: frame });
+        // #501: what was stored, not the frame (sse.ts's SsePoller sends the same shape from the
+        // store for a browser on the web role).
+        this.sse.publish(sessionId, { type: "checkpoint", data: checkpointEvent(checkpoint) });
         break;
       }
       case "startup": {

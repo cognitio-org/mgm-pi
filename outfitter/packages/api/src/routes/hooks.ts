@@ -26,6 +26,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { RouteContext } from "./context.ts";
 import { verifyTasksToken, bearerFromHeader } from "../auth.ts";
 import { sweepRouterKeys } from "../central/litellm-keys.ts";
+import { reconcileOperatorKeys } from "../central/gcloud-mcp.ts";
 import { GkeEndpointError, GkeProvider, KubeError, WARM_POOL_MAX_REPLICAS, WARM_POOL_MIN_REPLICAS } from "../providers/gke.ts";
 // Review finding L4: gke.ts itself is imported statically here (it's cheap -- no
 // google-auth-library or network at module load, only inside GkeProvider's methods), unlike
@@ -120,6 +121,13 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
     const a2a = await ctx.a2a.sweep().catch(() => undefined);
     // #394 §5.5: router key deletes that failed, and run keys past their expiry. Never fails the tick.
     const routerKeys = await sweepRouterKeys(ctx.litellmKeys, ctx.store);
+    // GA-2 (#492): a former operator's device key stops carrying gcloud. Never fails the tick.
+    const operatorKeys = await reconcileOperatorKeys(ctx.litellmKeys, ctx.store, ctx.config.operators);
+    // #378 Local Host (local-host.md §5): every listener's sweep (task A's ngrok clean-up, task B's
+    // router reconcile). Never fails the tick.
+    const localHosts = await ctx.localHostEvents.sweep().catch(() => undefined);
+    // #503 Auto-fix CI: failing checks on watched sessions' pull requests. Never fails the tick.
+    const autofix = await ctx.autofix.sweep().catch(() => undefined);
     return {
       woken,
       ...(previews ? { previews } : {}),
@@ -127,6 +135,9 @@ export async function registerHookRoutes(app: FastifyInstance, ctx: RouteContext
       ...(agentEngine ? { agentEngine } : {}),
       ...(a2a !== undefined ? { a2a } : {}),
       ...(routerKeys ? { routerKeys } : {}),
+      ...(operatorKeys && (operatorKeys.revoked || operatorKeys.failed) ? { operatorKeys } : {}),
+      ...(localHosts && Object.keys(localHosts).length ? { localHosts } : {}),
+      ...(autofix && (autofix.sent.length || autofix.capped.length) ? { autofix } : {}),
     };
   });
 

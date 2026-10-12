@@ -29,14 +29,12 @@ a,
   }
 }
 
-/* Composer.tsx renders both a <select> (desktop) and a segmented button group (phones) for the
- * send mode, so CSS alone decides which one shows. Base/hidden state lives here, above every
- * media query that might turn it on, so the max-width:700px override below wins on source order
- * (both rules target the same single-class selector, so specificity is tied). */
-.composer-mode-buttons {
+/* Composer.tsx renders two send-mode <select>s: full labels (desktop) and short labels (phones),
+ * so CSS alone decides which one shows. Base/hidden state lives here, above every media query that
+ * might turn it on, so the max-width:700px override below wins on source order (both rules target
+ * the same single-class selector, so specificity is tied). */
+.composer-mode-compact {
   display: none;
-  border: 1px solid var(--border);
-  overflow: hidden;
 }
 
 /* A comfortable minimum tap target everywhere, not just at phone width -- no hover-only
@@ -48,6 +46,27 @@ button,
 input,
 select {
   min-height: 44px;
+}
+
+/* With a mouse or trackpad the 44px finger target is mostly empty space: every toolbar, the
+ * session title bar and the composer stood a third taller than their text. A precise pointer gets
+ * 34px (still well over WCAG 2.5.8's 24px); touch screens of any width keep 44px. */
+@media (hover: hover) and (pointer: fine) {
+  button,
+  .btn,
+  .theme-toggle,
+  input,
+  select {
+    min-height: 34px;
+  }
+
+  .icon-toggle {
+    min-width: 36px;
+  }
+
+  .copy-chip {
+    min-height: 24px;
+  }
 }
 
 /* ---------- compact top bar (<=700px): logo + title + one menu button ---------- */
@@ -268,217 +287,60 @@ select {
   }
 }
 
-/* ---------- session page: composer sticks above the keyboard/home indicator ---------- */
+/* ---------- the composer on a phone (its card and pinning are styles/session.css, #498) ---------- */
 
 @media (max-width: 700px) {
   .app-main {
-    padding: 0.65rem;
+    padding: 0.5rem;
   }
 
-  .session-view {
-    /* iOS Safari's dynamic toolbar changes 100vh mid-scroll; dvh/svh track the *actual* visible
-     * viewport instead, which is what a sticky composer needs to stay pinned correctly. */
-    min-height: 100svh;
-  }
-
-  /* The page itself scrolls on a phone (the composer sticks to the visual viewport), so the
-   * session title bar sticks under the app bar instead of inside the panel. */
-  .session-scroll {
-    overflow: visible;
-    flex: none;
-    box-shadow: none;
-  }
-
-  .session-chrome {
-    top: var(--app-header-h, 0px);
-    z-index: 20;
-  }
-
-  .session-titlebar {
-    flex-wrap: wrap;
-  }
-
-  .session-window-name {
-    max-width: 46vw;
-  }
-
-  .session-titlebar .run-controls {
-    flex: 1 0 100%;
-    margin-left: 0;
-    justify-content: flex-start;
-  }
-
-  /* The repo/branch clause ellipsizes instead of wrapping the whole status line onto extra rows --
-   * a long "org/repo @ some-long-branch-name" was pushing the second header line taller than
-   * needed on a 390px screen. */
-  .session-repo-branch {
-    max-width: 65vw;
-  }
-
-  /* One sideways line, not a stack of wrapped facts under the title bar. */
-  .session-statusbar {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
-  .session-statusbar > * {
-    flex: 0 0 auto;
-  }
-
-  /* In the sideways scroller the GitHub chip takes its full width, like every other fact. Capped at
-   * 100% with nowrap and no clipping, its text used to spill past the box and draw over the chips
-   * after it (a preview's Share…, the IDE's Close). */
-  .session-statusbar > .github-chip {
-    max-width: none;
-  }
-
-  .session-model-info {
-    flex-wrap: nowrap;
-  }
-
-  .run-controls {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
+  .composer-controls {
     gap: 0.35rem;
-    width: 100%;
-    -webkit-overflow-scrolling: touch;
   }
 
-  .run-controls button,
-  .run-controls .btn {
-    flex: 1 1 0;
-    min-width: 0;
-    font-size: 0.76rem;
-    padding: 0.45rem 0.4rem;
-    white-space: nowrap;
-  }
-
-  /* The title bar holds every session button. Let them keep their labels and scroll sideways
-   * instead of shrinking "This Floppy's group" down to a few letters. */
-  .session-titlebar .run-controls button,
-  .session-titlebar .run-controls .btn,
-  .session-titlebar .run-controls select {
-    flex: 0 0 auto;
-    min-width: max-content;
-  }
-
-  .transcript {
-    max-height: none;
-    overflow-y: visible;
-    padding: 1.05rem 0.6rem 0.6rem;
-  }
-
-  .beat {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 1rem;
-  }
-
-  .beat .rail {
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    order: -1;
-  }
-
-  .beat .rail:empty {
+  /* Markdown formatting by toolbar isn't how anyone writes on a phone keyboard: Aa and its
+   * toolbar go, and the editor (still highlighting Markdown as you type) gets the room. */
+  .composer-controls .md-tools-toggle,
+  .md-toolbar,
+  .md-toolbar.open {
     display: none;
   }
 
-  /* The rail sits above the paragraph on a phone, so the bubble collapses upward into it. */
-  .beat.has-thought-bubble {
-    grid-template-columns: minmax(0, 1fr);
+  /* On a phone the editor starts at two lines (the keyboard takes half the screen already) and
+   * tall mode takes about a third of it. Send stays big. */
+  .composer .md-editor .md-editor-input {
+    min-height: 3.4rem;
+    max-height: 38svh;
   }
 
-  .beat.tools-only.has-thought-bubble .rail {
-    flex-direction: row;
+  .composer.is-tall .md-editor .md-editor-input,
+  .composer.is-tall .md-preview {
+    min-height: 34svh;
+    max-height: 55svh;
   }
 
-  .thought-bubble {
-    transform-origin: center top;
+  /* Same arrangement as the desktop: the editor spans the full width and Send closes the row under
+   * it, in the bottom-right corner by the thumb. */
+  .send-button {
+    min-width: 4.75rem;
+    min-height: 48px;
+    padding: 0.5rem 0.75rem;
   }
 
-  .thought-bubble-slot.is-collapsing .thought-bubble {
-    transform: translateY(-12px) scale(0.2);
-  }
-
-  .composer {
-    position: sticky;
-    bottom: 0;
-    z-index: 15;
-    background: var(--bg-elevated);
-    border-top: 1px solid var(--border-strong);
-    padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom));
-    margin: 0 -0.65rem -0.65rem;
-    overscroll-behavior: contain;
-  }
-
-  /* The <select> truncates its own selected-option text below ~140px ("Send (queued i...") --
-   * swap it for a compact segmented control of short labels (Composer.tsx renders both; CSS
-   * picks one per breakpoint) rather than trying to shrink the select further. */
+  /* The full-label <select> truncates itself below ~140px ("Prompt (queued i..."), and a
+   * three-button segmented control took most of the row. One small native picker with the short
+   * labels (Prompt / Steer / Follow-up) opens the phone's own selection sheet instead. */
   .composer-mode-select {
     display: none;
   }
 
-  .composer-mode-buttons {
-    display: flex;
-  }
-
-  /* Collapsed thinking row (EntryItem.tsx): the desktop <details> gives way to an icon+count chip
-   * that expands its body in place -- there's no room for a full-width preview line on a phone.
-   * The group wrapper drops its full-width dashed-box treatment here too, so a collapsed chip (a
-   * small icon button) doesn't sit inside an oversized empty rectangle -- it only regains that
-   * look once expanded. */
-  .entry.assistant-thinking-group {
-    width: fit-content;
-    max-width: 100%;
-    border: none;
-    background: none;
-    padding: 0;
-  }
-
-  .entry.assistant-thinking-group:has(.thinking-chip-body) {
-    width: auto;
-    border: 1px dashed var(--border);
-    background: var(--bg-inset);
-  }
-
-  .thinking-details {
-    display: none;
-  }
-
-  .thinking-chip {
-    display: inline-flex;
-    margin: 0;
-    border-style: dashed;
-  }
-
-  .thinking-chip[aria-expanded="true"] + .thinking-chip-body {
+  .composer-mode-compact {
     display: block;
+    min-width: 0;
+    max-width: 8.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.3rem;
   }
-}
-
-/* ---------- composer mode: <select> on desktop, segmented control on phones ---------- */
-/* Base (hidden) state lives near the top of this file; the max-width:700px block above turns it
- * on. This section is visual styling only. */
-
-.composer-mode-buttons button {
-  box-shadow: none;
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg-elevated);
-  font-size: 0.78rem;
-  padding: 0.42rem 0.55rem;
-  border-radius: 0;
-}
-
-.composer-mode-buttons button:last-child {
-  border-right: none;
-}
-
-.composer-mode-buttons button.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
 }
 
 /* ---------- dialogs: full-height sheets on mobile ---------- */

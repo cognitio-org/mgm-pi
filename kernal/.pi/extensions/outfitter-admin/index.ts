@@ -4,7 +4,7 @@
  * save a tape, check a session -- without working out the API.
  *
  * Registered only when there is a way in (transport.ts): the admin socket agentd opens in a Drive
- * whose tape has admin tools, or OUTFITTER_API plus OUTFITTER_TOKEN on a laptop. Otherwise the
+ * whose tape has admin tools, or a login (`kernal login`) on a laptop. Otherwise the
  * tools would only cost prompt tokens and fail. The API enforces every rule; this side only asks
  * the person before a delete on a laptop.
  */

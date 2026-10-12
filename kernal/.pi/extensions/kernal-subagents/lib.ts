@@ -70,8 +70,38 @@ function rewriteFields(rest: string, tool: string): string {
  * nothing the second time. `cli` (name -> command) is needed only for `models`, whose text never says
  * which agents run another tool.
  */
-export function annotateSubagentText(text: string, cli?: CliNames): string {
-  if (typeof text !== "string" || text.includes(CLI_NOTE)) return text;
+/**
+ * Drops builtin agents a subscription switch has replaced (subscriptions.md §5). List lines are
+ * removed; a get or a single-agent models view becomes one line. Empty means hide nothing.
+ */
+export function hideSubscriptionAgents(text: string, hide: readonly string[]): string {
+  if (!hide.length) return text;
+  const hidden = new Set(hide);
+  const lines = text.split("\n");
+  const head = lines.find((l) => l.trim() !== "");
+  if (head && (/^Agent: \S+/.test(head) || /^Subagent models?$/.test(head))) {
+    const agent = /^Agent: (\S+)/.exec(lines.find((l) => l.startsWith("Agent: ")) ?? "");
+    if (agent && hidden.has(agent[1])) return `${agent[1]} is hidden while its subscription is on.`;
+  }
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const listed = /^- ([^\s(]+) \(/.exec(lines[i]);
+    if (listed && hidden.has(listed[1])) continue;
+    if (!lines[i].startsWith(" ") && hidden.has(lines[i]) && lines[i + 1]?.startsWith("  ")) {
+      i++;
+      while (i < lines.length && lines[i].startsWith(" ")) i++;
+      i--;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+
+export function annotateSubagentText(text: string, cli?: CliNames, hide?: readonly string[]): string {
+  if (typeof text !== "string") return text;
+  if (hide?.length) text = hideSubscriptionAgents(text, hide);
+  if (text.includes(CLI_NOTE)) return text;
   const lines = text.split("\n");
   let listed = false, changed = false;
 

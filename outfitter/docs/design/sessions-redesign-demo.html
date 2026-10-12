@@ -1,0 +1,1261 @@
+<title>Outfitter Sessions Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&family=Silkscreen:wght@400;700&display=swap">
+<style>
+/* Layout concept: Claude Code's shape (session rail · transcript column · optional details pane)
+   dressed in Outfitter's two looks: C64 phosphor (dark, default) and GEOS paper (light).
+   Tokens are copied from packages/web/src/styles/theme.css so the demo reads like the real app. */
+:root {
+  color-scheme: dark;
+  --font-display: "Silkscreen", "Chicago", monospace;
+  --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-offset: 3px;
+
+  --bg: #302870;
+  --bg-elevated: #3a3184;
+  --bg-inset: #251f5c;
+  --bg-hover: #3f3690;
+  --border: #8b7cd8;
+  --border-soft: #5a4fae;
+  --border-strong: #b3a8f0;
+  --text: #e4e0fb;
+  --text-dim: #a89fe0;
+  --link: #b3a8f0;
+  --accent: #7869c4;
+  --accent-text: #ffffff;
+  --ok: #5cff8a;
+  --ok-contrast: #06210f;
+  --warn: #f4cf3c;
+  --warn-contrast: #2a2103;
+  --danger: #ff8a8a;
+  --danger-contrast: #350a0a;
+  --diff-add-bg: #1f4a3a;
+  --diff-add: #a6f29a;
+  --diff-del-bg: #4f2050;
+  --diff-del: #ff9a9a;
+  --syn-keyword: #f4cf3c;
+  --syn-string: #a6f29a;
+  --syn-title: #8fd3ff;
+  --scanline: rgba(0,0,0,.06);
+  --demo-bg: #1d1848;
+  --note: #f4cf3c;
+  --note-text: #2a2103;
+  --kitt: #ff4636; /* Knight Rider scanner red */
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f1ebdd; --bg-elevated: #fffdf8; --bg-inset: #e7ddc6; --bg-hover: #e9e1cd;
+    --border: #1a1712; --border-soft: #b9ad92; --border-strong: #000000;
+    --text: #171512; --text-dim: #5b5548; --link: #2a4b8d;
+    --accent: #2a4b8d; --accent-text: #fffdf8;
+    --ok: #2e6b3e; --ok-contrast: #eaf6ec; --warn: #8a5c10; --warn-contrast: #fbf1de;
+    --danger: #b0242b; --danger-contrast: #fdeceb;
+    --diff-add-bg: #dcefdc; --diff-add: #1f5a2e; --diff-del-bg: #f6dcdc; --diff-del: #8f1d22;
+    --syn-keyword: #2a4b8d; --syn-string: #2e6b3e; --syn-title: #7a1f6b;
+    --scanline: rgba(0,0,0,0);
+    --demo-bg: #d9d0b9; --note: #2a4b8d; --note-text: #fffdf8; --kitt: #c8141c;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1ebdd; --bg-elevated: #fffdf8; --bg-inset: #e7ddc6; --bg-hover: #e9e1cd;
+  --border: #1a1712; --border-soft: #b9ad92; --border-strong: #000000;
+  --text: #171512; --text-dim: #5b5548; --link: #2a4b8d;
+  --accent: #2a4b8d; --accent-text: #fffdf8;
+  --ok: #2e6b3e; --ok-contrast: #eaf6ec; --warn: #8a5c10; --warn-contrast: #fbf1de;
+  --danger: #b0242b; --danger-contrast: #fdeceb;
+  --diff-add-bg: #dcefdc; --diff-add: #1f5a2e; --diff-del-bg: #f6dcdc; --diff-del: #8f1d22;
+  --syn-keyword: #2a4b8d; --syn-string: #2e6b3e; --syn-title: #7a1f6b;
+  --scanline: rgba(0,0,0,0);
+  --demo-bg: #d9d0b9; --note: #2a4b8d; --note-text: #fffdf8; --kitt: #c8141c;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--demo-bg); color: var(--text);
+  font: 14px/1.5 var(--font-body);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--ok); outline-offset: 1px;
+}
+.mono { font-family: var(--font-mono); }
+.px { font-family: var(--font-display); letter-spacing: .08em; text-transform: uppercase; }
+
+/* ---------- demo chrome (not part of the proposal) ---------- */
+.demo-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px dashed var(--border-soft);
+  font-size: 12px; color: var(--text-dim);
+}
+.demo-bar strong { font-family: var(--font-display); font-weight: 400; color: var(--text); letter-spacing: .08em; font-size: 12px; }
+.demo-bar .spacer { flex: 1; }
+.seg { display: inline-flex; border: 1px solid var(--border); }
+.seg button { background: transparent; border: 0; padding: 4px 10px; font-size: 12px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.seg button + button { border-left: 1px solid var(--border); }
+.demo-btn { background: transparent; border: 1px solid var(--border); padding: 4px 10px; font-size: 12px; }
+.demo-btn[aria-pressed="true"] { background: var(--note); color: var(--note-text); border-color: var(--note); }
+
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: stretch; overflow: auto; }
+.stage.phone { align-items: center; padding: 16px; }
+.stage.phone .app {
+  width: 390px; height: min(800px, 100%); flex: none;
+  border: 2px solid var(--border-strong); box-shadow: 6px 6px 0 var(--bg-inset);
+}
+
+/* ---------- app shell ---------- */
+.app {
+  position: relative; flex: 1; min-width: 0; display: flex; background: var(--bg); overflow: hidden;
+}
+.app::after { /* faint scanlines, as in the live app's dark theme */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--scanline) 2px 3px);
+}
+
+/* sidebar = Disk Box */
+.side {
+  width: 280px; flex: none; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border-soft); background: var(--bg-inset); min-height: 0;
+}
+.side-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+.logo { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 14px; letter-spacing: .14em; flex: 1; }
+.logo svg { width: 20px; height: 20px; color: var(--ok); }
+.icon-btn {
+  background: transparent; border: 1px solid transparent; width: 30px; height: 30px;
+  display: inline-grid; place-items: center; color: var(--text-dim); flex: none;
+}
+.icon-btn:hover { border-color: var(--border-soft); color: var(--text); background: var(--bg-hover); }
+.icon-btn[aria-pressed="true"] { border-color: var(--border); color: var(--text); background: var(--bg-elevated); }
+.new-btn {
+  margin: 0 12px 10px; display: flex; align-items: center; gap: 8px; justify-content: center;
+  background: var(--accent); color: var(--accent-text); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--border-strong);
+  padding: 7px 10px; font-weight: 600;
+}
+.new-btn:active { transform: translate(2px,2px); box-shadow: 1px 1px 0 var(--border-strong); }
+.new-btn kbd { font: 11px var(--font-mono); opacity: .75; margin-left: auto; }
+.search { margin: 0 12px 6px; position: relative; }
+.search input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border-soft); color: var(--text);
+  padding: 6px 8px 6px 26px; font: 13px var(--font-body);
+}
+.search svg { position: absolute; left: 8px; top: 9px; width: 12px; height: 12px; color: var(--text-dim); }
+.side-list { flex: 1; overflow-y: auto; padding: 4px 6px 12px; min-height: 0; }
+.group-label { font-family: var(--font-display); font-size: 10px; letter-spacing: .12em; color: var(--text-dim); padding: 12px 8px 4px; text-transform: uppercase; display: flex; justify-content: space-between; }
+.row {
+  width: 100%; text-align: left; background: transparent; border: 1px solid transparent;
+  display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 8px; align-items: center;
+  padding: 7px 8px;
+}
+.row:hover { background: var(--bg-hover); }
+.row[aria-current="true"] { background: var(--bg-elevated); border-color: var(--border); box-shadow: 2px 2px 0 var(--border-soft); }
+.row-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row-meta { grid-column: 2 / 4; font: 12px var(--font-mono); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-time { font: 11px var(--font-mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.row-flag { font-family: var(--font-display); font-size: 9px; letter-spacing: .08em; padding: 1px 4px; background: var(--warn); color: var(--warn-contrast); }
+.side-foot { border-top: 1px solid var(--border-soft); padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.side-foot .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { width: 22px; height: 22px; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); font-family: var(--font-display); font-size: 10px; }
+
+/* lamps */
+.lamp { width: 8px; height: 8px; display: inline-block; flex: none; background: var(--text-dim); opacity: .55; }
+.lamp.running { background: var(--ok); opacity: 1; box-shadow: 0 0 6px var(--ok); animation: blink 1.2s steps(2) infinite; }
+.lamp.waiting { background: var(--warn); opacity: 1; }
+.lamp.ready { background: var(--ok); opacity: .8; }
+.lamp.error { background: var(--danger); opacity: 1; }
+@keyframes blink { 50% { opacity: .35; } }
+
+/* main */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.head {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px; min-height: 50px;
+  border-bottom: 1px solid var(--border-soft); background: var(--bg);
+}
+.head-title { min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px; }
+.head-title h1 { font-size: 15px; margin: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state { font-family: var(--font-display); font-size: 10px; letter-spacing: .1em; display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); white-space: nowrap; }
+.chips { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-soft);
+  padding: 3px 8px; font: 12px var(--font-mono); color: var(--text); background: transparent; white-space: nowrap;
+}
+.chip:hover { border-color: var(--border); background: var(--bg-hover); }
+.chip svg { width: 13px; height: 13px; flex: none; }
+.chip .ok { color: var(--ok); }
+.btn {
+  border: 1px solid var(--border); background: var(--bg-elevated); padding: 5px 10px; font-weight: 600; font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn:hover { background: var(--bg-hover); }
+.btn-primary { background: var(--accent); color: var(--accent-text); border-color: var(--border-strong); box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--border-strong); }
+.btn-primary:active { transform: translate(2px,2px); box-shadow: 1px 1px 0 var(--border-strong); }
+.btn-danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn-ghost { background: transparent; border-color: var(--border-soft); }
+
+.body { flex: 1; min-height: 0; display: flex; }
+.col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.transcript { max-width: 780px; margin: 0 auto; padding: 22px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+/* transcript pieces */
+.msg-user {
+  align-self: flex-end; max-width: 85%; background: var(--bg-elevated); border: 1px solid var(--border-soft);
+  padding: 9px 12px; white-space: pre-wrap;
+}
+.msg-user.queued { border-style: dashed; color: var(--text-dim); }
+.msg-user .tag { display: block; font-family: var(--font-display); font-size: 9px; letter-spacing: .1em; color: var(--text-dim); margin-bottom: 2px; }
+.msg-ai { display: grid; grid-template-columns: 14px 1fr; gap: 0 10px; }
+.msg-ai > .dot { width: 8px; height: 8px; background: var(--text); margin-top: 7px; }
+.msg-ai .prose { min-width: 0; }
+.prose p { margin: 0 0 8px; }
+.prose p:last-child { margin-bottom: 0; }
+.prose ul, .prose ol { margin: 4px 0 8px; padding-left: 20px; }
+.prose code { font: 12.5px var(--font-mono); background: var(--bg-inset); padding: 1px 4px; border: 1px solid var(--border-soft); }
+.prose h3 { font-size: 14px; margin: 10px 0 4px; }
+
+.tool { display: grid; grid-template-columns: 14px 1fr; gap: 0 10px; font: 13px/1.45 var(--font-mono); }
+.tool > .dot { width: 8px; height: 8px; margin-top: 6px; border: 1.5px solid var(--text-dim); }
+.tool.ok > .dot { background: var(--ok); border-color: var(--ok); }
+.tool.err > .dot { background: var(--danger); border-color: var(--danger); }
+.tool.run > .dot { border-color: var(--ok); animation: blink 1s steps(2) infinite; }
+.tool-line {
+  background: transparent; border: 0; padding: 0; text-align: left; font: inherit; min-width: 0;
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+}
+.tool-line:hover .tool-name { text-decoration: underline; }
+.tool-name { font-weight: 500; color: var(--text); }
+.tool-arg { color: var(--text-dim); overflow-wrap: anywhere; }
+.tool-sum { grid-column: 2; color: var(--text-dim); font-size: 12px; }
+.tool-sum::before { content: "└ "; opacity: .6; }
+.tool-sum .pass { color: var(--ok); }
+.tool-sum .fail { color: var(--danger); }
+.tool-out {
+  grid-column: 2; margin-top: 6px; background: var(--bg-inset); border: 1px solid var(--border-soft);
+  padding: 8px 10px; white-space: pre; overflow-x: auto; font-size: 12px; color: var(--text-dim); max-height: 240px;
+}
+.caret { display: inline-block; width: 10px; color: var(--text-dim); transition: transform .12s; }
+.open > .tool-line .caret, .open > .tool-line .caret { transform: rotate(90deg); }
+
+.diff { grid-column: 2; margin-top: 6px; border: 1px solid var(--border-soft); font-size: 12px; overflow-x: auto; }
+.diff-file { padding: 4px 10px; background: var(--bg-inset); border-bottom: 1px solid var(--border-soft); color: var(--text-dim); display: flex; justify-content: space-between; gap: 10px; }
+.diff-file b { color: var(--diff-add); font-weight: 500; } .diff-file i { color: var(--diff-del); font-style: normal; }
+.diff pre { margin: 0; padding: 4px 0; }
+.dl { display: block; padding: 0 10px; white-space: pre; }
+.dl.add { background: var(--diff-add-bg); color: var(--diff-add); }
+.dl.del { background: var(--diff-del-bg); color: var(--diff-del); }
+.dl .ln { display: inline-block; width: 28px; color: var(--text-dim); opacity: .7; user-select: none; }
+
+.think { display: grid; grid-template-columns: 14px 1fr; gap: 0 10px; }
+.think-line { background: none; border: 0; padding: 0; color: var(--text-dim); font: italic 13px var(--font-body); text-align: left; display: flex; gap: 6px; }
+.think-line .star { font-style: normal; color: var(--text-dim); }
+.think-body { grid-column: 2; margin-top: 4px; color: var(--text-dim); font-style: italic; border-left: 1px dashed var(--border-soft); padding-left: 10px; }
+
+.todo { border: 1px solid var(--border-soft); background: var(--bg-inset); }
+.todo-head { display: flex; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border-soft); font-family: var(--font-display); font-size: 10px; letter-spacing: .1em; color: var(--text-dim); }
+.todo ul { list-style: none; margin: 0; padding: 6px 10px 8px; display: grid; gap: 3px; font-size: 13px; }
+.todo li { display: grid; grid-template-columns: 18px 1fr; }
+.todo li.done { color: var(--text-dim); text-decoration: line-through; }
+.todo li.now { font-weight: 600; }
+.todo .box { font-family: var(--font-mono); }
+.todo li.now .box { color: var(--ok); }
+
+.ready-line { font-family: var(--font-display); font-size: 11px; letter-spacing: .1em; color: var(--ok); display: flex; align-items: center; gap: 4px; padding-left: 24px; }
+.cursor { width: 8px; height: 13px; background: var(--ok); animation: blink 1s steps(2) infinite; }
+.sys-note { font-size: 12px; color: var(--text-dim); text-align: center; font-family: var(--font-mono); display: flex; gap: 10px; align-items: center; }
+.sys-note::before, .sys-note::after { content: ""; flex: 1; border-top: 1px dashed var(--border-soft); }
+
+/* live status + permission + composer: the dock */
+.dock { padding: 0 16px 14px; max-width: 812px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.live {
+  display: flex; align-items: center; gap: 8px; font: 13px var(--font-mono); color: var(--text-dim); padding: 0 4px; flex-wrap: wrap;
+}
+.live .spin { color: var(--ok); width: 12px; display: inline-block; }
+.live .verb { color: var(--text); }
+.live .hint { margin-left: auto; font-size: 11px; }
+.perm { border: 1px solid var(--warn); background: var(--bg-elevated); box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--warn); }
+.perm-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border-soft); font-family: var(--font-display); font-size: 10px; letter-spacing: .1em; color: var(--warn); }
+.perm-body { padding: 8px 10px; display: grid; gap: 6px; }
+.perm-cmd { font: 13px var(--font-mono); background: var(--bg-inset); border: 1px solid var(--border-soft); padding: 6px 8px; overflow-x: auto; white-space: pre; }
+.perm-why { font-size: 13px; color: var(--text-dim); }
+.perm-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 10px 10px; }
+.perm-actions kbd { font: 11px var(--font-mono); opacity: .7; }
+
+.composer { border: 1px solid var(--border); background: var(--bg-elevated); box-shadow: var(--shadow-offset) var(--shadow-offset) 0 var(--bg-inset); }
+.composer:focus-within { border-color: var(--border-strong); }
+.composer textarea {
+  display: block; width: 100%; resize: none; border: 0; background: transparent; color: var(--text);
+  font: 14px/1.5 var(--font-body); padding: 10px 12px 4px; min-height: 48px; max-height: 200px; outline: none;
+}
+.composer textarea::placeholder { color: var(--text-dim); }
+.comp-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px 6px; }
+.comp-row .spacer { flex: 1; }
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid transparent;
+  padding: 3px 7px; font-size: 12px; color: var(--text-dim); white-space: nowrap;
+}
+.pill:hover { border-color: var(--border-soft); color: var(--text); }
+.pill.mono { font-family: var(--font-mono); }
+.ring { width: 18px; height: 18px; }
+.send {
+  width: 34px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border-strong);
+  background: var(--accent); color: var(--accent-text); box-shadow: 2px 2px 0 var(--border-strong);
+}
+.send:disabled { opacity: .45; cursor: default; box-shadow: none; }
+.send.break { background: var(--danger); color: var(--danger-contrast); border-color: var(--danger); box-shadow: 2px 2px 0 var(--bg-inset); }
+.comp-hint { font-size: 11px; color: var(--text-dim); padding: 0 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+.comp-hint kbd { font: 11px var(--font-mono); }
+
+/* details pane = Nerd out */
+.details { width: 340px; flex: none; border-left: 1px solid var(--border-soft); background: var(--bg-inset); overflow-y: auto; min-height: 0; }
+.det-sec { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+.det-sec h2 { margin: 0 0 8px; font-family: var(--font-display); font-weight: 400; font-size: 10px; letter-spacing: .12em; color: var(--text-dim); text-transform: uppercase; display: flex; justify-content: space-between; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; text-align: right; font-family: var(--font-mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meter { height: 8px; border: 1px solid var(--border); background: var(--bg); margin-top: 6px; }
+.meter > span { display: block; height: 100%; background: var(--ok); }
+.meter.warn > span { background: var(--warn); }
+.spark { width: 100%; height: 40px; display: block; margin-top: 6px; }
+.check-list { display: grid; gap: 4px; font: 12px var(--font-mono); }
+.check-list span { display: flex; gap: 8px; }
+.det-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* overflow menu + sheet */
+.menu {
+  position: absolute; z-index: 30; min-width: 240px; background: var(--bg-elevated); border: 1px solid var(--border-strong);
+  box-shadow: 4px 4px 0 var(--bg-inset); padding: 4px; display: grid;
+}
+.menu button { background: none; border: 0; text-align: left; padding: 7px 10px; display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: center; font-size: 13px; }
+.menu button:hover:not(:disabled) { background: var(--accent); color: var(--accent-text); }
+.menu button:disabled { opacity: .45; cursor: default; }
+.menu button small { color: inherit; opacity: .65; font: 11px var(--font-mono); }
+.menu hr { border: 0; border-top: 1px solid var(--border-soft); margin: 4px 0; }
+.menu .danger { color: var(--danger); }
+.scrim { position: absolute; inset: 0; z-index: 25; background: rgba(10,8,30,.45); }
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 31; background: var(--bg-elevated);
+  border-top: 2px solid var(--border-strong); max-height: 82%; overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.sheet-grip { width: 40px; height: 4px; background: var(--border-soft); margin: 8px auto; }
+.sheet .menu { position: static; box-shadow: none; border: 0; padding: 0 6px 6px; }
+.sheet .menu button { padding: 12px 10px; font-size: 15px; }
+.sheet .det-sec { background: var(--bg-inset); }
+
+.toast {
+  position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 40;
+  background: var(--text); color: var(--bg); padding: 6px 12px; font: 12px var(--font-mono); white-space: nowrap;
+}
+
+/* Knight Rider scanner: a 5px strip of pixel segments across the transcript/composer seam */
+.scanner-wrap { height: 5px; flex: none; position: relative; margin-bottom: 8px; }
+.scanner { display: block; width: 100%; height: 5px; color: var(--kitt); }
+:root[data-scanner="phosphor"] .scanner { color: var(--ok); }
+
+/* git + GitHub */
+.stat-add { color: var(--diff-add); } .stat-del { color: var(--diff-del); }
+.chip.fail { border-color: var(--danger); color: var(--danger); }
+.chip.behind { border-color: var(--warn); color: var(--warn); }
+.chip.merged { color: var(--text-dim); }
+.st-pass { color: var(--ok); } .st-fail { color: var(--danger); } .st-run { color: var(--warn); }
+.git-strip {
+  display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border-soft);
+  font: 12px var(--font-mono); color: var(--text-dim); overflow: hidden; white-space: nowrap;
+}
+.git-strip > button.strip-main { background: none; border: 0; padding: 0; display: flex; gap: 8px; align-items: center; min-width: 0; flex: 1; font: inherit; color: inherit; text-align: left; }
+.git-strip .br { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.git-strip svg { width: 13px; height: 13px; flex: none; }
+.tabs { display: flex; border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; background: var(--bg-inset); z-index: 2; }
+.tabs button { flex: 1; padding: 9px 8px; background: none; border: 0; font: 10px var(--font-display); letter-spacing: .12em; color: var(--text-dim); }
+.tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--ok); }
+.file-row {
+  display: grid; grid-template-columns: 12px 14px 1fr auto; gap: 6px; align-items: center; padding: 6px 14px; width: 100%;
+  background: none; border: 0; text-align: left; font: 12px var(--font-mono);
+}
+.file-row:hover { background: var(--bg-hover); }
+.file-row .st { font-weight: 500; }
+.file-row .st.A { color: var(--diff-add); } .file-row .st.M { color: var(--warn); } .file-row .st.U { color: var(--danger); }
+.file-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.file-row .caret { width: 12px; }
+.file-row.open .caret { transform: rotate(90deg); }
+.pane-diff { margin: 0 10px 10px; border: 1px solid var(--border-soft); font: 12px var(--font-mono); overflow-x: auto; background: var(--bg); }
+.pane-diff .dl { cursor: pointer; }
+.pane-diff .dl:hover { outline: 1px dashed var(--border); outline-offset: -1px; }
+.line-note { white-space: normal; margin: 3px 8px 5px 36px; padding: 5px 8px; border-left: 2px solid var(--warn); background: var(--bg-elevated); font: 12px/1.4 var(--font-body); color: var(--text); }
+.line-note .who { font: 9px var(--font-display); letter-spacing: .1em; color: var(--warn); display: block; }
+.line-form { white-space: normal; margin: 4px 8px 6px; display: grid; gap: 6px; }
+.line-form textarea, .field input, .field textarea, .field select {
+  width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font: 13px var(--font-body); resize: vertical;
+}
+.line-form .acts, .dialog .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.comments-bar { position: sticky; bottom: 0; padding: 10px 14px; background: var(--bg-elevated); border-top: 1px solid var(--warn); display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.comments-bar span { flex: 1; color: var(--text-dim); }
+.check-row { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; font: 12px var(--font-mono); padding: 2px 0; }
+.check-row a { color: var(--link); font-size: 11px; }
+.pr-title { font-weight: 600; margin: 0 0 2px; font-size: 13px; }
+.pr-sub { font: 12px var(--font-mono); color: var(--text-dim); margin-bottom: 8px; }
+.toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; margin-top: 10px; }
+.toggle-row small { display: block; color: var(--text-dim); font-size: 11px; }
+.switch { width: 34px; height: 18px; border: 1px solid var(--border); background: var(--bg); position: relative; padding: 0; flex: none; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: var(--text-dim); }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { left: 18px; background: var(--ok); }
+.callout { border: 1px solid var(--border-soft); padding: 8px 10px; font-size: 12px; margin-top: 8px; display: grid; gap: 6px; }
+.callout.fail { border-color: var(--danger); }
+.callout.warn { border-color: var(--warn); }
+.callout pre { margin: 0; font: 11px var(--font-mono); white-space: pre-wrap; color: var(--text-dim); }
+.empty { color: var(--text-dim); font-size: 12px; padding: 4px 0; }
+.dialog {
+  position: absolute; z-index: 41; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 24px));
+  background: var(--bg-elevated); border: 2px solid var(--border-strong); box-shadow: 6px 6px 0 var(--bg-inset);
+}
+.dialog-bar { height: 22px; display: flex; align-items: center; padding: 0 8px; background: repeating-linear-gradient(to bottom, var(--accent) 0 2px, var(--bg-inset) 2px 4px); }
+.dialog-bar span { background: var(--accent); color: var(--accent-text); font: 10px var(--font-display); letter-spacing: .12em; padding: 1px 8px; }
+.dialog form { padding: 14px; display: grid; gap: 10px; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.field.inline { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
+.field.inline input { width: auto; }
+.mpane { position: absolute; inset: 0; z-index: 28; background: var(--bg); display: flex; flex-direction: column; }
+.mpane-body { flex: 1; overflow-y: auto; min-height: 0; background: var(--bg-inset); }
+
+/* ---------- narrow (phone) layout: driven by the app's own width ---------- */
+.app.narrow .side { width: 100%; border-right: 0; }
+.app.narrow .side-head { padding-top: 14px; }
+.app.narrow .row { padding: 11px 10px; }
+.app.narrow .row-title { font-size: 15px; }
+.app.narrow .head { padding: 6px 8px; gap: 6px; min-height: 52px; }
+.app.narrow .head-title { flex-direction: column; align-items: flex-start; gap: 0; }
+.app.narrow .head-title h1 { font-size: 15px; max-width: 100%; }
+.app.narrow .transcript { padding: 14px 14px 20px; gap: 12px; }
+.app.narrow .msg-user { max-width: 92%; }
+.app.narrow .dock { padding: 0 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
+.app.narrow .comp-hint { display: none; }
+.app.narrow .live .hint { display: none; }
+.app.narrow .tool { font-size: 12.5px; }
+.app.narrow .new-btn kbd { display: none; }
+.app.narrow .menu button { font-size: 15px; }
+.fab {
+  position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 5;
+}
+
+/* ---------- design notes ---------- */
+[data-note] { position: relative; }
+.notes-on [data-note]::after {
+  content: attr(data-note); position: absolute; top: -7px; right: -7px; z-index: 20;
+  min-width: 18px; height: 18px; padding: 0 3px; display: grid; place-items: center;
+  background: var(--note); color: var(--note-text); font: 700 10px var(--font-display);
+  box-shadow: 1px 1px 0 var(--bg-inset); pointer-events: none;
+}
+.notes {
+  width: 340px; flex: none; background: var(--bg-elevated); border-left: 2px solid var(--note); overflow-y: auto; padding: 14px 16px;
+}
+.notes h2 { font-family: var(--font-display); font-weight: 400; font-size: 13px; letter-spacing: .1em; margin: 0 0 4px; }
+.notes > p { color: var(--text-dim); font-size: 13px; margin: 0 0 12px; }
+.notes ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.notes li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 13px; }
+.notes li .n { width: 20px; height: 20px; display: grid; place-items: center; background: var(--note); color: var(--note-text); font: 700 10px var(--font-display); }
+.notes li b { display: block; }
+.notes li span { color: var(--text-dim); }
+.stage-wrap { flex: 1; min-height: 0; display: flex; }
+@media (max-width: 900px) {
+  .notes { position: fixed; inset: auto 0 0 0; width: auto; max-height: 55%; border-left: 0; border-top: 2px solid var(--note); z-index: 50; }
+  .demo-bar .hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .lamp.running, .cursor, .tool.run > .dot { animation: none; } }
+</style>
+
+<div class="demo-bar" role="toolbar" aria-label="Demo controls">
+  <strong>OUTFITTER · SESSIONS REDESIGN</strong>
+  <span class="hide-sm">Proposal demo, sample data. Nothing here touches the live fleet.</span>
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="Preview size">
+    <button type="button" id="fitBtn" aria-pressed="true">Fit window</button>
+    <button type="button" id="phoneBtn" aria-pressed="false">Phone</button>
+  </div>
+  <button type="button" class="demo-btn" id="themeBtn">Theme: C64</button>
+  <button type="button" class="demo-btn" id="scanBtn">Scanner: KITT red</button>
+  <button type="button" class="demo-btn" id="notesBtn" aria-pressed="true">Change notes</button>
+</div>
+
+<div class="stage-wrap">
+  <div class="stage" id="stage"><div class="app notes-on" id="app"></div></div>
+  <aside class="notes" id="notes" aria-label="Change notes">
+    <h2>WHAT CHANGES</h2>
+    <p>Numbers match the yellow badges in the demo. Comment with a number ("#4: keep the YOU boxes") so I know which piece you mean.</p>
+    <ol id="notesList"></ol>
+  </aside>
+</div>
+
+<script>
+const NOTES = [
+  ["Disk Box becomes a sidebar", "Every floppy stays one click away while you work. Lamps show running (green blink), waiting on you (yellow) and ready. Grouped by Running / Today / Earlier, with search and ⌘K to jump. Each row shows its PR and CI state."],
+  ["One-line header", "Title, state, then the git chips: branch, +/− lines, PR and checks. Eject, Archive, Format, Split, Switch model and Stop Drive move into the ⋯ menu."],
+  ["Send turns into Break", "While a turn runs, the send button becomes ■ Break (Esc does the same). Sending to a stopped floppy wakes the Drive, so the Play button goes away."],
+  ["Transcript without boxes", "Assistant prose flows under a small pixel bullet. Your messages are inset blocks on the right. The YOU/ASSISTANT frames and the TRANSCRIPT title bar go."],
+  ["Tool calls as one-line rows", "Bash, Read, Grep show as ● name + argument, with a └ summary line. Click to expand the output. Runs of reads and searches fold into one row."],
+  ["Inline diffs and test results", "Edits show the diff right in the transcript. Test runs summarise pass/fail in green or red."],
+  ["Live status line", "Says what it's doing, elapsed time and tokens, with the Esc hint. Idle floppies end on the blinking READY. cursor."],
+  ["Task list", "The agent's todo list renders as a checklist card that updates in place."],
+  ["Permission requests inline", "Approvals dock above the composer with keyboard shortcuts (Enter allow, A always, Esc deny) instead of a modal panel."],
+  ["One composer card", "Mode, model, context ring, attach and mic sit in one row under the text. You can type while it works; the message queues as a follow-up."],
+  ["Right pane: Changes and Details", "Toggle with ◫. Changes is the git view (below). Details replaces Nerd out: model, thinking, context, spend, Drive stats, previews and logs."],
+  ["Phone: push navigation", "Disk Box is the home screen; a floppy opens full screen with a back arrow. A git strip under the header opens Changes full screen. ⋯ opens a bottom sheet with actions and details."],
+  ["Kept from today", "C64 and GEOS palettes, Silkscreen for labels and states only, square corners, hard offset shadows on primary buttons, scanlines, and the floppy/tape/drive vocabulary."],
+  ["Knight Rider scanner", "A 5px strip of pixel segments sweeps across the transcript/composer seam while a turn runs, with a fading trail. Gone when idle. KITT red or phosphor green: try the Scanner toggle above."],
+  ["Git chips in the header", "Branch (→ base), lines changed, commits behind base, and the PR with its checks. Each chip opens the Changes pane. On a phone they collapse into one strip."],
+  ["Changes pane", "Every changed file vs the base branch with +/− counts; open one to see its diff. Works while the Drive sleeps (reads the pushed branch). Shows the last checkpoint push, so you can see it's safe on GitHub."],
+  ["Comment on diff lines", "Click any diff line to leave a note. Notes collect at the bottom; Send hands them all to the agent as one message, with file and line for each."],
+  ["Create PR", "One button when the branch has changes and no PR. Title and body are prefilled from the floppy and the repo's PR template; Draft is a checkbox. Opens in Outfitter's name, on your behalf."],
+  ["CI checks + Fix CI + Auto-fix", "Checks show live in the chip and the pane. A failing check offers Fix CI, which sends the failing log to the agent. Auto-fix does that by itself whenever a check fails."],
+  ["Sync with base, conflicts, merge", "Behind main? Sync merges main into the branch. On a conflict, Resolve with agent hands the conflicted files over. Merge appears only when the tape allows merging from the cloud, and asks once to confirm."],
+];
+
+const ICON = {
+  logo: '<svg viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><g fill="currentColor"><rect x="5" y="0" width="2" height="5"/><rect x="9" y="0" width="2" height="5"/><rect x="4" y="3" width="8" height="2"/><rect x="3" y="4" width="10" height="11"/></g><rect x="7" y="6" width="2" height="2" fill="var(--bg-inset)"/><rect x="5" y="9" width="6" height="5" fill="var(--bg-inset)" opacity=".55"/></svg>',
+  search: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 8l3 3" stroke="currentColor" stroke-width="1.4"/></svg>',
+  panel: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" fill="none" stroke="currentColor"/><rect x="10" y="3" width="4" height="10" fill="currentColor" opacity=".6"/></svg>',
+  side: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" fill="none" stroke="currentColor"/><rect x="2" y="3" width="4" height="10" fill="currentColor" opacity=".6"/></svg>',
+  more: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="2" y="7" width="2.5" height="2.5" fill="currentColor"/><rect x="6.75" y="7" width="2.5" height="2.5" fill="currentColor"/><rect x="11.5" y="7" width="2.5" height="2.5" fill="currentColor"/></svg>',
+  back: '<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2"/></svg>',
+  up: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></svg>',
+  stop: '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="currentColor"/></svg>',
+  mic: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.5 7.5a4.5 4.5 0 009 0M8 12v2.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+  clip: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10.5 4.5l-5 5a1.5 1.5 0 002 2l5.5-5.5a3 3 0 00-4-4L3.5 7.5a4.5 4.5 0 006.5 6.5l4-4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+  branch: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4.5" cy="12.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11.5" cy="5.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 5.3v5.4M11.5 7.3c0 3-7 2-7 3.4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+  pr: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4" cy="12.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="12.5" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 5.3v5.4M12 10.7V6a2 2 0 00-2-2H7.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+};
+
+// ---------- sample data ----------
+const LOGIN_DIFF = [
+  [" ", 39, "  const [error, setError] = useState<string | null>(null);"],
+  ["+", 40, "  const [pending, setPending] = useState(false);"],
+  [" ", 41, "  async function onSubmit(e: FormEvent) {"],
+  [" ", 42, "    e.preventDefault();"],
+  ["+", 43, "    if (pending) return;"],
+  ["+", 44, "    setPending(true);"],
+  ["-", 43, "    await api.login(email, password);"],
+  ["+", 45, "    try { await api.login(email, password); }"],
+  ["+", 46, "    finally { setPending(false); }"],
+];
+const LOGIN_TEST = [
+  ["+", 1, 'import { render, screen, fireEvent } from "@testing-library/react";'],
+  ["+", 2, 'import { Login } from "./Login";'],
+  ["+", 3, ""],
+  ["+", 4, 'it("submits once on a double click", async () => {'],
+  ["+", 5, "  const login = vi.spyOn(api, \"login\").mockReturnValue(new Promise(() => {}));"],
+  ["+", 6, "  render(<Login />);"],
+  ["+", 7, '  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));'],
+  ["+", 8, '  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));'],
+  ["+", 9, "  expect(login).toHaveBeenCalledTimes(1);"],
+  ["+", 10, "});"],
+];
+const TOKENS_DIFF = [
+  [" ", 76, "export function verifyToken(stored: string, presented: string) {"],
+  ["-", 77, "  return stored === presented;"],
+  ["+", 77, "  const a = Buffer.from(stored);"],
+  ["+", 78, "  const b = Buffer.from(presented);"],
+  ["+", 79, "  if (a.length !== b.length) return false;"],
+  ["+", 80, "  return timingSafeEqual(a, b);"],
+  [" ", 81, "}"],
+];
+const VOICE_DIFF = [
+  [" ", 18, "export async function mintListenToken(user: User) {"],
+  ["-", 19, "  const res = await deepgram.keys.create({ scopes: [\"usage:write\"] });"],
+  ["+", 19, "  const res = await deepgram.auth.grantToken({ ttl_seconds: 60 });"],
+  ["+", 20, "  await recordVoiceUsage(user, \"token\");"],
+  [" ", 21, "  return res.access_token;"],
+];
+const VOICE_CONFLICT = [
+  [" ", 18, "export async function mintListenToken(user: User) {"],
+  ["-", 19, "<<<<<<< claude/voice-token"],
+  ["+", 20, "  const res = await deepgram.auth.grantToken({ ttl_seconds: 60 });"],
+  ["-", 21, "======="],
+  ["+", 22, "  const res = await deepgram.auth.grantToken({ ttl_seconds: 30, scope: \"listen\" });"],
+  ["-", 23, ">>>>>>> main"],
+];
+const file = (path, st, lines) => ({ path, st, lines,
+  add: lines.filter((l) => l[0] === "+").length, del: lines.filter((l) => l[0] === "-").length });
+
+const SESSIONS = [
+  {
+    id: "4f1c9a2e", title: "Fix login double-submit", state: "running", group: "Running",
+    repo: "cognitio-org/mgm-pi", branch: "claude/login-double-submit", when: "now", cost: 0.4127,
+    model: "claude-sonnet-5-5", thinking: "medium", ctx: [61200, 200000], tape: "Outfitter dev", tapeId: "9b2e77d1",
+    startedAt: Date.now() - 142000, tokens: 18400, verb: "Running the login tests",
+    git: { base: "main", ahead: 2, behind: 0, pushed: "1m ago", head: "7c1e9a4", mergeAllowed: true, autofix: true,
+      files: [file("src/pages/Login.tsx", "M", LOGIN_DIFF), file("src/pages/Login.test.tsx", "A", LOGIN_TEST)], pr: null },
+    items: [
+      { t: "user", text: "The login page sometimes double-submits on slow networks. Can you find out why and fix it? Keep the change small." },
+      { t: "think", secs: 4, body: "Likely the form has no in-flight guard. Find the submit handler first, then check whether the button disables." },
+      { t: "ai", html: "<p>I'll start by finding the login form and its submit handler.</p>" },
+      { t: "group", label: "Searched 1 pattern, read 2 files", items: [
+        { name: "Grep", arg: '"onSubmit" src/pages', sum: "3 matches in 2 files", out: 'src/pages/Login.tsx:41:  async function onSubmit(e: FormEvent) {\nsrc/pages/Login.tsx:88:      <form onSubmit={onSubmit}>\nsrc/pages/Signup.tsx:52:      <form onSubmit={onSubmit}>' },
+        { name: "Read", arg: "src/pages/Login.tsx", sum: "112 lines" },
+        { name: "Read", arg: "src/api/client.ts", sum: "lines 1–60" },
+      ]},
+      { t: "ai", html: "<p>Found it. The form never tracks an in-flight request, so a second click (or Enter) while <code>api.login</code> is pending fires another request.</p>" },
+      { t: "todo", items: [["done", "Find the submit handler"], ["done", "Add a pending guard to onSubmit"], ["now", "Disable the button while pending"], ["pending", "Add a double-click test"], ["pending", "Run the login tests"]] },
+      { t: "tool", name: "Edit", arg: "src/pages/Login.tsx", status: "ok", sum: "+5 −1", diff: { file: "src/pages/Login.tsx", add: 5, del: 1, lines: LOGIN_DIFF } },
+      { t: "tool", name: "Bash", arg: "npm test -- login", status: "run", sum: "running…" },
+    ],
+  },
+  {
+    id: "a83d0b11", title: "Auth review", state: "waiting", group: "Running",
+    repo: "cognitio-org/mgm-pi", branch: "claude/auth-review", when: "2m", cost: 0.2210,
+    model: "claude-opus-5-5", thinking: "high", ctx: [88400, 200000], tape: "Security pass", tapeId: "1c0e5a90",
+    git: { base: "main", ahead: 1, behind: 0, pushed: "4m ago", head: "b40f1d2", mergeAllowed: true, autofix: false,
+      files: [file("packages/api/src/tokens.ts", "M", TOKENS_DIFF)],
+      pr: { n: 503, title: "Compare session tokens in constant time", state: "open", review: "Review requested from @matej",
+        checks: [["web / test", "pass", "1m 52s"], ["api / test", "pass", "2m 10s"], ["typecheck", "pass", "48s"]] } },
+    items: [
+      { t: "user", text: "Review the session token handling in packages/api and open a PR with any fixes." },
+      { t: "group", label: "Read 4 files", items: [
+        { name: "Read", arg: "packages/api/src/auth.ts", sum: "214 lines" },
+        { name: "Read", arg: "packages/api/src/tokens.ts", sum: "188 lines" },
+        { name: "Read", arg: "packages/api/src/session-create.ts", sum: "96 lines" },
+        { name: "Read", arg: "packages/api/test/tokens.test.ts", sum: "140 lines" },
+      ]},
+      { t: "ai", html: "<h3>Findings</h3><ul><li>Session ids use <code>crypto.randomUUID()</code>, which is a CSPRNG. Good.</li><li>Token verification used <code>===</code>. I switched it to <code>timingSafeEqual</code>.</li></ul>" },
+      { t: "tool", name: "Edit", arg: "packages/api/src/tokens.ts", status: "ok", sum: "+4 −1", diff: { file: "packages/api/src/tokens.ts", add: 4, del: 1, lines: TOKENS_DIFF } },
+      { t: "tool", name: "Bash", arg: "npm test -w packages/api -- tokens", status: "ok", sum: '<span class="pass">✓ 24 passed</span> · 1.8s' },
+      { t: "ai", html: "<p>Opened <code>#503</code>. One more thing: the api tests run on Node 20 types. I'd like to bump <code>@types/node</code> so <code>timingSafeEqual</code>'s overloads type-check cleanly.</p>" },
+    ],
+    perm: { tool: "Bash", cmd: "npm install --save-dev @types/node@22", why: "Changes package.json and package-lock.json in packages/api." },
+  },
+  {
+    id: "c07e5512", title: "Router cost epic notes", state: "ready", group: "Today",
+    repo: "cognitio-org/router-litellm", branch: "outfitter/cost-notes", when: "1h", cost: 0.0961,
+    model: "gpt-5.2", thinking: "low", ctx: [22100, 400000], tape: "Writer", tapeId: "5d1f0c33",
+    git: { base: "main", ahead: 0, behind: 0, pushed: null, head: "e02f3b1", mergeAllowed: false, autofix: false, files: [], pr: null },
+    items: [
+      { t: "user", text: "Summarise where the GitHub Actions minutes went last week." },
+      { t: "tool", name: "Bash", arg: "gh run list --limit 200 --json name,conclusion,durationMs", status: "ok", sum: "200 runs" },
+      { t: "ai", html: "<p>Most of the spend is the image build on every push to a PR branch: 61% of minutes. Gating it behind the <code>ready-to-merge</code> label would cut it to roughly a fifth.</p>" },
+    ],
+  },
+  {
+    id: "e11f8c40", title: "Mermaid overflow on phones", state: "ready", group: "Today",
+    repo: "cognitio-org/mgm-pi", branch: "claude/mermaid-mobile", when: "3h", cost: 0.1544,
+    model: "claude-sonnet-5-5", thinking: "medium", ctx: [40300, 200000], tape: "Outfitter dev", tapeId: "9b2e77d1",
+    git: { base: "main", ahead: 0, behind: 0, pushed: "3h ago", head: "91aa0c7", mergeAllowed: true, autofix: false, files: [],
+      pr: { n: 497, title: "Keep wide mermaid diagrams inside their own scroller", state: "merged", review: "Approved by @matej", checks: [["web / test", "pass", "1m 40s"], ["typecheck", "pass", "51s"]] } },
+    items: [
+      { t: "user", text: "Wide mermaid diagrams push the page sideways on phones." },
+      { t: "ai", html: "<p>Wrapped diagrams in their own scroll container and capped the SVG at 100%. PR #497 is merged.</p>" },
+    ],
+  },
+  {
+    id: "77b2d9e3", title: "Voice: Deepgram token flow", state: "error", group: "Earlier",
+    repo: "cognitio-org/mgm-pi", branch: "claude/voice-token", when: "Mon", cost: 0.3302,
+    model: "gemini-3-pro", thinking: "medium", ctx: [12800, 1000000], tape: "Outfitter dev", tapeId: "9b2e77d1",
+    git: { base: "main", ahead: 3, behind: 4, pushed: "Mon 16:02", head: "3d7be20", mergeAllowed: true, autofix: false,
+      files: [file("packages/api/src/voice.ts", "M", VOICE_DIFF)],
+      pr: { n: 509, title: "Mint short-lived Deepgram tokens for the browser", state: "open", review: "No review yet",
+        checks: [["web / test", "pass", "1m 47s"], ["api / test", "fail", "2m 31s"], ["typecheck", "pass", "50s"]],
+        failLog: "FAIL test/voice.test.ts > mints a token scoped to listen\n  AssertionError: expected 401 to be 200\n  ❯ test/voice.test.ts:88:24" } },
+    items: [
+      { t: "user", text: "Mint a short-lived Deepgram token for the browser instead of proxying audio." },
+      { t: "tool", name: "Bash", arg: "npm test -w packages/api -- voice", status: "err", sum: '<span class="fail">✗ 2 failed</span>, 11 passed', out: "FAIL test/voice.test.ts > mints a token scoped to listen\n  expected 401 to be 200" },
+      { t: "sys", text: "Drive stopped after 30 min idle" },
+    ],
+  },
+  {
+    id: "2c44a018", title: "Floppy 2c44a018", state: "ready", group: "Earlier",
+    repo: null, branch: null, when: "Sep 30", cost: 0.0042, git: null,
+    model: "qwen3-coder-30b", thinking: "off", ctx: [3100, 131072], tape: "Local", tapeId: "0aa1c2d4",
+    items: [{ t: "user", text: "hello from the local modem" }, { t: "ai", html: "<p>Hi! I'm running on the shared local host. What should we work on?</p>" }],
+  },
+];
+SESSIONS.forEach((s) => { s.notes = []; });
+
+const S = {
+  sel: "4f1c9a2e", narrow: false, mobileView: "session", pane: "changes", sideOpen: true,
+  menu: false, sheet: false, mpane: false, open: new Set(), openFiles: new Set(["4f1c9a2e:0", "a83d0b11:0", "77b2d9e3:0"]),
+  commentAt: null, prDialog: false, mergeConfirm: false, query: "", toast: null,
+};
+const app = document.getElementById("app");
+const cur = () => SESSIONS.find((s) => s.id === S.sel);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const STATE_WORD = { running: "RUNNING", waiting: "NEEDS YOU", ready: "READY.", error: "LOAD ERROR" };
+const fmtCost = (c) => "$" + c.toFixed(c < 0.1 ? 4 : 2);
+const fmtTok = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
+const short = (b) => b.replace(/^(claude|outfitter)\//, "");
+
+// ---------- git helpers ----------
+function diffstat(g) { return g.files.reduce((a, f) => [a[0] + f.add, a[1] + f.del], [0, 0]); }
+function checkSummary(pr) {
+  const fail = pr.checks.filter((c) => c[1] === "fail").length;
+  const run = pr.checks.filter((c) => c[1] === "run").length;
+  const pass = pr.checks.filter((c) => c[1] === "pass").length;
+  if (fail) return { cls: "fail", text: `✗ ${fail} failing`, glyph: "✗" };
+  if (run) return { cls: "run", text: `◌ ${run} running`, glyph: "◌" };
+  return { cls: "pass", text: `✓ ${pass}/${pr.checks.length}`, glyph: "✓" };
+}
+function prChip(s) {
+  const pr = s.git.pr;
+  if (pr.state === "merged") return `<button type="button" class="chip merged" data-act="changes">${ICON.pr}#${pr.n} merged</button>`;
+  const c = checkSummary(pr);
+  return `<button type="button" class="chip${c.cls === "fail" ? " fail" : ""}" data-act="changes" title="${esc(pr.title)}">${ICON.pr}#${pr.n}${pr.draft ? " draft" : ""} <span class="st-${c.cls}">${c.text}</span></button>`;
+}
+function gitChips(s) {
+  const g = s.git; if (!g) return "";
+  const [a, d] = diffstat(g);
+  let out = `<button type="button" class="chip" data-act="changes" title="${esc(s.repo)}: ${esc(s.branch)} → ${g.base}">${ICON.branch}${esc(short(s.branch))}</button>`;
+  if (g.files.length) out += `<button type="button" class="chip" data-act="changes" title="${g.files.length} files changed"><span class="stat-add">+${a}</span><span class="stat-del">−${d}</span></button>`;
+  if (g.conflict) out += `<button type="button" class="chip fail" data-act="changes">⚠ conflict</button>`;
+  else if (g.behind) out += `<button type="button" class="chip behind" data-act="changes" title="${g.behind} commits behind ${g.base}">↓${g.behind} ${g.base}</button>`;
+  if (g.pr) {
+    out += prChip(s);
+    if (g.pr.state === "open" && checkSummary(g.pr).cls === "fail") out += `<button type="button" class="btn btn-ghost" data-act="fix-ci" data-note="19">Fix CI</button>`;
+  } else if (g.files.length) out += `<button type="button" class="btn" data-act="create-pr" data-note="18">${ICON.pr.replace("<svg", '<svg width="13" height="13"')} Create PR</button>`;
+  return out;
+}
+function rowGit(s) {
+  const g = s.git; if (!g) return "no repository";
+  let t = esc(short(s.branch));
+  if (g.pr) t += g.pr.state === "merged" ? ` · #${g.pr.n} merged` : ` · #${g.pr.n} <span class="st-${checkSummary(g.pr).cls}">${checkSummary(g.pr).glyph}</span>`;
+  return t;
+}
+
+// ---------- pieces ----------
+function sidebar() {
+  const q = S.query.trim().toLowerCase();
+  const list = SESSIONS.filter((s) => !q || (s.title + " " + (s.repo || "") + " " + (s.branch || "")).toLowerCase().includes(q));
+  return `<nav class="side" aria-label="Disk Box" data-note="1">
+    <div class="side-head">
+      <div class="logo">${ICON.logo}OUTFITTER</div>
+      ${S.narrow ? "" : `<button type="button" class="icon-btn" data-act="toggle-side" aria-label="Hide Disk Box" title="Hide Disk Box">${ICON.side}</button>`}
+    </div>
+    <button type="button" class="new-btn" data-act="new">${ICON.plus}<span>New Floppy</span><kbd>⌘N</kbd></button>
+    <label class="search">${ICON.search}<input id="search" type="search" placeholder="Search floppies  ⌘K" value="${esc(S.query)}" aria-label="Search floppies"></label>
+    <div class="side-list">
+      ${["Running", "Today", "Earlier"].map((g) => {
+        const rows = list.filter((s) => s.group === g);
+        if (!rows.length) return "";
+        return `<div class="group-label"><span>${g}</span><span>${rows.length}</span></div>` + rows.map((s) => `
+          <button type="button" class="row" data-sel="${s.id}" aria-current="${!S.narrow && s.id === S.sel}">
+            <span class="lamp ${s.state}" aria-label="${STATE_WORD[s.state]}"></span>
+            <span class="row-title">${esc(s.title)}</span>
+            ${s.state === "waiting" ? '<span class="row-flag">NEEDS YOU</span>' : `<span class="row-time">${s.when}</span>`}
+            <span class="row-meta">${rowGit(s)}</span>
+          </button>`).join("");
+      }).join("")}
+      <div class="group-label"><span>Archive</span><span>12</span></div>
+    </div>
+    <div class="side-foot">
+      <span class="avatar">MM</span><span class="who">mgm@mgms.eu</span>
+      <button type="button" class="icon-btn" title="Desk" aria-label="Desk">⌂</button>
+      <button type="button" class="icon-btn" title="Control Panel" aria-label="Control Panel">⚙</button>
+    </div>
+  </nav>`;
+}
+
+function header(s) {
+  return `<header class="head" data-note="2">
+    ${S.narrow ? `<button type="button" class="icon-btn" data-act="back" aria-label="Back to Disk Box" data-note="12">${ICON.back}</button>` : ""}
+    ${!S.narrow && !S.sideOpen ? `<button type="button" class="icon-btn" data-act="toggle-side" aria-label="Show Disk Box">${ICON.side}</button>` : ""}
+    <div class="head-title">
+      <h1>${esc(s.title)}</h1>
+      <span class="state"><span class="lamp ${s.state}"></span>${STATE_WORD[s.state]}</span>
+    </div>
+    ${S.narrow ? "" : `<div class="chips" data-note="15">${gitChips(s)}</div>`}
+    ${S.narrow ? "" : `<button type="button" class="icon-btn" data-act="pane" aria-pressed="${!!S.pane}" aria-label="Changes and details" title="Changes and details" data-note="11">${ICON.panel}</button>`}
+    <button type="button" class="icon-btn" data-act="menu" aria-label="More actions" aria-expanded="${S.menu || S.sheet}">${ICON.more}</button>
+  </header>`;
+}
+
+function gitStrip(s) {
+  const g = s.git; if (!g) return "";
+  const [a, d] = diffstat(g);
+  let pr = "";
+  if (g.pr) {
+    const c = checkSummary(g.pr);
+    pr = g.pr.state === "merged" ? `#${g.pr.n} merged` : `#${g.pr.n} <span class="st-${c.cls}">${c.text}</span>`;
+  }
+  const action = g.pr && g.pr.state === "open" && checkSummary(g.pr).cls === "fail"
+    ? `<button type="button" class="btn btn-ghost" data-act="fix-ci">Fix CI</button>`
+    : !g.pr && g.files.length ? `<button type="button" class="btn" data-act="create-pr">Create PR</button>` : "";
+  return `<div class="git-strip" data-note="15"><button type="button" class="strip-main" data-act="changes">${ICON.branch}<span class="br">${esc(short(s.branch))}</span>
+    ${g.files.length ? `<span class="stat-add">+${a}</span><span class="stat-del">−${d}</span>` : ""}${g.behind && !g.conflict ? `<span class="st-run">↓${g.behind}</span>` : ""}${g.conflict ? '<span class="st-fail">⚠ conflict</span>' : ""}${pr ? `<span>${pr}</span>` : ""}<span class="caret">›</span></button>${action}</div>`;
+}
+
+function diffLines(lines, sid, fi, commentable) {
+  const s = SESSIONS.find((x) => x.id === sid);
+  return lines.map(([k, n, t], li) => {
+    const key = `${sid}:${fi}:${li}`;
+    const notes = commentable ? s.notes.filter((c) => c.key === key) : [];
+    return `<span class="dl ${k === "+" ? "add" : k === "-" ? "del" : ""}" ${commentable ? `data-line="${key}" role="button" tabindex="0" title="Comment on this line"` : ""}><span class="ln">${n}</span>${k === " " ? " " : k} ${esc(t)}</span>` +
+      notes.map((c) => `<div class="line-note"><span class="who">YOUR NOTE</span>${esc(c.text)}</div>`).join("") +
+      (commentable && S.commentAt === key ? `<div class="line-form"><textarea id="lineNote" rows="2" placeholder="Note for the agent about line ${n}"></textarea><div class="acts"><button type="button" class="btn btn-ghost" data-act="note-cancel">Cancel</button><button type="button" class="btn btn-primary" data-act="note-save">Add note</button></div></div>` : "");
+  }).join("");
+}
+
+function transcriptDiff(d) {
+  return `<div class="diff" data-note="6"><div class="diff-file"><span>${esc(d.file)}</span><span><b>+${d.add}</b> <i>−${d.del}</i></span></div><pre>${d.lines.map(([k, n, t]) =>
+    `<span class="dl ${k === "+" ? "add" : k === "-" ? "del" : ""}"><span class="ln">${n}</span>${k === " " ? " " : k} ${esc(t)}</span>`).join("")}</pre></div>`;
+}
+
+function toolHtml(tool, key) {
+  const open = S.open.has(key);
+  const expandable = tool.out && !tool.diff;
+  const body = tool.diff ? transcriptDiff(tool.diff) : open && tool.out ? `<div class="tool-out">${esc(tool.out)}</div>` : "";
+  return `<div class="tool ${tool.status || "ok"}${open ? " open" : ""}">
+    <span class="dot"></span>
+    <button type="button" class="tool-line" ${expandable ? `data-toggle="${key}" aria-expanded="${open}"` : 'tabindex="-1"'}>
+      <span class="tool-name">${esc(tool.name)}</span><span class="tool-arg">${esc(tool.arg)}</span>${expandable ? '<span class="caret">›</span>' : ""}
+    </button>
+    ${tool.sum ? `<div class="tool-sum">${tool.sum}</div>` : ""}${body}
+  </div>`;
+}
+
+function transcript(s) {
+  let notedUser = false, notedTool = false;
+  const parts = s.items.map((it, i) => {
+    const key = s.id + ":" + i;
+    if (it.t === "user") {
+      const n = !notedUser ? (notedUser = true, ' data-note="4"') : "";
+      return `<div class="msg-user${it.queued ? " queued" : ""}"${n}>${it.queued ? '<span class="tag">QUEUED · SENDS AFTER THIS TURN</span>' : ""}${esc(it.text)}</div>`;
+    }
+    if (it.t === "ai") return `<div class="msg-ai"><span class="dot"></span><div class="prose">${it.html}</div></div>`;
+    if (it.t === "sys") return `<div class="sys-note">${esc(it.text)}</div>`;
+    if (it.t === "think") {
+      const open = S.open.has(key);
+      return `<div class="think"><span></span><button type="button" class="think-line" data-toggle="${key}" aria-expanded="${open}"><span class="star">✻</span>Thought for ${it.secs}s <span class="caret">›</span></button>${open ? `<div class="think-body">${esc(it.body)}</div>` : ""}</div>`;
+    }
+    if (it.t === "todo") {
+      const done = it.items.filter((x) => x[0] === "done").length;
+      return `<div class="todo" data-note="8"><div class="todo-head"><span>TASKS</span><span>${done}/${it.items.length}</span></div><ul>${it.items.map(([st, txt]) =>
+        `<li class="${st}"><span class="box">${st === "done" ? "☒" : st === "now" ? "▸" : "☐"}</span><span>${esc(txt)}</span></li>`).join("")}</ul></div>`;
+    }
+    if (it.t === "group") {
+      const open = S.open.has(key);
+      const n = !notedTool ? (notedTool = true, ' data-note="5"') : "";
+      return `<div class="tool ok${open ? " open" : ""}"${n}><span class="dot"></span>
+        <button type="button" class="tool-line" data-toggle="${key}" aria-expanded="${open}"><span class="tool-name">${esc(it.label)}</span><span class="caret">›</span></button>
+        ${open ? `<div style="grid-column:2;display:grid;gap:6px;margin-top:6px">${it.items.map((t, j) => toolHtml(t, key + ":" + j)).join("")}</div>` : ""}
+      </div>`;
+    }
+    if (it.t === "tool") return toolHtml(it, key);
+    return "";
+  });
+  if (s.state === "ready" || s.state === "error") parts.push(`<div class="ready-line" data-note="7">READY.<span class="cursor"></span></div>`);
+  return `<div class="transcript">${parts.join("")}</div>`;
+}
+
+function elapsed(s) { const t = Math.floor((Date.now() - s.startedAt) / 1000); return (t >= 60 ? Math.floor(t / 60) + "m " : "") + (t % 60) + "s"; }
+
+function dock(s) {
+  const running = s.state === "running";
+  const live = running ? `<div class="live" data-note="7" id="live"><span class="verb">${esc(s.verb)}…</span><span class="mono" id="elapsed">${elapsed(s)} · ↓ ${fmtTok(s.tokens)} tokens</span><span class="hint">esc to break</span></div>` : "";
+  const perm = s.perm ? `<div class="perm" role="alertdialog" aria-label="Permission request" data-note="9">
+      <div class="perm-head"><span class="lamp waiting"></span>ALLOW ${esc(s.perm.tool.toUpperCase())}?</div>
+      <div class="perm-body"><div class="perm-cmd">$ ${esc(s.perm.cmd)}</div><div class="perm-why">${esc(s.perm.why)}</div></div>
+      <div class="perm-actions">
+        <button type="button" class="btn btn-primary" data-perm="once">Allow <kbd>↵</kbd></button>
+        <button type="button" class="btn" data-perm="always">Always for this floppy <kbd>A</kbd></button>
+        <button type="button" class="btn btn-danger" data-perm="deny">Deny <kbd>esc</kbd></button>
+      </div></div>` : "";
+  const pct = Math.round((s.ctx[0] / s.ctx[1]) * 100);
+  const r = 7, c = 2 * Math.PI * r;
+  const ring = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="${r}" fill="none" stroke="var(--border-soft)" stroke-width="2.5"/><circle cx="9" cy="9" r="${r}" fill="none" stroke="${pct >= 80 ? "var(--danger)" : pct >= 50 ? "var(--warn)" : "var(--ok)"}" stroke-width="2.5" stroke-dasharray="${(c * pct) / 100} ${c}" transform="rotate(-90 9 9)"/></svg>`;
+  const placeholder = running ? "Add a follow-up. It sends when this turn ends" : s.state === "error" ? "Drive is asleep. Sending wakes it" : "Message " + s.title;
+  return `<div class="dock">
+    ${live}${perm}
+    <div class="composer" data-note="10">
+      <textarea id="msg" rows="1" placeholder="${esc(placeholder)}" aria-label="Message"></textarea>
+      <div class="comp-row">
+        <button type="button" class="pill" aria-label="Attach a file" title="Attach">${ICON.clip}</button>
+        <button type="button" class="pill" title="Send mode">${S.narrow ? "Prompt" : "Prompt ▾"}</button>
+        <button type="button" class="pill mono" data-act="model" title="Switch model">${esc(S.narrow ? s.model.replace("claude-", "") : s.model)} ▾</button>
+        <span class="spacer"></span>
+        <span class="pill mono" title="Context used: ${s.ctx[0].toLocaleString()} of ${s.ctx[1].toLocaleString()} tokens">${ring}${S.narrow ? "" : pct + "%"}</span>
+        <button type="button" class="pill" aria-label="Voice" title="Hold to talk">${ICON.mic}</button>
+        ${running
+          ? `<button type="button" class="send break" data-act="break" aria-label="Break" title="Break the current turn (Esc)" data-note="3">${ICON.stop}</button>`
+          : `<button type="button" class="send" data-act="send" aria-label="Send" title="Send (↵)" data-note="3" id="sendBtn" disabled>${ICON.up}</button>`}
+      </div>
+    </div>
+    <div class="comp-hint"><span><kbd>↵</kbd> send</span><span><kbd>⇧↵</kbd> newline</span><span><kbd>esc</kbd> break</span><span><kbd>⌘K</kbd> switch floppy</span></div>
+  </div>`;
+}
+
+function changesHtml(s) {
+  const g = s.git;
+  if (!g) return `<section class="det-sec"><p class="empty">This floppy has no repository. Pick one when you start a floppy to get branch, diff and PR tools here.</p></section>`;
+  const [a, d] = diffstat(g);
+  let prSec;
+  if (!g.pr) {
+    prSec = g.files.length
+      ? `<p class="empty">No pull request yet.</p><div class="det-actions"><button type="button" class="btn btn-primary" data-act="create-pr">Create PR</button></div>`
+      : `<p class="empty">Nothing to open a PR with yet: the branch matches ${g.base}.</p>`;
+  } else {
+    const pr = g.pr, cs = checkSummary(pr);
+    prSec = `<p class="pr-title">${esc(pr.title)}</p>
+      <div class="pr-sub">#${pr.n} · ${pr.state === "merged" ? "merged into " + g.base : (pr.draft ? "draft · " : "") + esc(pr.review)}</div>
+      <div data-note="19">${pr.checks.map(([n, st, t]) => `<div class="check-row"><span class="st-${st}">${st === "pass" ? "✓" : st === "fail" ? "✗" : "◌"}</span><span>${esc(n)}</span><span style="color:var(--text-dim)">${st === "run" ? "running" : t}</span></div>`).join("")}</div>
+      ${cs.cls === "fail" && pr.state === "open" ? `<div class="callout fail"><pre>${esc(pr.failLog || "")}</pre><div class="det-actions" style="margin:0"><button type="button" class="btn btn-primary" data-act="fix-ci">Fix CI</button><button type="button" class="btn btn-ghost" data-act="rerun">Re-run</button></div></div>` : ""}
+      ${pr.state === "open" ? `<div class="toggle-row"><span>Auto-fix CI<small>When a check fails, send its log to the agent</small></span><button type="button" class="switch" role="switch" aria-checked="${g.autofix}" aria-label="Auto-fix CI" data-act="autofix"></button></div>` : ""}
+      ${pr.state === "open" ? (g.mergeAllowed
+        ? `<div class="det-actions">${S.mergeConfirm
+            ? `<button type="button" class="btn btn-primary" data-act="merge-go" ${cs.cls !== "pass" || g.conflict ? "disabled" : ""}>Squash and merge into ${g.base}</button><button type="button" class="btn btn-ghost" data-act="merge-cancel">Cancel</button>`
+            : `<button type="button" class="btn" data-act="merge" ${cs.cls !== "pass" || g.conflict ? 'disabled title="Waiting for checks to pass"' : ""}>Merge…</button>`}<button type="button" class="btn btn-ghost" data-act="toast" data-msg="Opens github.com/${esc(s.repo)}/pull/${pr.n}">View on GitHub ↗</button></div>`
+        : `<p class="empty" style="margin-top:8px">Merging from the cloud is off for the ${esc(s.tape)} tape. Merge on GitHub or turn it on in the tape.</p>`) : ""}`;
+  }
+  const syncSec = g.conflict
+    ? `<div class="callout fail" data-note="20"><b>Merge conflict with ${g.base}</b><span>${g.files.filter((f) => f.st === "U").map((f) => esc(f.path)).join(", ")}</span><div class="det-actions" style="margin:0"><button type="button" class="btn btn-primary" data-act="resolve">Resolve with agent</button></div></div>`
+    : g.behind
+      ? `<div class="callout warn" data-note="20"><span>${g.behind} commits behind ${g.base}.</span><div class="det-actions" style="margin:0"><button type="button" class="btn" data-act="sync">Sync with ${g.base}</button></div></div>`
+      : "";
+  const files = g.files.map((f, fi) => {
+    const key = `${s.id}:${fi}`, open = S.openFiles.has(key);
+    return `<button type="button" class="file-row${open ? " open" : ""}" data-file="${key}" aria-expanded="${open}"><span class="caret">›</span><span class="st ${f.st}">${f.st}</span><span class="path" title="${esc(f.path)}">${esc(f.path)}</span><span><span class="stat-add">+${f.add}</span> <span class="stat-del">−${f.del}</span></span></button>` +
+      (open ? `<div class="pane-diff" ${fi === 0 ? 'data-note="17"' : ""}><pre style="margin:0;padding:4px 0">${diffLines(f.lines, s.id, fi, true)}</pre></div>` : "");
+  }).join("");
+  const pending = s.notes.length;
+  return `
+    <section class="det-sec"><h2><span>Branch</span><span>${g.ahead} ahead · ${g.behind} behind</span></h2>
+      <div class="mono" style="font-size:12px;overflow-wrap:anywhere">${esc(s.branch)} → ${g.base}</div>
+      <div class="mono" style="font-size:12px;color:var(--text-dim);margin-top:2px">${g.pushed ? `Pushed ${g.pushed} · ${g.head}` : "Nothing pushed yet"}</div>
+      ${syncSec}
+    </section>
+    <section class="det-sec"${g.pr ? "" : ' data-note="18"'}><h2><span>Pull request</span>${g.pr && g.pr.state === "open" ? `<span class="st-${checkSummary(g.pr).cls}">${checkSummary(g.pr).text}</span>` : ""}</h2>${prSec}</section>
+    <section data-note="16"><div class="det-sec" style="border-bottom:0;padding-bottom:4px"><h2><span>${g.files.length} files changed</span><span><span class="stat-add">+${a}</span> <span class="stat-del">−${d}</span></span></h2>${g.files.length ? '<p class="empty" style="padding:0">Click a line to leave a note for the agent.</p>' : `<p class="empty">No changes vs ${g.base}.</p>`}</div>${files}</section>
+    ${pending ? `<div class="comments-bar"><span>${pending} note${pending > 1 ? "s" : ""} on the diff</span><button type="button" class="btn btn-ghost" data-act="notes-clear">Discard</button><button type="button" class="btn btn-primary" data-act="notes-send">Send to agent</button></div>` : ""}`;
+}
+
+function detailsHtml(s) {
+  const pct = Math.round((s.ctx[0] / s.ctx[1]) * 100);
+  const pts = [12, 18, 15, 30, 42, 38, 55, 61, 48, 52, 70, 64, 58, 66, 72];
+  const path = pts.map((v, i) => `${(i / (pts.length - 1)) * 270},${38 - (v / 80) * 34}`).join(" ");
+  return `
+    <section class="det-sec"><h2><span>Floppy</span><span class="mono">${s.id}</span></h2>
+      <dl class="kv"><dt>Model</dt><dd>${esc(s.model)}</dd><dt>Thinking</dt><dd>${s.thinking}</dd><dt>Tape</dt><dd>${esc(s.tape)} · ${s.tapeId}</dd><dt>Spend</dt><dd>${fmtCost(s.cost)}</dd></dl>
+    </section>
+    <section class="det-sec"><h2><span>Context</span><span class="mono">${pct}%</span></h2>
+      <div class="mono" style="font-size:12px">${s.ctx[0].toLocaleString()} / ${s.ctx[1].toLocaleString()} tokens</div>
+      <div class="meter${pct >= 50 ? " warn" : ""}"><span style="width:${pct}%"></span></div>
+    </section>
+    <section class="det-sec"><h2><span>Drive</span><span>${s.state === "running" || s.state === "waiting" ? "UP" : "ASLEEP"}</span></h2>
+      <dl class="kv"><dt>Started in</dt><dd>14.2s</dd><dt>CPU</dt><dd>0.62 / 2 vCPU</dd><dt>Memory</dt><dd>1.4 / 4 GiB</dd></dl>
+      <svg class="spark" viewBox="0 0 270 40" preserveAspectRatio="none" aria-label="CPU over the last 15 minutes"><polyline points="0,38 ${path} 270,38" fill="var(--accent)" opacity=".35"/><polyline points="${path}" fill="none" stroke="var(--ok)" stroke-width="1.5"/></svg>
+      <div class="det-actions"><button type="button" class="btn btn-ghost">Logs</button><button type="button" class="btn btn-ghost">Open in VS Code</button></div>
+    </section>
+    <section class="det-sec"><h2><span>Previews</span></h2>
+      <div class="det-actions"><button type="button" class="chip">:5173 web</button><button type="button" class="chip">:8082 api</button></div>
+    </section>`;
+}
+
+function paneHtml(s) {
+  const tab = S.pane || "changes";
+  return `<div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="${tab === "changes"}" data-tab="changes">CHANGES${s.git && s.git.files.length ? " " + s.git.files.length : ""}</button><button type="button" role="tab" aria-selected="${tab === "details"}" data-tab="details">DETAILS</button></div>
+    ${tab === "changes" ? changesHtml(s) : detailsHtml(s)}`;
+}
+
+function menuItems(s) {
+  return `
+    ${S.narrow && s.git ? `<button type="button" data-act="changes"><span>±</span>Changes &amp; pull request<small>${s.git.files.length} files</small></button><hr>` : ""}
+    <button type="button" data-menu="eject"><span>⏏</span>Eject to laptop<small>kernal</small></button>
+    <button type="button" data-menu="vscode"><span>⌨</span>Open in VS Code</button>
+    <button type="button" data-menu="split"><span>◫</span>Split with…</button>
+    <button type="button" data-menu="model"><span>⚙</span>Switch model…</button>
+    <button type="button" data-menu="rename"><span>✎</span>Rename</button>
+    <hr>
+    <button type="button" data-menu="stop" ${s.state === "running" || s.state === "waiting" ? "" : "disabled"}><span>■</span>Stop Drive</button>
+    <button type="button" data-menu="archive"><span>▤</span>Archive</button>
+    <button type="button" data-menu="format" class="danger" disabled title="Archive the floppy first"><span>⌫</span>Format…<small>archived only</small></button>
+    <hr>
+    <button type="button" data-menu="copyid"><span>⧉</span>Copy tape id<small>${s.tapeId}</small></button>`;
+}
+
+function prDialog(s) {
+  const title = s.title.replace(/^Fix /, "Fix the ");
+  return `<div class="scrim" data-act="pr-cancel"></div><div class="dialog" role="dialog" aria-label="Create pull request">
+    <div class="dialog-bar"><span>CREATE PULL REQUEST</span></div>
+    <form id="prForm">
+      <div class="mono" style="font-size:12px;color:var(--text-dim)">${esc(s.repo)} · ${esc(s.branch)} → ${s.git.base} · ${s.git.ahead} commits</div>
+      <label class="field">Title<input id="prTitle" value="${esc(title)}"></label>
+      <label class="field">Description<textarea id="prBody" rows="6">## Summary
+- Guard onSubmit with a pending flag so a second click or Enter is ignored
+- Disable Sign in while the request is in flight
+- Add a double-click test
+
+## Test plan
+- npm test -- login</textarea></label>
+      <label class="field inline"><input type="checkbox" id="prDraft"> Open as draft</label>
+      <div class="acts"><button type="button" class="btn btn-ghost" data-act="pr-cancel">Cancel</button><button type="submit" class="btn btn-primary">Create PR</button></div>
+    </form></div>`;
+}
+
+function render() {
+  const s = cur();
+  const ta = document.getElementById("msg");
+  const draft = ta ? ta.value : "";
+  const focused = document.activeElement && document.activeElement.id;
+  const paneScroll = (document.querySelector(".details") || document.querySelector(".mpane-body") || {}).scrollTop || 0;
+  const showList = S.narrow ? S.mobileView === "list" : S.sideOpen;
+  const showSession = !S.narrow || S.mobileView === "session";
+  let html = "";
+  if (showList) html += sidebar();
+  if (showSession) {
+    html += `<div class="main">${header(s)}${S.narrow ? gitStrip(s) : ""}<div class="body"><div class="col"><div class="scroll" id="scroll">${transcript(s)}</div>
+      <div class="scanner-wrap" data-note="14">${s.state === "running" ? '<canvas class="scanner" id="scanner" aria-hidden="true"></canvas>' : ""}</div>${dock(s)}</div>
+      ${!S.narrow && S.pane ? `<aside class="details" aria-label="Changes and details">${paneHtml(s)}</aside>` : ""}</div></div>`;
+  }
+  if (S.narrow && S.mobileView === "list") html += `<button type="button" class="btn btn-primary fab" data-act="new">${ICON.plus} New Floppy</button>`;
+  if (S.narrow && S.mpane && S.mobileView === "session") {
+    html += `<div class="mpane" role="dialog" aria-label="Changes"><header class="head"><button type="button" class="icon-btn" data-act="mpane-close" aria-label="Back to the floppy">${ICON.back}</button><div class="head-title"><h1>Changes</h1><span class="state">${esc(s.title)}</span></div></header><div class="mpane-body">${changesHtml(s)}</div></div>`;
+  }
+  if (S.menu && !S.narrow) html += `<div class="scrim" data-act="close" style="background:transparent"></div><div class="menu" role="menu" style="top:46px;right:${(S.pane ? 340 : 0) + 12}px">${menuItems(s)}</div>`;
+  if (S.sheet && S.narrow) html += `<div class="scrim" data-act="close"></div><div class="sheet" role="dialog" aria-label="Floppy actions"><div class="sheet-grip"></div><div class="menu" role="menu">${menuItems(s)}</div>${detailsHtml(s)}</div>`;
+  if (S.prDialog) html += prDialog(s);
+  if (S.toast) html += `<div class="toast" role="status">${esc(S.toast)}</div>`;
+  app.classList.toggle("narrow", S.narrow);
+  app.innerHTML = html;
+  const pane = document.querySelector(".details") || document.querySelector(".mpane-body");
+  if (pane) pane.scrollTop = paneScroll;
+  const nt = document.getElementById("msg");
+  if (nt) { nt.value = draft; autosize(nt); syncSend(); if (focused === "msg") nt.focus(); }
+  const sr = document.getElementById("search");
+  if (sr && focused === "search") { sr.focus(); sr.setSelectionRange(sr.value.length, sr.value.length); }
+  const ln = document.getElementById("lineNote"); if (ln) ln.focus();
+}
+
+function autosize(t) { if (!t.value) { t.style.height = ""; return; } t.style.height = "auto"; t.style.height = Math.min(200, t.scrollHeight) + "px"; }
+function syncSend() { const b = document.getElementById("sendBtn"), t = document.getElementById("msg"); if (b && t) b.disabled = !t.value.trim(); }
+function scrollBottom() { const sc = document.getElementById("scroll"); if (sc) sc.scrollTop = sc.scrollHeight; }
+let toastTimer;
+function toast(msg) { S.toast = msg; render(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { S.toast = null; render(); }, 2000); }
+
+// A fake agent turn: your message, a scanner sweep, then a reply and an optional side effect.
+function agentRun(s, text, reply, verb, after) {
+  if (s.state === "running") { s.items.push({ t: "user", text, queued: true }); render(); scrollBottom(); return; }
+  s.items.push({ t: "user", text });
+  if (s.state === "error") s.items.push({ t: "sys", text: "Waking Drive · 9.8s" });
+  s.perm = null;
+  s.state = "running"; s.group = "Running"; s.startedAt = Date.now(); s.tokens = 0; s.verb = verb || "Thinking"; s.when = "now";
+  render(); scrollBottom();
+  setTimeout(() => {
+    s.items.push({ t: "ai", html: reply });
+    s.state = "ready";
+    if (after) after();
+    render(); scrollBottom();
+  }, 3200);
+}
+function send() {
+  const t = document.getElementById("msg"); const text = t && t.value.trim(); if (!text) return;
+  t.value = "";
+  agentRun(cur(), text, "<p>(Demo) Got it. In the real app the reply streams in here, with tool rows appearing as they run.</p>");
+}
+function fixCi(s) {
+  const pr = s.git.pr;
+  agentRun(s, `CI failed on #${pr.n} (api / test). Fix it and push.\n\n${pr.failLog}`,
+    "<p>The test still expected the old <code>keys.create</code> scope. I updated it for <code>grantToken</code> and pushed <code>4a90e1c</code>. Checks are running again.</p>",
+    "Fixing api / test", () => {
+      s.git.head = "4a90e1c"; s.git.pushed = "just now";
+      pr.checks = pr.checks.map((c) => [c[0], "run", c[2]]);
+      setTimeout(() => { pr.checks = pr.checks.map((c) => [c[0], "pass", c[2]]); render(); }, 3500);
+    });
+}
+
+app.addEventListener("submit", (e) => {
+  if (e.target.id !== "prForm") return;
+  e.preventDefault();
+  const s = cur();
+  s.git.pr = { n: 512, title: document.getElementById("prTitle").value, state: "open", draft: document.getElementById("prDraft").checked,
+    review: "No review yet", checks: [["web / test", "run", "1m 50s"], ["api / test", "run", "2m 05s"], ["typecheck", "run", "49s"]] };
+  s.items.push({ t: "sys", text: `You opened PR #512 · ${s.branch} → ${s.git.base}` });
+  S.prDialog = false; S.pane = S.pane || "changes";
+  render(); scrollBottom();
+  setTimeout(() => { s.git.pr.checks = s.git.pr.checks.map((c) => [c[0], "pass", c[2]]); render(); }, 4500);
+});
+
+app.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-sel],[data-act],[data-toggle],[data-menu],[data-perm],[data-tab],[data-file],[data-line]");
+  if (!el) return;
+  const s = cur();
+  if (el.dataset.sel) { S.sel = el.dataset.sel; S.mobileView = "session"; S.menu = S.sheet = S.mpane = false; S.mergeConfirm = false; S.commentAt = null; render(); scrollBottom(); return; }
+  if (el.dataset.toggle) { const k = el.dataset.toggle; S.open.has(k) ? S.open.delete(k) : S.open.add(k); render(); return; }
+  if (el.dataset.tab) { S.pane = el.dataset.tab; render(); return; }
+  if (el.dataset.file) { const k = el.dataset.file; S.openFiles.has(k) ? S.openFiles.delete(k) : S.openFiles.add(k); render(); return; }
+  if (el.dataset.line) { if (e.target.closest(".line-form")) return; S.commentAt = S.commentAt === el.dataset.line ? null : el.dataset.line; render(); return; }
+  if (el.dataset.perm) {
+    const p = s.perm; s.perm = null;
+    if (el.dataset.perm === "deny") { s.items.push({ t: "sys", text: "You denied: " + p.cmd }); }
+    else {
+      s.items.push({ t: "tool", name: "Bash", arg: p.cmd, status: "ok", sum: "added 1 package, changed 2 files" });
+      s.items.push({ t: "ai", html: "<p>Done, and pushed to <code>#503</code>. Checks will re-run.</p>" });
+    }
+    s.state = "ready"; s.group = "Today"; render(); scrollBottom(); return;
+  }
+  if (el.dataset.menu) {
+    const m = el.dataset.menu; S.menu = S.sheet = false;
+    const msgs = { eject: "Copied: kernal teleport " + s.id, copyid: "Copied tape id " + s.tapeId, archive: "Archived (demo, not really)", stop: "Drive stopping (demo)", vscode: "Opens VS Code (demo)", split: "Pick a floppy to split with (demo)", model: "Model picker opens (demo)", rename: "Inline rename (demo)" };
+    if (m === "stop") s.state = "ready";
+    toast(msgs[m] || m); return;
+  }
+  const a = el.dataset.act, g = s.git;
+  switch (a) {
+    case "toggle-side": S.sideOpen = !S.sideOpen; break;
+    case "pane": S.pane = S.pane ? null : "changes"; break;
+    case "changes": S.menu = S.sheet = false; if (S.narrow) S.mpane = true; else S.pane = "changes"; break;
+    case "mpane-close": S.mpane = false; break;
+    case "menu": if (S.narrow) S.sheet = !S.sheet; else S.menu = !S.menu; break;
+    case "close": S.menu = S.sheet = false; break;
+    case "back": S.mobileView = "list"; break;
+    case "new": toast("New Floppy dialog (unchanged in this pass)"); return;
+    case "model": toast("Model picker opens (demo)"); return;
+    case "toast": toast(el.dataset.msg); return;
+    case "break":
+      s.state = "ready";
+      s.items = s.items.map((it) => (it.status === "run" ? { ...it, status: "err", sum: '<span class="fail">interrupted</span>' } : it));
+      s.items.push({ t: "sys", text: "You pressed Break" });
+      break;
+    case "send": send(); return;
+    case "create-pr": S.prDialog = true; break;
+    case "pr-cancel": S.prDialog = false; break;
+    case "fix-ci": S.mpane = false; fixCi(s); return;
+    case "rerun": g.pr.checks = g.pr.checks.map((c) => [c[0], c[1] === "fail" ? "run" : c[1], c[2]]); setTimeout(() => { g.pr.checks = g.pr.checks.map((c) => [c[0], c[1] === "run" ? "fail" : c[1], c[2]]); render(); }, 3000); break;
+    case "autofix": g.autofix = !g.autofix; toast(g.autofix ? "Auto-fix on: failing checks go to the agent" : "Auto-fix off"); return;
+    case "merge": S.mergeConfirm = true; break;
+    case "merge-cancel": S.mergeConfirm = false; break;
+    case "merge-go":
+      S.mergeConfirm = false; g.pr.state = "merged"; g.ahead = 0; g.files = [];
+      s.items.push({ t: "sys", text: `You merged #${g.pr.n} into ${g.base} (squash)` }); render(); scrollBottom(); return;
+    case "sync":
+      if (s.id === "77b2d9e3") {
+        g.conflict = true; g.files = [file("packages/api/src/voice.ts", "U", VOICE_CONFLICT)];
+        s.items.push({ t: "sys", text: `Merging ${g.base} into ${s.branch}: conflict in packages/api/src/voice.ts` });
+      } else { g.behind = 0; s.items.push({ t: "sys", text: `Synced with ${g.base}` }); }
+      render(); scrollBottom(); return;
+    case "resolve":
+      S.mpane = false;
+      agentRun(s, `Merging ${g.base} into this branch conflicts in packages/api/src/voice.ts. Resolve it, keeping main's 30 s TTL and listen scope, run the voice tests, and push.`,
+        "<p>Resolved: kept <code>ttl_seconds: 30</code> and <code>scope: \"listen\"</code> from main, plus our usage recording. Voice tests pass; pushed <code>c81d3e5</code>.</p>",
+        "Resolving the merge conflict", () => { g.conflict = false; g.behind = 0; g.ahead = 5; g.pushed = "just now"; g.head = "c81d3e5"; g.files = [file("packages/api/src/voice.ts", "M", VOICE_DIFF)]; });
+      return;
+    case "note-cancel": S.commentAt = null; break;
+    case "note-save": {
+      const v = document.getElementById("lineNote").value.trim();
+      if (v) s.notes.push({ key: S.commentAt, text: v });
+      S.commentAt = null; break;
+    }
+    case "notes-clear": s.notes = []; break;
+    case "notes-send": {
+      const lines = s.notes.map((c) => { const [, fi, li] = c.key.split(":"); const f = g.files[fi]; return `${f.path}:${f.lines[li][1]}: ${c.text}`; });
+      s.notes = []; S.mpane = false;
+      agentRun(s, "Notes on the diff:\n" + lines.map((l) => "- " + l).join("\n"),
+        "<p>Thanks, I'll work through each note and push when done.</p>", "Reading your notes");
+      return;
+    }
+  }
+  render();
+});
+app.addEventListener("input", (e) => {
+  if (e.target.id === "msg") { autosize(e.target); syncSend(); }
+  if (e.target.id === "search") { S.query = e.target.value; render(); }
+});
+app.addEventListener("keydown", (e) => {
+  if (e.target.id === "msg" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.target.dataset && e.target.dataset.line && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (S.prDialog || S.commentAt) { S.prDialog = false; S.commentAt = null; render(); return; }
+    if (S.menu || S.sheet || S.mpane) { S.menu = S.sheet = S.mpane = false; render(); return; }
+    const s = cur();
+    if (s.perm) { app.querySelector('[data-perm="deny"]').click(); return; }
+    if (s.state === "running") app.querySelector('[data-act="break"]').click();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (S.narrow) S.mobileView = "list"; else S.sideOpen = true;
+    render(); const sr = document.getElementById("search"); if (sr) sr.focus();
+  }
+});
+
+// live counters for the running floppy
+setInterval(() => {
+  const s = cur(); if (s.state !== "running") return;
+  s.tokens += 37;
+  const el = document.getElementById("elapsed");
+  if (el) el.textContent = `${elapsed(s)} · ↓ ${fmtTok(s.tokens)} tokens`;
+}, 250);
+
+// Knight Rider scanner: pixel segments, an eased ping-pong head and a fading trail.
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+function drawScanner(t) {
+  const c = document.getElementById("scanner");
+  if (c) {
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const SEG = 6, GAP = 2, step = SEG + GAP, n = Math.max(1, Math.floor((w + GAP) / step));
+    const off = (w - (n * step - GAP)) / 2;
+    ctx.fillStyle = getComputedStyle(c).color;
+    ctx.globalAlpha = 0.13;
+    for (let i = 0; i < n; i++) ctx.fillRect(off + i * step, 0, SEG, h);
+    if (reduceMotion.matches) {
+      ctx.globalAlpha = 0.45 + 0.35 * Math.sin(t / 400);
+      for (let i = 0; i < n; i++) ctx.fillRect(off + i * step, 0, SEG, h);
+    } else {
+      const period = 1900, p = (t % period) / period;
+      const tri = p < 0.5 ? p * 2 : 2 - p * 2;
+      const head = (0.5 - 0.5 * Math.cos(tri * Math.PI)) * (n - 1);
+      const dir = p < 0.5 ? 1 : -1;
+      const trail = Math.max(5, Math.round(n * 0.14));
+      for (let k = trail; k >= 0; k--) {
+        const i = Math.round(head - dir * k);
+        if (i < 0 || i >= n) continue;
+        ctx.globalAlpha = Math.pow(1 - k / (trail + 1), 1.8);
+        ctx.fillRect(off + i * step, 0, SEG, h);
+      }
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+      ctx.fillRect(off + Math.round(head) * step - 1, 0, SEG + 2, h);
+      ctx.shadowBlur = 0;
+    }
+  }
+  requestAnimationFrame(drawScanner);
+}
+requestAnimationFrame(drawScanner);
+
+// narrow mode follows the app's own width, so the Phone frame and a real phone behave the same
+new ResizeObserver(([entry]) => {
+  const n = entry.contentRect.width < 720;
+  if (n !== S.narrow) { S.narrow = n; S.menu = S.sheet = S.mpane = false; render(); scrollBottom(); }
+}).observe(app);
+
+// demo chrome
+const stage = document.getElementById("stage");
+const fitBtn = document.getElementById("fitBtn"), phoneBtn = document.getElementById("phoneBtn");
+function setPhone(on) { stage.classList.toggle("phone", on); fitBtn.setAttribute("aria-pressed", !on); phoneBtn.setAttribute("aria-pressed", on); }
+fitBtn.onclick = () => setPhone(false);
+phoneBtn.onclick = () => setPhone(true);
+const themeBtn = document.getElementById("themeBtn");
+function currentDark() { const t = document.documentElement.dataset.theme; return t ? t === "dark" : !matchMedia("(prefers-color-scheme: light)").matches; }
+function labelTheme() { themeBtn.textContent = currentDark() ? "Theme: C64" : "Theme: GEOS"; }
+themeBtn.onclick = () => { document.documentElement.dataset.theme = currentDark() ? "light" : "dark"; labelTheme(); };
+labelTheme();
+const scanBtn = document.getElementById("scanBtn");
+scanBtn.onclick = () => {
+  const ph = document.documentElement.dataset.scanner === "phosphor";
+  if (ph) delete document.documentElement.dataset.scanner; else document.documentElement.dataset.scanner = "phosphor";
+  scanBtn.textContent = ph ? "Scanner: KITT red" : "Scanner: phosphor";
+};
+const notesBtn = document.getElementById("notesBtn"), notes = document.getElementById("notes");
+document.getElementById("notesList").innerHTML = NOTES.map(([h, b], i) => `<li><span class="n">${i + 1}</span><div><b>${h}</b><span>${b}</span></div></li>`).join("");
+function setNotes(on) { notes.hidden = !on; app.classList.toggle("notes-on", on); notesBtn.setAttribute("aria-pressed", on); }
+notesBtn.onclick = () => setNotes(notes.hidden);
+if (window.matchMedia("(max-width: 900px)").matches) setNotes(false);
+
+render(); scrollBottom();
+</script>

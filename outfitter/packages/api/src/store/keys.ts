@@ -3,6 +3,9 @@
 // which personal provider keys a user has stored (the values live in Secret Manager). Owned by task
 // D; the shapes and interfaces are the contract the Devices page (CA-1 web), account settings
 // (CA-7) and run keys (CA-6) read.
+//
+// Subscription secrets (docs/specs/subscriptions.md §3) are a sibling collection, not a provider id:
+// Grok and Codex auth files do not fit a provider key. The value stays in Secret Manager.
 
 import type { Collection as MongoCollection, Db } from "mongodb";
 
@@ -21,6 +24,12 @@ export interface RouterKey {
   /** LiteLLM's id for the key (`token` in /key/generate's answer), the hash it deletes by. */
   litellmTokenId?: string;
   models?: string[];
+  /** The MCP servers the key was minted with in `object_permission.mcp_servers` (GA-2); absent for a
+   * key with no list. What reconcileOperatorKeys reads to revoke a former operator's gcloud access. */
+  mcpServers?: string[];
+  /** The router toolset ids the key was minted with in `object_permission.mcp_toolsets` (GB-3); absent
+   * for a key with none. reconcileOperatorKeys treats these like `gcloud`. */
+  mcpToolsets?: string[];
   maxBudget?: number;
   budgetDuration?: string;
   createdAt: string;
@@ -40,6 +49,10 @@ export interface RouterKeysCollection {
   /** The live (not deleted) key of a device, if any. */
   findActiveForDevice(deviceId: string): Promise<RouterKey | null>;
   listActiveForUser(userId: string): Promise<RouterKey[]>;
+  /** Live device keys minted with `server` in their MCP list, at most `limit`. */
+  listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]>;
+  /** Live device keys minted with any toolset grant (GB-3). */
+  listActiveDeviceKeysWithMcpToolsets(limit: number): Promise<RouterKey[]>;
   /** Keys whose delete is still owed: deleteFailedAt set, or kind "run" past expiresAt. */
   listPendingDelete(limit: number): Promise<RouterKey[]>;
   /** Merges `patch`; a field set to undefined is removed (deleteFailedAt once a retry worked). */
@@ -107,6 +120,18 @@ export class MemoryRouterKeys implements RouterKeysCollection {
   async listActiveForUser(userId: string): Promise<RouterKey[]> {
     return [...this.keys.values()].filter((k) => k.userId === userId && !k.deletedAt).map((k) => ({ ...k }));
   }
+  async listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]> {
+    return [...this.keys.values()]
+      .filter((k) => k.kind === "device" && !k.deletedAt && k.mcpServers?.includes(server))
+      .slice(0, limit)
+      .map((k) => ({ ...k }));
+  }
+  async listActiveDeviceKeysWithMcpToolsets(limit: number): Promise<RouterKey[]> {
+    return [...this.keys.values()]
+      .filter((k) => k.kind === "device" && !k.deletedAt && (k.mcpToolsets?.length ?? 0) > 0)
+      .slice(0, limit)
+      .map((k) => ({ ...k }));
+  }
   async listPendingDelete(limit: number): Promise<RouterKey[]> {
     const now = new Date().toISOString();
     return [...this.keys.values()]
@@ -134,6 +159,66 @@ export class MemoryProviderKeys implements ProviderKeysCollection {
   }
   async upsert(meta: ProviderKeyMeta): Promise<void> {
     this.metas.set(meta.id, { ...meta });
+  }
+  async delete(id: string): Promise<boolean> {
+    return this.metas.delete(id);
+  }
+}
+
+/** A personal subscription secret's metadata (docs/specs/subscriptions.md §3). The value is the
+ * Secret Manager version `version` of `secretName`. */
+export interface SubscriptionSecretMeta {
+  /** `<userId>:subscription:<vendor>`. */
+  id: string;
+  userId: string;
+  vendor: string;
+  secretName: string;
+  /** The Secret Manager version just written. */
+  version: number;
+  /** Last 4 hex digits of sha256 of the exact stored bytes. */
+  last4: string;
+  setAt: string;
+  setBy: string;
+}
+
+export interface SubscriptionSecretsCollection {
+  /** Sorted by vendor. */
+  listForUser(userId: string): Promise<SubscriptionSecretMeta[]>;
+  get(id: string): Promise<SubscriptionSecretMeta | null>;
+  upsert(meta: SubscriptionSecretMeta): Promise<void>;
+  /** Writes `meta` only when the stored version is still `expectedVersion`. `null` means no
+   * document yet: success only if this call inserts, and a concurrent insert loses. Never stores
+   * a version number lower than or equal to the one already stored. */
+  compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean>;
+  delete(id: string): Promise<boolean>;
+}
+
+export class MemorySubscriptionSecrets implements SubscriptionSecretsCollection {
+  private readonly metas = new Map<string, SubscriptionSecretMeta>();
+
+  async listForUser(userId: string): Promise<SubscriptionSecretMeta[]> {
+    return [...this.metas.values()]
+      .filter((m) => m.userId === userId)
+      .sort((a, b) => a.vendor.localeCompare(b.vendor))
+      .map((m) => ({ ...m }));
+  }
+  async get(id: string): Promise<SubscriptionSecretMeta | null> {
+    const meta = this.metas.get(id);
+    return meta ? { ...meta } : null;
+  }
+  async upsert(meta: SubscriptionSecretMeta): Promise<void> {
+    this.metas.set(meta.id, { ...meta });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const current = this.metas.get(meta.id);
+    if (expectedVersion === null) {
+      if (current) return false;
+      this.metas.set(meta.id, { ...meta });
+      return true;
+    }
+    if (!current || current.version !== expectedVersion || meta.version <= current.version) return false;
+    this.metas.set(meta.id, { ...meta });
+    return true;
   }
   async delete(id: string): Promise<boolean> {
     return this.metas.delete(id);
@@ -175,6 +260,14 @@ export class MongoRouterKeys implements RouterKeysCollection {
   }
   async listActiveForUser(userId: string): Promise<RouterKey[]> {
     const rows = await this.col.find({ userId, deletedAt: { $exists: false } }).toArray();
+    return rows.map((r) => routerKeyFromDoc(r)!);
+  }
+  async listActiveDeviceKeysWithMcpServer(server: string, limit: number): Promise<RouterKey[]> {
+    const rows = await this.col.find({ kind: "device", mcpServers: server, deletedAt: { $exists: false } }).limit(limit).toArray();
+    return rows.map((r) => routerKeyFromDoc(r)!);
+  }
+  async listActiveDeviceKeysWithMcpToolsets(limit: number): Promise<RouterKey[]> {
+    const rows = await this.col.find({ kind: "device", "mcpToolsets.0": { $exists: true }, deletedAt: { $exists: false } }).limit(limit).toArray();
     return rows.map((r) => routerKeyFromDoc(r)!);
   }
   async listPendingDelete(limit: number): Promise<RouterKey[]> {
@@ -225,6 +318,54 @@ export class MongoProviderKeys implements ProviderKeysCollection {
   }
 }
 
+/** `_id` is the meta's `id`, not stored twice. */
+export type SubscriptionSecretDoc = Omit<SubscriptionSecretMeta, "id"> & { _id: string };
+
+function subscriptionSecretFromDoc(doc: SubscriptionSecretDoc): SubscriptionSecretMeta {
+  const { _id, ...meta } = doc;
+  return { id: _id, ...meta };
+}
+
+export class MongoSubscriptionSecrets implements SubscriptionSecretsCollection {
+  private readonly col: MongoCollection<SubscriptionSecretDoc>;
+  constructor(col: MongoCollection<SubscriptionSecretDoc>) {
+    this.col = col;
+  }
+  async listForUser(userId: string): Promise<SubscriptionSecretMeta[]> {
+    const rows = await this.col.find({ userId }).sort({ vendor: 1 }).toArray();
+    return rows.map(subscriptionSecretFromDoc);
+  }
+  async get(id: string): Promise<SubscriptionSecretMeta | null> {
+    const doc = await this.col.findOne({ _id: id });
+    return doc ? subscriptionSecretFromDoc(doc) : null;
+  }
+  async upsert(meta: SubscriptionSecretMeta): Promise<void> {
+    const { id, ...rest } = meta;
+    await this.col.replaceOne({ _id: id }, rest, { upsert: true });
+  }
+  async compareAndSwap(meta: SubscriptionSecretMeta, expectedVersion: number | null): Promise<boolean> {
+    const { id, ...rest } = meta;
+    if (expectedVersion === null) {
+      try {
+        await this.col.insertOne({ _id: id, ...rest });
+        return true;
+      } catch (err) {
+        if (typeof err === "object" && err !== null && (err as { code?: number }).code === 11000) return false;
+        throw err;
+      }
+    }
+    // Filter on `_id` and `version`, not an unconditional replace: a stale writer must not move
+    // the stored version backward. `version <= expected` loses even when the filter would match.
+    if (meta.version <= expectedVersion) return false;
+    const result = await this.col.replaceOne({ _id: id, version: expectedVersion }, rest);
+    return result.matchedCount === 1;
+  }
+  async delete(id: string): Promise<boolean> {
+    const result = await this.col.deleteOne({ _id: id });
+    return result.deletedCount > 0;
+  }
+}
+
 /** Called from MongoStore.ensureIndexes (store/mongo.ts). */
 export async function ensureKeyIndexes(db: Db): Promise<void> {
   await Promise.all([
@@ -232,5 +373,6 @@ export async function ensureKeyIndexes(db: Db): Promise<void> {
     db.collection("routerKeys").createIndex({ userId: 1, deletedAt: 1 }),
     db.collection("routerKeys").createIndex({ deletedAt: 1, deleteFailedAt: 1, expiresAt: 1 }),
     db.collection("providerKeys").createIndex({ userId: 1 }),
+    db.collection("subscriptionSecrets").createIndex({ userId: 1 }),
   ]);
 }

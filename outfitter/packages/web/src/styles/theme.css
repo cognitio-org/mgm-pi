@@ -50,6 +50,13 @@
   --warn-contrast: #2a2103;
   --danger: #ff8a8a; /* C64 red, brightened for AA on this bg */
   --danger-contrast: #350a0a;
+  /* #498 Knight Rider scanner, KITT red: non-text, 3.7:1 on --bg, 4.3:1 on --bg-inset (1.4.11 asks 3:1) */
+  --scanner: #ff4636;
+  /* #498 inline diffs: 7.5:1 and 6.3:1 on their own backgrounds, 9.5:1 and 6.2:1 on --bg */
+  --diff-add-bg: #1f4a3a;
+  --diff-add: #a6f29a;
+  --diff-del-bg: #4f2050;
+  --diff-del: #ff9a9a;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-inset);
   --scanline-opacity: 0.05;
@@ -64,6 +71,15 @@
   --md-quote: #cdc6f5; /* 6.7:1 */
   --md-list: #ffb38a; /* 6.2:1 */
   --md-table: #8fd3ff; /* 6.6:1 */
+  /* code-block syntax colours (pages.css .hljs-*); AA on --bg-inset, see docs/design/README.md */
+  --syn-keyword: #f4cf3c; /* 9.7:1, C64 yellow */
+  --syn-string: #a6f29a; /* 11.1:1, C64 light green */
+  --syn-number: #ffb38a; /* 8.4:1 */
+  --syn-comment: #a39bd9; /* 5.8:1 */
+  --syn-title: #8fd3ff; /* 9.1:1, C64 light blue */
+  --syn-type: #eaa6ff; /* 8.0:1, C64 purple */
+  --syn-attr: #c7bdff; /* 8.5:1 */
+  --syn-meta: #ff9a9a; /* 7.2:1, C64 red */
 }
 
 /* Light mode: early Mac / GEOS paper */
@@ -87,6 +103,11 @@
     --warn-contrast: #fbf1de;
     --danger: #b0242b;
     --danger-contrast: #fdeceb;
+    --scanner: #c8141c; /* 4.9:1 on --bg, 4.3:1 on --bg-inset */
+    --diff-add-bg: #dcefdc; /* text 6.8:1 */
+    --diff-add: #1f5a2e;
+    --diff-del-bg: #f6dcdc; /* text 6.8:1 */
+    --diff-del: #8f1d22;
     --titlebar-stripe-a: var(--accent);
     --titlebar-stripe-b: var(--bg-elevated);
     --scanline-opacity: 0;
@@ -100,6 +121,15 @@
     --md-quote: #4a4438; /* 9.5:1 */
     --md-list: #8a5c10; /* 5.7:1 */
     --md-table: #2e6b3e; /* 6.3:1 */
+    /* code-block syntax colours (pages.css .hljs-*); AA on --bg-inset, see docs/design/README.md */
+    --syn-keyword: #2a4b8d; /* 6.3:1, GEOS blue */
+    --syn-string: #2e6b3e; /* 4.7:1 */
+    --syn-number: #8a3b12; /* 5.7:1 */
+    --syn-comment: #5b5548; /* 5.5:1 */
+    --syn-title: #7a1f6b; /* 7.0:1 */
+    --syn-type: #7a4f0a; /* 5.3:1 */
+    --syn-attr: #1d5c66; /* 5.6:1 */
+    --syn-meta: #b0242b; /* 5.0:1 */
   }
 }
 
@@ -123,6 +153,12 @@
   --warn-contrast: #2a2103;
   --danger: #ff8a8a;
   --danger-contrast: #350a0a;
+  --scanner: #ff4636;
+  /* #498 inline diffs: 7.5:1 and 6.3:1 on their own backgrounds, 9.5:1 and 6.2:1 on --bg */
+  --diff-add-bg: #1f4a3a;
+  --diff-add: #a6f29a;
+  --diff-del-bg: #4f2050;
+  --diff-del: #ff9a9a;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-inset);
   --scanline-opacity: 0.05;
@@ -137,6 +173,15 @@
   --md-quote: #cdc6f5; /* 6.7:1 */
   --md-list: #ffb38a; /* 6.2:1 */
   --md-table: #8fd3ff; /* 6.6:1 */
+  /* code-block syntax colours (pages.css .hljs-*); AA on --bg-inset, see docs/design/README.md */
+  --syn-keyword: #f4cf3c; /* 9.7:1, C64 yellow */
+  --syn-string: #a6f29a; /* 11.1:1, C64 light green */
+  --syn-number: #ffb38a; /* 8.4:1 */
+  --syn-comment: #a39bd9; /* 5.8:1 */
+  --syn-title: #8fd3ff; /* 9.1:1, C64 light blue */
+  --syn-type: #eaa6ff; /* 8.0:1, C64 purple */
+  --syn-attr: #c7bdff; /* 8.5:1 */
+  --syn-meta: #ff9a9a; /* 7.2:1, C64 red */
 }
 
 :root[data-theme="light"] {
@@ -158,6 +203,11 @@
   --warn-contrast: #fbf1de;
   --danger: #b0242b;
   --danger-contrast: #fdeceb;
+  --scanner: #c8141c;
+  --diff-add-bg: #dcefdc;
+  --diff-add: #1f5a2e;
+  --diff-del-bg: #f6dcdc;
+  --diff-del: #8f1d22;
   --titlebar-stripe-a: var(--accent);
   --titlebar-stripe-b: var(--bg-elevated);
   --scanline-opacity: 0;
@@ -171,6 +221,15 @@
   --md-quote: #4a4438;
   --md-list: #8a5c10;
   --md-table: #2e6b3e;
+  /* code-block syntax colours (pages.css .hljs-*); AA on --bg-inset, see docs/design/README.md */
+  --syn-keyword: #2a4b8d; /* 6.3:1, GEOS blue */
+  --syn-string: #2e6b3e; /* 4.7:1 */
+  --syn-number: #8a3b12; /* 5.7:1 */
+  --syn-comment: #5b5548; /* 5.5:1 */
+  --syn-title: #7a1f6b; /* 7.0:1 */
+  --syn-type: #7a4f0a; /* 5.3:1 */
+  --syn-attr: #1d5c66; /* 5.6:1 */
+  --syn-meta: #b0242b; /* 5.0:1 */
 }
 
 ::selection {

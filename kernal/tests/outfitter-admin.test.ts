@@ -12,6 +12,7 @@ import { personHere } from "../.pi/extensions/_shared/person.ts";
 import { ADMIN_TOOLS, confirmText, runTool } from "../.pi/extensions/outfitter-admin/tools.ts";
 import { outfitterCredentials } from "../.pi/extensions/_shared/outfitter-env.ts";
 import { adminTransport, hasAdminCapability, httpTransport, isReadOp, socketTransport, type AdminTransport } from "../.pi/extensions/outfitter-admin/transport.ts";
+import { signedInEnv } from "./signed-in.ts";
 
 function fakePi() {
   const tools: any[] = [];
@@ -84,13 +85,15 @@ describe("registration", () => {
     for (const t of tools) assert.ok(t.description.length <= 160, `${t.name} description is ${t.description.length} chars`);
   });
 
-  test("adminTransport: socket wins, then a Dongle, else none; never HTTP inside a Drive", () => {
-    assert.equal(adminTransport({ OUTFITTER_ADMIN_SOCKET: "/run/a.sock", OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" })?.kind, "drive");
-    assert.equal(adminTransport({ OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" })?.kind, "laptop");
+  test("adminTransport: socket wins, then a login, else none; never HTTP inside a Drive", async () => {
+    const login = await signedInEnv("https://x");
+    assert.equal(adminTransport({ ...login, OUTFITTER_ADMIN_SOCKET: "/run/a.sock" })?.kind, "drive");
+    assert.equal(adminTransport(login)?.kind, "laptop");
+    assert.equal(adminTransport({ OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }), undefined, "a retired Dongle is not read");
     assert.equal(adminTransport({ OUTFITTER_API: "https://x" }), undefined);
     assert.equal(adminTransport({}), undefined);
     assert.equal(adminTransport({ OUTFITTER_ADMIN_SOCKET: "  " }), undefined);
-    assert.equal(adminTransport({ OUTFITTER_SESSION_ID: "s1", OUTFITTER_API: "https://x", OUTFITTER_TOKEN: "t" }), undefined);
+    assert.equal(adminTransport({ ...login, OUTFITTER_SESSION_ID: "s1" }), undefined);
   });
 
   test("personHere: the TUI only, and never in a Drive", () => {
@@ -107,8 +110,8 @@ describe("registration", () => {
     }
   });
 
-  test("outfitterCredentials: read once, and the token leaves process.env", () => {
-    assert.deepEqual(outfitterCredentials({ OUTFITTER_API: " https://x ", OUTFITTER_TOKEN: "t" }), { api: "https://x", token: "t", source: "dongle" });
+  test("outfitterCredentials: a Dongle (OUTFITTER_TOKEN) is retired and never read", () => {
+    assert.deepEqual(outfitterCredentials({ OUTFITTER_API: " https://x ", OUTFITTER_TOKEN: "t" }), { api: "https://x", token: undefined });
   });
 });
 
@@ -224,7 +227,7 @@ describe("httpTransport", () => {
 
   test("401 and 404 become actionable one-liners", async () => {
     const status = (code: number) => (async () => ({ status: code, ok: false, json: async () => ({}) }) as Response) as typeof fetch;
-    assert.match((await httpTransport("https://x", "t", status(401)).call("tapes.list", {}) as any).error, /OUTFITTER_TOKEN was rejected/);
+    assert.match((await httpTransport("https://x", "t", status(401)).call("tapes.list", {}) as any).error, /refused this machine's login.*run kernal login/);
     assert.match((await httpTransport("https://x", "t", status(404)).call("tapes.list", {}) as any).error, /newer release/);
   });
 });

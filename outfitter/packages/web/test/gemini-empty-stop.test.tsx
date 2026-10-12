@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { PiEntry } from "../src/api/client.ts";
 import { EntryItem } from "../src/components/EntryItem.tsx";
 import { entryToViews, entriesToViews } from "../src/lib/entry-view.ts";
-import { groupBeats } from "../src/lib/beats.ts";
+import { buildFlow } from "../src/lib/flow.ts";
 import { groupThinkingBlocks } from "../src/lib/thinking.ts";
 import {
   GEMINI_EMPTY_STOP_CAPPED,
@@ -98,9 +98,9 @@ describe("gemini empty stop note", () => {
         content: [{ type: "thinking", thinking: "still pinging" }],
       },
     };
-    const beats = groupBeats(groupThinkingBlocks(entriesToViews([thought, continueEntry])));
-    expect(beats.map((b) => b.kind)).toEqual(["tools-only", "passthrough"]);
-    const note = beats[1];
+    const items = buildFlow(groupThinkingBlocks(entriesToViews([thought, continueEntry])));
+    expect(items.map((b) => b.kind)).toEqual(["thinking", "passthrough"]);
+    const note = items[1];
     expect(note?.kind).toBe("passthrough");
     if (note?.kind === "passthrough") {
       expect(note.view).toMatchObject({ kind: "custom", text: GEMINI_EMPTY_STOP_CONTINUE });

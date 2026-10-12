@@ -11,6 +11,7 @@ import { FleetPage } from "./pages/FleetPage.tsx";
 import { ProvidersPage } from "./pages/ProvidersPage.tsx";
 import { TokensPage } from "./pages/TokensPage.tsx";
 import { vocabulary } from "./lib/vocabulary.ts";
+import { AppNavContext, AppVersionContext, NAV_ITEMS } from "./lib/nav.ts";
 import { lazyRoute } from "./lib/chunk-reload.ts";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Working } from "./components/Working.tsx";
@@ -44,19 +45,14 @@ const GithubPage = lazyRoute(() => import("./pages/GithubPage.tsx").then((m) => 
 const DevicesPage = lazyRoute(() => import("./pages/DevicesPage.tsx").then((m) => ({ default: m.DevicesPage })));
 const DeviceApprovePage = lazyRoute(() => import("./pages/DeviceApprovePage.tsx").then((m) => ({ default: m.DeviceApprovePage })));
 const AccountPage = lazyRoute(() => import("./pages/AccountPage.tsx").then((m) => ({ default: m.AccountPage })));
+// docs/specs/subscriptions.md §4. Beside Account, not operator-only.
+const SubscriptionsPage = lazyRoute(() => import("./pages/SubscriptionsPage.tsx").then((m) => ({ default: m.SubscriptionsPage })));
+// MO-5 (docs/specs/mcp-connections.md §4). Beside Account, for everyone.
+const ConnectionsPage = lazyRoute(() => import("./pages/ConnectionsPage.tsx").then((m) => ({ default: m.ConnectionsPage })));
+const LocalModelsPage = lazyRoute(() => import("./pages/LocalModelsPage.tsx").then((m) => ({ default: m.LocalModelsPage })));
 
 const PANIC_TEST_ENABLED = Boolean(import.meta.env.DEV || import.meta.env.OUTFITTER_DEV);
 
-const NAV_ITEMS: Array<{ to: string; end?: boolean; label: string; hint: string; operatorOnly?: boolean }> = [
-  { to: "/", end: true, label: vocabulary.desk.one, hint: "the Outfitter desktop" },
-  { to: "/fleet", label: vocabulary.sessionList.one, hint: vocabulary.sessionList.hint },
-  { to: "/gurus", label: vocabulary.guru.many, hint: vocabulary.guru.hint },
-  { to: "/github", label: vocabulary.github.one, hint: vocabulary.github.hint },
-  { to: "/providers", label: vocabulary.provider.many, hint: vocabulary.provider.hint },
-  { to: "/devices", label: vocabulary.device.many, hint: vocabulary.device.hint },
-  { to: "/account", label: vocabulary.account.one, hint: vocabulary.account.hint },
-  { to: "/settings", label: vocabulary.settings.one, hint: `${vocabulary.settings.hint} — ${vocabulary.operator.hint}`, operatorOnly: true },
-];
 
 export function App() {
   // The Settings/Control Panel nav link only shows for an operator/Sysop (EPIC.md Decisions
@@ -67,6 +63,9 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const isDesk = location.pathname === "/";
+  // #498: a floppy's page brings its own chrome (the Disk Box sidebar, or a back arrow on a phone)
+  // in place of this app bar.
+  const isSession = location.pathname.startsWith("/sessions/");
   const online = useOnlineStatus();
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +114,10 @@ export function App() {
   // the safe-area inset, so a fixed offset would leave a gap or cover the title.
   useEffect(() => {
     const el = headerRef.current;
-    if (!el) return;
+    if (!el) {
+      document.documentElement.style.setProperty("--app-header-h", "0px");
+      return () => document.documentElement.style.removeProperty("--app-header-h");
+    }
     const apply = () => {
       document.documentElement.style.setProperty("--app-header-h", `${Math.round(el.getBoundingClientRect().height)}px`);
     };
@@ -126,18 +128,21 @@ export function App() {
       observer.disconnect();
       document.documentElement.style.removeProperty("--app-header-h");
     };
-  }, []);
+  }, [isSession]);
 
   const { version, updated } = useAppVersion();
   const versionText = versionLabel(version);
 
   return (
-    <div className="app-shell">
+    <AppNavContext.Provider value={items}>
+    <AppVersionContext.Provider value={versionText}>
+    <div className={`app-shell${isSession ? " is-session" : ""}`}>
       {/* On the desk (/), the desk's own GEOS-style menu bar (DeskPage.tsx) replaces this header
        * on desktop widths -- having both stacked ~160px of chrome duplicating the same nav was
        * the original bug report. On phones this header's compact bar (logo + summary pill + menu
        * button) still renders regardless of route, since the desk's menu bar collapses into the
        * icon grid there and has no room for its own top bar too. */}
+      {!isSession && (
       <header ref={headerRef} className={`app-header${isDesk ? " app-header-desk" : ""}`}>
         <NavLink
           to="/"
@@ -170,8 +175,9 @@ export function App() {
           {"☰"}
         </button>
       </header>
+      )}
 
-      {menuOpen && (
+      {menuOpen && !isSession && (
         <div className="app-menu-backdrop" onClick={() => setMenuOpen(false)}>
           <nav className="app-menu-sheet" onClick={(e) => e.stopPropagation()} aria-label="Navigation">
             {items.map((item) => (
@@ -225,7 +231,7 @@ export function App() {
       <UnhandledRejectionBanner />
       <LaptopApprovals />
 
-      <main className="app-main">
+      <main className={`app-main${isSession ? " is-session" : ""}`}>
         <ErrorBoundary>
           <Suspense fallback={<div className="page-loading"><Working label="Loading" size="lg" /></div>}>
           <Routes>
@@ -235,10 +241,13 @@ export function App() {
             <Route path="/gurus" element={<GurusPage />} />
             <Route path="/github" element={<GithubPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
+            <Route path="/local-models" element={<LocalModelsPage />} />
             <Route path="/tokens" element={<TokensPage />} />
             <Route path="/devices" element={<DevicesPage />} />
             <Route path="/device" element={<DeviceApprovePage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {PANIC_TEST_ENABLED && <Route path="/panic-test" element={<PanicTest />} />}
             <Route path="/manual" element={<ManualPage />} />
@@ -249,5 +258,7 @@ export function App() {
         </ErrorBoundary>
       </main>
     </div>
+    </AppVersionContext.Provider>
+    </AppNavContext.Provider>
   );
 }

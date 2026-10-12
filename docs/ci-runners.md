@@ -2,12 +2,14 @@
 
 Every Linux job runs on the runner named by the repository variable `LINUX_RUNNER` (ARM jobs:
 `LINUX_ARM_RUNNER`). When the variable is unset, jobs use Blacksmith
-(`blacksmith-2vcpu-ubuntu-2404`, `blacksmith-2vcpu-ubuntu-2404-arm`). The macOS release build stays
-on GitHub's `macos-15`.
+(`blacksmith-4vcpu-ubuntu-2404`, `blacksmith-4vcpu-ubuntu-2404-arm`), as Blacksmith's own migration
+(#559, #560) set them. The macOS release build runs on `blacksmith-6vcpu-macos-15`, with no variable.
+Checkouts use `useblacksmith/checkout@v1`.
 
-Why: GitHub-hosted minutes on this private repo passed $100 in October 2026. Blacksmith costs about
-$0.004 a minute against GitHub's $0.006, includes about 3,000 free minutes a month, and usually runs
-the same jobs faster. Check Blacksmith's pricing page for current numbers.
+Why: GitHub-hosted minutes on this private repo passed $100 in October 2026. Blacksmith's per-minute
+price is lower than GitHub's, it includes free minutes each month, and it usually runs the same jobs
+faster. A 4 vCPU runner costs about twice as much per minute as a 2 vCPU one. Check Blacksmith's
+pricing page for current numbers.
 
 ## Setup (owner, once)
 
@@ -25,6 +27,9 @@ Set it in Settings, Secrets and variables, Actions, Variables. No code change is
 | Blacksmith (default) | unset | unset |
 | GitHub-hosted | `ubuntu-24.04` | `ubuntu-24.04-arm` |
 | Your own runner (e.g. a Hetzner VM) | that runner's label, e.g. `self-hosted` | its ARM label |
+
+If you move off Blacksmith for good, also switch `useblacksmith/checkout@v1` back to
+`actions/checkout@v5`, and move the macOS job in `release.yml` back to `macos-15`.
 
 A self-hosted runner should be ephemeral (`--ephemeral`, one job per runner) and should have no
 cloud credentials of its own. Deploys get Google access through Workload Identity, which trusts

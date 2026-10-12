@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     defaults: { run: { working-directory: outfitter/integrations/agent-engine } }
     steps:

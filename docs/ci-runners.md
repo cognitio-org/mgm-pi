@@ -1,10 +1,26 @@
 # CI runners
 
 Every Linux job runs on the runner named by the repository variable `LINUX_RUNNER` (ARM jobs:
-`LINUX_ARM_RUNNER`). When the variable is unset, jobs use Blacksmith
-(`blacksmith-4vcpu-ubuntu-2404`, `blacksmith-4vcpu-ubuntu-2404-arm`), as Blacksmith's own migration
-(#559, #560) set them. The macOS release build runs on `blacksmith-6vcpu-macos-15`, with no variable.
-Checkouts use `useblacksmith/checkout@v1`.
+`LINUX_ARM_RUNNER`). When the variable is unset, jobs use Blacksmith's 2 vCPU runners
+(`blacksmith-2vcpu-ubuntu-2404`, `blacksmith-2vcpu-ubuntu-2404-arm`). The exception is Outfitter
+CI's `test` job, which reads `LINUX_HEAVY_RUNNER` and defaults to `blacksmith-4vcpu-ubuntu-2404`.
+The macOS release build runs on `blacksmith-6vcpu-macos-15`, with no variable. Checkouts use
+`useblacksmith/checkout@v1`.
+
+### Why 2 vCPU, and 4 for one job
+
+A 4 vCPU runner costs about twice as much per minute, so it is only cheaper for a job that runs in
+under half the time. Measured on the same commit on 2026-10-12, one run each:
+
+| Job | 2 vCPU | 4 vCPU |
+|---|---|---|
+| Outfitter `test` | ~7m03s | 3m07s (44%: 4 vCPU cheaper) |
+| kernal `test` | 2m36s | 1m27s (56%: 2 vCPU cheaper) |
+| A2A TCK | 1m47s | 1m40s |
+| Outfitter `images` | 1m24s | 1m15s |
+
+Re-check with Blacksmith's usage dashboard once there is a few weeks of data. Moving a job between
+sizes is a variable change (`LINUX_RUNNER`, `LINUX_HEAVY_RUNNER`).
 
 Why: GitHub-hosted minutes on this private repo passed $100 in October 2026. Blacksmith's per-minute
 price is lower than GitHub's, it includes free minutes each month, and it usually runs the same jobs
@@ -27,6 +43,9 @@ Set it in Settings, Secrets and variables, Actions, Variables. No code change is
 | Blacksmith (default) | unset | unset |
 | GitHub-hosted | `ubuntu-24.04` | `ubuntu-24.04-arm` |
 | Your own runner (e.g. a Hetzner VM) | that runner's label, e.g. `self-hosted` | its ARM label |
+
+Set `LINUX_HEAVY_RUNNER` the same way to move Outfitter CI's `test` job; unset, it stays on
+Blacksmith's 4 vCPU runner even when `LINUX_RUNNER` points elsewhere.
 
 If you move off Blacksmith for good, also switch `useblacksmith/checkout@v1` back to
 `actions/checkout@v5`, and move the macOS job in `release.yml` back to `macos-15`.

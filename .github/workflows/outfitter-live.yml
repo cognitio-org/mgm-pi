@@ -28,7 +28,7 @@ jobs:
   # there. A failure here doesn't stop the live job; its voice check then fails, saying why.
   mic-fixture:
     if: vars.GCP_LIVE_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v')
-    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -46,7 +46,7 @@ jobs:
     # Off until e2e-identity.sh has set the repository variables; only from a release tag. Runs even
     # if mic-fixture failed (!cancelled()), so the page and lifecycle checks still report.
     if: ${{ !cancelled() && vars.GCP_LIVE_WIF_PROVIDER != '' && startsWith(github.ref, 'refs/tags/outfitter-v') }}
-    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: ${{ vars.LINUX_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     # One run at a time: two lifecycle runs would treat each other's floppies as leftovers.
     concurrency:

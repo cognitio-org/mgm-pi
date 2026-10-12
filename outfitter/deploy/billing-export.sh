@@ -39,18 +39,22 @@ APIS=(bigquery.googleapis.com bigquerydatatransfer.googleapis.com)
 
 command -v jq >/dev/null || deploy_fail "jq is required"
 command -v bq >/dev/null || deploy_fail "bq is required (it ships with the Google Cloud SDK)"
-[[ "${DATASET}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,1023}$ ]] || deploy_fail "BILLING_EXPORT_DATASET=${DATASET} isn't a BigQuery dataset id"
+# No {m,n} bound: macOS's bash 3.2 regex rejects counts over 255 (so nothing would ever match).
+[[ "${DATASET}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && ${#DATASET} -le 1024 ]] || deploy_fail "BILLING_EXPORT_DATASET=${DATASET} isn't a BigQuery dataset id"
 [[ "${LOCATION}" =~ ^[A-Za-z0-9-]+$ ]] || deploy_fail "BILLING_EXPORT_LOCATION=${LOCATION} isn't a location"
 
 EMAILS=()
 IFS=';,' read -ra raw <<<"${READERS}"
-for e in "${raw[@]}"; do
+for e in ${raw[@]+"${raw[@]}"}; do
   e="${e//[[:space:]]/}"
   [[ -z "${e}" ]] && continue
   [[ "${e}" =~ ^[^@:]+@[^@:]+\.[^@:]+$ ]] || deploy_fail "'${e}' is not an email address (BILLING_EXPORT_READERS / OUTFITTER_OPERATORS)"
   EMAILS+=("${e}")
 done
 (( ${#EMAILS[@]} > 0 )) || deploy_fail "no readers: set BILLING_EXPORT_READERS or OUTFITTER_OPERATORS"
+
+# Lower-case without bash 4's case-change expansion: macOS ships bash 3.2.
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 REF="${PROJECT}:${DATASET}"
 echo "dataset=${REF} location=${LOCATION}"
@@ -73,7 +77,7 @@ dataset_json=""
 if out="$(bq show --format=json --project_id="${PROJECT}" "${REF}" 2>&1)"; then
   dataset_json="${out}"
   have="$(jq -r '.location // empty' <<<"${dataset_json}")"
-  [[ "${have,,}" == "${LOCATION,,}" ]] \
+  [[ "$(lower "${have}")" == "$(lower "${LOCATION}")" ]] \
     || deploy_fail "${REF} exists in ${have:-an unknown location}, not ${LOCATION}; set BILLING_EXPORT_LOCATION=${have} or pick another BILLING_EXPORT_DATASET"
   echo "~ dataset ${REF} exists (${have})"
 elif grep -qi "not found" <<<"${out}"; then

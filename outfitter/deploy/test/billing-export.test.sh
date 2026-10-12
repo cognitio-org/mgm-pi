@@ -4,7 +4,8 @@
 # table name; the first run enables both APIs, creates the dataset in US, adds a dataset READER and
 # roles/bigquery.jobUser per operator; a rerun changes nothing; a dataset in another location is
 # refused; a bq error other than "not found" stops before any write; BILLING_EXPORT_READERS overrides
-# the operators. No network, no GCP.
+# the operators; the location match ignores case; nothing in it needs more than macOS's bash 3.2.
+# No network, no GCP.
 #   bash outfitter/deploy/test/billing-export.test.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,5 +125,22 @@ grep -q "Access Denied" "${WORK}/out" || fail "the bq error wasn't shown"
 
 # A bad dataset id is refused.
 BILLING_EXPORT_DATASET="a-b" DRY_RUN=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "accepted a bad dataset id"
+
+# The location match ignores case: BigQuery may report "us" for a dataset made in "US".
+reset
+echo "bigquery.googleapis.com" >"${STATE}/services"; echo "bigquerydatatransfer.googleapis.com" >>"${STATE}/services"
+echo '{"location":"us","access":[]}' >"${STATE}/dataset.json"
+DRY_RUN=1 run
+grep -q "~ dataset outfitter-509211:billing_export exists (us)" "${WORK}/out" || { cat "${WORK}/out"; fail "a lower-case location didn't match US"; }
+
+# No readers at all: the script's own message, not an unbound-variable crash (bash < 4.4, set -u).
+BILLING_EXPORT_READERS=";" OUTFITTER_OPERATORS="" DRY_RUN=1 bash "${SCRIPT}" >"${WORK}/out" 2>&1 && fail "ran with no readers"
+grep -q "no readers" "${WORK}/out" || { cat "${WORK}/out"; fail "wrong message with no readers"; }
+
+# macOS runs this with bash 3.2: no bash 4 case changes (${v,,} ${v^^}), and no regex repeat count
+# over 255 (macOS's regex rejects it, so the [[ =~ ]] never matches; that broke the first owner run).
+! grep -nE '\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)' "${SCRIPT}" || fail "bash 4 case change in the script (macOS has bash 3.2)"
+! grep -oE '\{[0-9]*,?[0-9]+\}' "${SCRIPT}" | grep -oE '[0-9]+' | awk '$1 > 255 {found=1} END {exit !found}' \
+  || fail "a regex repeat count over 255 in the script (macOS's bash 3.2 regex rejects it)"
 
 echo "billing-export.test.sh: ok"

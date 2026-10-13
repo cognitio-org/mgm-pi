@@ -6,7 +6,7 @@ version = "0.1.0"
 description = "Outfitter A2A tools for Agent Engine agents (tests and tooling)"
 requires-python = ">=3.11"
 dependencies = [
-    "a2a-sdk==1.2.1",
+    "a2a-sdk==1.2.2",
     "httpx>=0.28,<1",
     "sentry-sdk>=2.0,<3",
 ]

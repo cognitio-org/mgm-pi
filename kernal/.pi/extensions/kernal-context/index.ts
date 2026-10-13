@@ -7,7 +7,7 @@
  *
  *   /context           panel: proportional bar, per-part tokens, the largest tool schemas, a verdict
  *   /context export    write a self-contained HTML report and open it in the browser
- *   /context off       take the panel down
+ *   /context off       take the panel down (`hide` and `close` do the same; Esc dismisses too)
  *
  *   KERNAL_REPORT_DIR     where reports are written (default ~/.kernal/reports)
  *   KERNAL_NO_BROWSER=1   write the report, do not open it
@@ -16,8 +16,8 @@ import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { renderPanel, type Seg } from "../connect/lib.ts";
 import { env } from "../_shared/env.ts";
 import {
@@ -127,6 +127,31 @@ export default function (pi: ExtensionAPI) {
     });
   };
 
+  // The panel is a toggle: /context shows it, /context again (or Esc) hides it.
+  let panelOpen = false;
+  let escUnsubscribe: (() => void) | undefined;
+
+  const hidePanel = (ctx: ExtensionContext) => {
+    panelOpen = false;
+    ctx.ui.setWidget("context", undefined);
+    ctx.ui.setStatus("context", undefined);
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    panelOpen = false;
+    if (escUnsubscribe) { escUnsubscribe(); escUnsubscribe = undefined; }
+    if (ctx.hasUI && typeof ctx.ui.onTerminalInput === "function") {
+      escUnsubscribe = ctx.ui.onTerminalInput((data: string) => {
+        if (!panelOpen) return undefined;
+        if (matchesKey(data, "escape")) {
+          hidePanel(ctx);
+          return { consume: true };
+        }
+        return undefined;
+      });
+    }
+  });
+
   // A deliberately small schema: 142 tokens on every request, against ~1,900 output tokens each time
   // a model would otherwise write a page by hand (measured, see README). Markdown is what models emit
   // naturally, so they spend tokens on content while this code owns the chrome, the escaping and the
@@ -179,11 +204,11 @@ export default function (pi: ExtensionAPI) {
   } as any);
 
   pi.registerCommand("context", {
-    description: "What is in the context window: composition, biggest tool schemas, what compaction would reclaim (`export` writes an HTML report)",
-    getArgumentCompletions: (prefix) => ["export", "off"].filter((o) => o.startsWith(prefix.trim())).map((o) => ({ value: o, label: o })),
+    description: "What is in the context window: composition, biggest tool schemas, what compaction would reclaim (`export` writes an HTML report; `off`/`hide`/`close` dismiss, Esc or re-running toggles)",
+    getArgumentCompletions: (prefix) => ["export", "off", "hide", "close"].filter((o) => o.startsWith(prefix.trim())).map((o) => ({ value: o, label: o })),
     handler: async (args, ctx) => {
       const sub = args.trim().toLowerCase();
-      if (sub === "off") { ctx.ui.setWidget("context", undefined); return; }
+      if (sub === "off" || sub === "hide" || sub === "close") { hidePanel(ctx); return; }
       const current = view(ctx);
       if (!current) { ctx.ui.notify("Nothing measured yet: ask the model something first, then /context reads the request that was actually sent.", "warning"); return; }
 
@@ -198,14 +223,16 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`${opened ? "Opened" : "Wrote"} ${file}${opened ? "" : " (set KERNAL_NO_BROWSER=0 or open it yourself)"}`, "info");
         return;
       }
-      if (sub && sub !== "") { ctx.ui.notify(`Unknown /context option "${sub}". Try: export, off`, "error"); return; }
+      if (sub && sub !== "") { ctx.ui.notify(`Unknown /context option "${sub}". Try: export, off, hide, close`, "error"); return; }
 
       if (!ctx.hasUI) { ctx.ui.notify(`${thousands(current.total)}/${thousands(current.window)} tokens (${pct(current.percent)}). ${verdict(current)}`, "info"); return; }
+      if (panelOpen) { hidePanel(ctx); return; }
       ctx.ui.setWidget("context", (_tui, theme) => ({
         render: (width: number) => renderPanel(panelRows(current, width, (c, t) => theme.fg(c as any, t)), width, (c, t) => theme.fg(c as any, t), " context window ").map((l) => truncateToWidth(l, width)),
         invalidate() {},
       }), { placement: "aboveEditor" });
       ctx.ui.setStatus("context", `◧ ${pct(current.percent)}`);
+      panelOpen = true;
     },
   });
 }

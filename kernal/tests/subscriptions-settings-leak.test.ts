@@ -57,16 +57,16 @@ function hidesSecrets(text: string): void {
 describe("claudeSettingsRefusal", () => {
   test("names the file role and the field, and does not include the secret, helper, or base URL", () => {
     const key = claudeSettingsRefusal([{ kind: "user", settings: { env: { ANTHROPIC_API_KEY: KEY }, apiKeyHelper: HELPER } }]);
-    assert.equal(key, "user settings set env.ANTHROPIC_API_KEY");
+    assert.equal(key, "user settings set env.ANTHROPIC_API_KEY, which would bill an API key or send your plan token elsewhere");
     // apiKeyHelper is neutralised for the child by `--settings` (NO_API_KEY_HELPER), not refused.
     assert.equal(claudeSettingsRefusal([{ kind: "user", settings: { apiKeyHelper: HELPER } }]), undefined);
     const project = claudeSettingsRefusal([
       { kind: "user", settings: { env: { OTHER: "1" } } },
       { kind: "project", settings: { env: { ANTHROPIC_AUTH_TOKEN: KEY } } },
     ]);
-    assert.equal(project, "project settings set env.ANTHROPIC_AUTH_TOKEN");
+    assert.equal(project, "project settings set env.ANTHROPIC_AUTH_TOKEN, which would bill an API key or send your plan token elsewhere");
     const foreign = claudeSettingsRefusal([{ kind: "project", settings: { env: { ANTHROPIC_BASE_URL: FOREIGN } } }]);
-    assert.equal(foreign, "project settings set env.ANTHROPIC_BASE_URL");
+    assert.equal(foreign, "project settings set env.ANTHROPIC_BASE_URL, which would bill an API key or send your plan token elsewhere");
     assert.equal(claudeSettingsRefusal([{ kind: "user", settings: { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } } }]), undefined);
     assert.equal(claudeSettingsRefusal([{ kind: "user", settings: { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com/" } } }]), undefined);
     assert.equal(claudeSettingsRefusal([{ kind: "user", settings: { env: { ANTHROPIC_API_KEY: "", OTHER: "x" }, apiKeyHelper: "" } }]), undefined);
@@ -82,7 +82,7 @@ describe("Claude settings are refused before spawn", () => {
     }));
     const out = await result;
     assert.equal(out.kind, "refused");
-    assert.equal(out.text, "user settings set env.ANTHROPIC_API_KEY");
+    assert.equal(out.text, "user settings set env.ANTHROPIC_API_KEY, which would bill an API key or send your plan token elsewhere");
     hidesSecrets(out.text);
     assert.equal(calls.length, 0);
     assert.deepEqual(reads, [{ kind: "user", filePath: USER_PATH }]);
@@ -110,7 +110,7 @@ describe("Claude settings are refused before spawn", () => {
     });
     const out = await result;
     assert.equal(out.kind, "refused");
-    assert.equal(out.text, "project settings set env.ANTHROPIC_AUTH_TOKEN");
+    assert.equal(out.text, "project settings set env.ANTHROPIC_AUTH_TOKEN, which would bill an API key or send your plan token elsewhere");
     hidesSecrets(out.text);
     assert.equal(calls.length, 0);
     assert.deepEqual(reads, [
@@ -127,6 +127,18 @@ describe("Claude settings are refused before spawn", () => {
       const args = calls[0].args;
       assert.equal(args[args.indexOf("--settings") + 1], "{\"apiKeyHelper\":\"\"}", mode);
     }
+  });
+
+  test("full neutralises a project-file apiKeyHelper too, without touching the file", async () => {
+    const { calls, reads, result } = launch("full", (kind) =>
+      kind === "project" ? JSON.stringify({ apiKeyHelper: HELPER }) : JSON.stringify({ env: { OTHER_KEY: "value" } }));
+    const out = await result;
+    assert.equal(out.kind, "ok");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(reads.map((r) => r.kind), ["user", "project"]);
+    const args = calls[0].args;
+    assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), { apiKeyHelper: "" });
+    assert.equal(args.join(" ").includes(HELPER), false, "the project helper path never reaches the child");
   });
 
   test("sandboxed does not read project settings", async () => {
@@ -169,7 +181,7 @@ describe("Claude settings are refused before spawn", () => {
     const { calls, result } = launch("sandboxed", () => JSON.stringify({ env: { ANTHROPIC_BASE_URL: FOREIGN } }));
     const out = await result;
     assert.equal(out.kind, "refused");
-    assert.equal(out.text, "user settings set env.ANTHROPIC_BASE_URL");
+    assert.equal(out.text, "user settings set env.ANTHROPIC_BASE_URL, which would bill an API key or send your plan token elsewhere");
     hidesSecrets(out.text);
     assert.equal(calls.length, 0);
   });
@@ -180,6 +192,8 @@ describe("Claude settings are refused before spawn", () => {
     assert.equal(out.kind, "refused");
     assert.equal(out.text, "user settings are not valid JSON");
     hidesSecrets(out.text);
+    // Bad JSON is not a billing leak, so the refusal must not claim it is one.
+    assert.doesNotMatch(out.text, /bill an API key/);
     assert.equal(calls.length, 0);
   });
 
@@ -189,6 +203,7 @@ describe("Claude settings are refused before spawn", () => {
     assert.equal(out.kind, "refused");
     assert.equal(out.text, "user settings could not be read");
     hidesSecrets(out.text);
+    assert.doesNotMatch(out.text, /bill an API key/);
     assert.equal(calls.length, 0);
     assert.deepEqual(reads.map((r) => r.kind), ["user"]);
   });
@@ -214,7 +229,7 @@ describe("Claude settings are refused before spawn", () => {
     calls.length = 0;
     const project = await runClaudeWorker({ prompt: "x", cwd }, deps);
     assert.equal(project.kind, "refused");
-    assert.equal(project.text, "project settings set env.ANTHROPIC_API_KEY");
+    assert.equal(project.text, "project settings set env.ANTHROPIC_API_KEY, which would bill an API key or send your plan token elsewhere");
     hidesSecrets(project.text);
     assert.equal(calls.length, 0);
 

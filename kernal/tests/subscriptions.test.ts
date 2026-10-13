@@ -140,6 +140,18 @@ describe("status lines and local checks", () => {
     assert.equal(localVendorLogin("claude", { env, home, keychain: () => false }), true);
     assert.equal(localVendorLogin("claude", { env: { CLAUDE_CODE_OAUTH_TOKEN: ACCOUNT_SECRET }, home: join(home, "empty"), keychain: () => false }), true);
     assert.equal(localVendorLogin("claude", { env, home: join(home, "empty"), keychain: () => true }), true);
+
+    // The on-disk file is held to the same standard as the keychain: a stale credential with no
+    // refresh token is not a login, so the worker asks to connect instead of spawning into a failure.
+    const stale = mkdtempSync(join(tmpdir(), "kernal-login-stale-"));
+    mkdirSync(join(stale, ".claude"), { recursive: true });
+    const staleEnv = { HOME: stale, CLAUDE_CODE_OAUTH_TOKEN: "" };
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: ACCOUNT_SECRET, expiresAt: Date.now() - 1000 } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), false, "expired with nothing to refresh");
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: ACCOUNT_SECRET, expiresAt: Date.now() - 1000, refreshToken: "refresh" } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), true, "expired but refreshable");
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { refreshToken: "refresh" } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), false, "a refresh token alone is not a login");
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), "");
     assert.equal(localVendorLogin("grok", { env, home }), false);

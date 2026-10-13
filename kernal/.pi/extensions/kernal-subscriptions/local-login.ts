@@ -56,7 +56,9 @@ function claudeFile(home: string): boolean {
 function darwinKeychain(service: string): boolean {
   if (process.env.KERNAL_TEST_NO_KEYCHAIN === "1" || process.platform !== "darwin") return false;
   try {
-    const raw = execFileSync("security", ["find-generic-password", "-s", service, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    // Reading the secret (rather than just the attributes) can raise a Keychain ACL prompt, which
+    // would block this synchronous call forever; the timeout turns that into "not logged in".
+    const raw = execFileSync("security", ["find-generic-password", "-s", service, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
     return usableClaudeCredentials(raw);
   } catch {
     return false;

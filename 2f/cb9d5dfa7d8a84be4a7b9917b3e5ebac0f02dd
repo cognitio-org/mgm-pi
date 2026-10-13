@@ -1,0 +1,14 @@
+outfitter/deploy/finance-mcp-router.sh
+  h_69b863911ebf05 1-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "2fcb9d5dfa7d8a84be4a7b9917b3e5ebac0f02dd",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

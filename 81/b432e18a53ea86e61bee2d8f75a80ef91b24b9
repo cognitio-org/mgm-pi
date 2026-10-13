@@ -1,0 +1,22 @@
+kernal/.pi/extensions/kernal-subscriptions/dispatch.ts
+  h_69b863911ebf05 363-370
+kernal/.pi/extensions/kernal-subscriptions/local-login.ts
+  h_69b863911ebf05 26-45,49,55,59-60
+kernal/.pi/extensions/kernal-subscriptions/runner.ts
+  h_69b863911ebf05 31,107-117,122-123,176-179,182,303
+kernal/tests/subscriptions-settings-leak.test.ts
+  h_69b863911ebf05 61-62,73,84,91,94-95,97-103,112,122-131,171,180,189,216,224
+kernal/tests/subscriptions.test.ts
+  h_69b863911ebf05 13,109-122,455-461
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "81b432e18a53ea86e61bee2d8f75a80ef91b24b9",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

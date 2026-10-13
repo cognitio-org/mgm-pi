@@ -487,6 +487,54 @@ current_build_commit_gke() {
   deploy_fail "could not read the GKE SandboxTemplate's build-commit label (see above)"
 }
 
+# sandbox_sa_email -- the GKE sandboxes' own Google service account (#202). Unlike outfitter-agent@
+# (Cloud Run's job identity, which needs roles/logging.logWriter for Cloud Run to ingest its stdout),
+# it holds no project role at all: GKE ships container logs through the node's agent, and with the
+# metadata server reachable from every sandbox (option B), a logWriter token let the model forge log
+# entries for other runs. gke-iam.sh creates it and moves the sandbox KSA's Workload Identity onto it.
+sandbox_sa_email() {
+  echo "outfitter-sandbox@${PROJECT}.iam.gserviceaccount.com"
+}
+
+# assert_sandbox_sa_no_project_roles -- outfitter-sandbox@ must hold no project role at all: its
+# permissions are the sandbox model's permissions (option B). Passes before gke-iam.sh has created
+# the account (no bindings). Same scope limits as assert_agent_sa_logwriter_only (project level
+# only). Needs only resourcemanager.projects.getIamPolicy, so release.sh's gke-template.sh step runs
+# it too.
+assert_sandbox_sa_no_project_roles() {
+  local sandbox_sa roles
+  sandbox_sa="$(sandbox_sa_email)"
+  roles="$(gcloud projects get-iam-policy "${PROJECT}" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${sandbox_sa}" \
+    --format="value(bindings.role)")" \
+    || deploy_fail "could not read ${PROJECT}'s IAM policy (needs resourcemanager.projects.getIamPolicy; roles/browser includes it)"
+  if [[ -n "${roles}" ]]; then
+    deploy_fail "${sandbox_sa} holds project role(s): $(tr '\n' ' ' <<<"${roles}") -- it must hold none (#202): with the metadata server reachable (option B), its permissions are the sandbox model's permissions; remove them before continuing"
+  fi
+}
+
+# assert_sandbox_sa_no_unexpected_bindings -- who holds a role ON outfitter-sandbox@: only the
+# sandbox KSA's roles/iam.workloadIdentityUser (gke-iam.sh). Anything else could mint its tokens.
+# Needs roles/iam.serviceAccountViewer on it, which the owner has and outfitter-deployer doesn't, so
+# only gke-iam.sh runs this one.
+assert_sandbox_sa_no_unexpected_bindings() {
+  local sandbox_sa rows role member unexpected=()
+  sandbox_sa="$(sandbox_sa_email)"
+  local expected_wi_member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE:-outfitter-sandboxes}/outfitter-agent]"
+  rows="$(gcloud iam service-accounts get-iam-policy "${sandbox_sa}" --project="${PROJECT}" \
+    --flatten="bindings[].members" --format="csv[no-heading](bindings.role,bindings.members)")" \
+    || deploy_fail "could not read ${sandbox_sa}'s own IAM policy (needs roles/iam.serviceAccountViewer)"
+  while IFS=',' read -r role member; do
+    [[ -z "${role}" ]] && continue
+    [[ "${role}:${member}" == "roles/iam.workloadIdentityUser:${expected_wi_member}" ]] && continue
+    unexpected+=("${role} -> ${member}")
+  done <<<"${rows}"
+  if [[ "${#unexpected[@]}" -gt 0 ]]; then
+    deploy_fail "${sandbox_sa} has unexpected bindings on its own IAM policy: ${unexpected[*]} -- only the sandbox KSA's workloadIdentityUser belongs there (#202); remove them"
+  fi
+}
+
 # assert_agent_sa_logwriter_only -- owner decision "option B" (gke-sandbox-provider-plan.md §1): the
 # GKE template keeps the metadata server reachable from every sandbox (S7 found Autopilot's Warden
 # rejects the per-uid NET_ADMIN block Cloud Run's finding 3 wanted), so outfitter-agent@'s own IAM
@@ -527,7 +575,11 @@ assert_agent_sa_logwriter_only() {
 #                                                                       it to start Cloud Run Job
 #                                                                       executions (CloudRunProvider)
 #   roles/iam.serviceAccountUser  outfitter-deployer@ ci-setup.sh   -- deploys the Job as this account
-#   roles/iam.workloadIdentityUser <the KSA>          gke-iam.sh    -- GKE sandboxes impersonate it
+#   roles/iam.workloadIdentityUser <the KSA>          gke-iam.sh    -- GKE sandboxes impersonated it
+#                                                                       before #202 moved them to
+#                                                                       outfitter-sandbox@; tolerated
+#                                                                       until `DROP_LEGACY_WI=1
+#                                                                       ./gke-iam.sh` removes it
 assert_agent_sa_no_unexpected_bindings() {
   local agent_sa_email="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
   local expected_wi_member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE:-outfitter-sandboxes}/outfitter-agent]"

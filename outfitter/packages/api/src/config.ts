@@ -38,6 +38,10 @@ export interface Config {
   role: OutfitterRole;
   /** Service account email agentd authenticates as (audience-verified in verifyAgentToken). */
   agentSaEmail: string;
+  /** SANDBOX_SA_EMAIL: the GKE sandboxes' own service account (#202), which holds no project roles,
+   * unlike agentSaEmail's logging.logWriter. verifyAgentToken accepts it too, and agentlink only for
+   * a run the gke provider started. Empty: only agentSaEmail is accepted. */
+  sandboxSaEmail: string;
   /** Audience for IAP-signed JWTs presented by browsers (the IAP resource's OAuth client id). */
   iapAudience: string;
   sandboxProvider: SandboxProviderName;
@@ -523,6 +527,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     originAliases: envOperators("OUTFITTER_ORIGIN_ALIASES", env),
     role: envRole(env),
     agentSaEmail: env.AGENT_SA_EMAIL ?? "",
+    sandboxSaEmail: env.SANDBOX_SA_EMAIL ?? "",
     iapAudience: env.IAP_AUDIENCE ?? "",
     sandboxProvider: envEnum("SANDBOX_PROVIDER", SANDBOX_PROVIDERS, "inprocess", env),
     cloudRunJob: env.CLOUDRUN_JOB ?? "outfitter-agent",

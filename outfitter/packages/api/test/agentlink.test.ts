@@ -1062,6 +1062,51 @@ describe("hello sent immediately after connect is never dropped", () => {
   });
 });
 
+// #202: GKE sandboxes authenticate as their own service account, which agentlink holds to gke runs.
+describe("the GKE sandbox identity (SANDBOX_SA_EMAIL)", () => {
+  const env = { OUTFITTER_DEV: "0", AGENT_SA_EMAIL: "agent@test.local", SANDBOX_SA_EMAIL: "sandbox@test.local" };
+  // devMode off also requires a GitHub token for the repo session (see "run.spec build validates secrets").
+  const secretsBroker: SecretsBroker = {
+    secretsForRun: async () => ({ githubToken: "gh-token", litellmKey: "some-key" }),
+    defaultLitellmKey: async () => "some-key",
+  };
+
+  test("is accepted for a run the gke provider started", async (t) => {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({ getPayload: () => ({ email: "sandbox@test.local" }) }));
+    const app = await buildTestApp(env, { secretsBroker });
+    const { session, runId, runToken } = await makeRunningSession(app);
+    const run = await app.store.runs.findById(runId);
+    await app.store.runs.update(runId, { startup: { ...run!.startup!, provider: "gke" } });
+
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    assert.equal((await agent.nextMessage()).t, "run.spec");
+
+    agent.send({ t: "bye", reason: "stop" });
+    await agent.nextClose();
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+
+  test("is refused 4401 for a run another provider started, without touching the run", async (t) => {
+    t.mock.method(OAuth2Client.prototype, "verifyIdToken", async () => ({ getPayload: () => ({ email: "sandbox@test.local" }) }));
+    const app = await buildTestApp(env, { secretsBroker });
+    const { session, runId, runToken } = await makeRunningSession(app); // test config: inprocess provider
+    const before = await app.store.runs.findById(runId);
+
+    const agent = await openAgentSocket(app, runId, "any-google-id-token");
+    sendHello(agent, runId, session.id, runToken);
+    const close = await agent.nextClose();
+    assert.equal(close.code, 4401);
+    const after = await app.store.runs.findById(runId);
+    assert.equal(after?.state, before?.state);
+    assert.equal(after?.statusDetail, before?.statusDetail);
+
+    app.stopBackgroundTasks();
+    await app.fastify.close();
+  });
+});
+
 describe("run.spec build validates secrets", () => {
   test("closes with WS code 4412 and marks the run failed when a repo session's githubToken secret is missing (devMode off)", async (t) => {
     const emptyGithubBroker: SecretsBroker = {

@@ -210,6 +210,9 @@ fi
 # env vars to before this existed.
 if [[ -n "${GKE_CLUSTER:-}" ]]; then
   ENV_VARS="${ENV_VARS},GKE_CLUSTER=${GKE_CLUSTER},GKE_LOCATION=${GKE_LOCATION},GKE_NAMESPACE=${GKE_NAMESPACE},GKE_WARM_POOL=${GKE_WARM_POOL},GKE_LAUNCH_MODE=${GKE_LAUNCH_MODE},GKE_MAX_ACTIVE=${GKE_MAX_ACTIVE}"
+  # #202: the GKE sandboxes' own identity (no project roles). The api accepts it for gke runs only;
+  # gke-iam.sh refuses to move the sandboxes onto it until this is deployed on both roles.
+  ENV_VARS="${ENV_VARS},SANDBOX_SA_EMAIL=$(sandbox_sa_email)"
   echo "   gke: cluster=${GKE_CLUSTER} location=${GKE_LOCATION} namespace=${GKE_NAMESPACE} pool=${GKE_WARM_POOL} mode=${GKE_LAUNCH_MODE} maxActive=${GKE_MAX_ACTIVE}"
 fi
 # #217 Drive previews, both roles (link answers agentd's preview.open and runs the tick's sweep).

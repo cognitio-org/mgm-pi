@@ -48,6 +48,10 @@ echo "== Guard: outfitter-agent@ has no unexpected binding on its own IAM policy
 assert_agent_sa_no_unexpected_bindings
 echo "   ok"
 
+echo "== Guard: $(sandbox_sa_email) holds no project role (#202) =="
+assert_sandbox_sa_no_project_roles
+echo "   ok"
+
 TAG="$(commit_tag)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/outfitter-agent:${TAG}"
 

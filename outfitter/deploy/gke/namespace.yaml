@@ -1,7 +1,9 @@
 # The sandbox namespace and its Kubernetes service account (docs/specs/gke-sandbox-provider.md §3.2).
-# The KSA impersonates the existing outfitter-agent@ GSA through Workload Identity, so agentd's ID
-# token carries the same `email` the link already accepts. The IAM side (roles/iam.workloadIdentityUser
-# on the GSA for this KSA) is gke-iam.sh's job.
+# The KSA impersonates outfitter-sandbox@ through Workload Identity (#202): a GSA with no project
+# roles, so a model that reaches the metadata server gets a token that can do nothing but prove who
+# it is. agentd's ID token then carries that `email`, which the api accepts for gke runs only
+# (SANDBOX_SA_EMAIL). The IAM side (the GSA itself, and roles/iam.workloadIdentityUser on it for
+# this KSA) is gke-iam.sh's job, which applies this file only once the api accepts the new identity.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -13,7 +15,7 @@ metadata:
   name: outfitter-agent
   namespace: outfitter-sandboxes
   annotations:
-    iam.gke.io/gcp-service-account: outfitter-agent@outfitter-509211.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: outfitter-sandbox@outfitter-509211.iam.gserviceaccount.com
 # Sandbox pods never talk to the Kubernetes API (sandbox-core-policy requires
 # automountServiceAccountToken: false on the pod as well).
 automountServiceAccountToken: false

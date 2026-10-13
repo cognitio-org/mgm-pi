@@ -28,7 +28,11 @@ case "$*" in
     [[ -n "${FAKE_IMAGE_MISSING:-}" ]] && exit 1
     exit 0 ;;
   "projects get-iam-policy"*)
-    [[ -n "${FAKE_AGENT_EXTRA_ROLES:-}" ]] && printf '%s\n' "${FAKE_AGENT_EXTRA_ROLES}"
+    if [[ "$*" == *outfitter-sandbox@* ]]; then
+      [[ -n "${FAKE_SANDBOX_ROLES:-}" ]] && printf '%s\n' "${FAKE_SANDBOX_ROLES}"
+    else
+      [[ -n "${FAKE_AGENT_EXTRA_ROLES:-}" ]] && printf '%s\n' "${FAKE_AGENT_EXTRA_ROLES}"
+    fi
     ;;
   "iam service-accounts get-iam-policy outfitter-agent@"*)
     printf 'roles/iam.serviceAccountUser,serviceAccount:outfitter-deployer@outfitter-509211.iam.gserviceaccount.com\n'
@@ -171,7 +175,7 @@ export PATH="${WORK}/bin:${PATH}"
 export GCLOUD_CALLS="${WORK}/gcloud-calls" KUBECTL_CALLS="${WORK}/kubectl-calls" \
   RENDERED_LOG="${WORK}/rendered-log" GKE_CLUSTER=outfitter FAKE_LINK_ORIGIN=https://link.example.com \
   KUBECONFIG_OUTFITTER="${WORK}/kube/outfitter"
-unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW DEPLOY_ALL_COMMIT
+unset GITHUB_ACTIONS ROLLBACK ALLOW_OFF_MAIN ALLOW_SKEW DEPLOY_ALL_COMMIT FAKE_SANDBOX_ROLES
 
 fails=0
 OUT=""
@@ -209,6 +213,12 @@ FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" \
   expect fail "an unexpected binding on outfitter-agent@'s own IAM policy refuses" \
   "unexpected bindings" FAKE_EXTRA_SA_BINDING="roles/iam.serviceAccountTokenCreator,user:someone@example.com"
+
+# #202: every release also checks the sandboxes' own GSA holds no project role.
+FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
+  FAKE_JOB_LABELS="build-commit=${TAG}" \
+  expect fail "#202: outfitter-sandbox@ holding a project role refuses the release step" \
+  "outfitter-sandbox@.*holds project role.*roles/logging.logWriter" FAKE_SANDBOX_ROLES="roles/logging.logWriter"
 
 FAKE_WEB_LABELS="build-commit=${TAG}" FAKE_LINK_LABELS="build-commit=${TAG}" \
   FAKE_JOB_LABELS="build-commit=${TAG}" \

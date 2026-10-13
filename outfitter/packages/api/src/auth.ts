@@ -23,9 +23,10 @@
 // an `outf_` token (identityFromRequest), so the same personal token also works against a
 // single-process dev/"all" deployment.
 //
-// agentd: presents `Authorization: Bearer <google id token>` minted for the outfitter-agent
-// service account by the Cloud Run Job's metadata server, audience = OUTFITTER_ORIGIN. We verify
-// with verifyIdToken and require the token's email to match AGENT_SA_EMAIL.
+// agentd: presents `Authorization: Bearer <google id token>` minted by its metadata server,
+// audience = OUTFITTER_ORIGIN: for the outfitter-agent service account on Cloud Run, or for
+// outfitter-sandbox (SANDBOX_SA_EMAIL, #202) on GKE. We verify with verifyIdToken and require the
+// token's email to be one of the two; agentlink then holds a sandbox identity to gke runs.
 //
 // OUTFITTER_DEV=1 replaces the IAP/agentd checks with fixed dev values so the stack runs with no
 // GCP project. On the web/all role dev mode wins over any bearer, a Dongle included (tokens.test.ts
@@ -209,9 +210,9 @@ export async function identityFromRequest(req: RequestLike, config: Config, stor
   return { email: payload.email, operator: isOperator(payload.email, config.operators) };
 }
 
-/** Verifies agentd's bearer token and returns its identity. Throws on failure. agentd identities
- * are never operators -- the concept doesn't apply to the agent service account -- so this always
- * returns `operator: false`. */
+/** Verifies agentd's bearer token and returns its identity: `email` is AGENT_SA_EMAIL or
+ * SANDBOX_SA_EMAIL. Throws on failure. agentd identities are never operators -- the concept doesn't
+ * apply to the agent service accounts -- so this always returns `operator: false`. */
 export async function verifyAgentToken(bearer: string | undefined, config: Config): Promise<Identity> {
   if (!bearer) throw new Error("missing bearer token");
 
@@ -226,8 +227,24 @@ export async function verifyAgentToken(bearer: string | undefined, config: Confi
   if (!payload?.email) throw new Error("agent id token has no email claim");
   // Finding #7 (docs/reports/security-review-pr1.md): same defense-in-depth as identityFromRequest.
   if (payload.email_verified === false) throw new Error("agent id token email is not verified");
-  if (payload.email !== config.agentSaEmail) throw new Error("agent id token email does not match AGENT_SA_EMAIL");
+  if (!agentEmails(config).includes(payload.email)) {
+    throw new Error("agent id token email matches neither AGENT_SA_EMAIL nor SANDBOX_SA_EMAIL");
+  }
   return { email: payload.email, operator: false };
+}
+
+/** The service accounts an agentd id token may carry: AGENT_SA_EMAIL and, when set,
+ * SANDBOX_SA_EMAIL. Empty values never match (an unset AGENT_SA_EMAIL accepts no token at all). */
+function agentEmails(config: Config): string[] {
+  return [config.agentSaEmail, config.sandboxSaEmail].filter((e) => e !== "");
+}
+
+/** Whether `email` may act for a run the provider `provider` started. SANDBOX_SA_EMAIL is the GKE
+ * sandboxes' identity (#202), so it's held to gke runs; AGENT_SA_EMAIL is accepted for every run,
+ * since GKE sandboxes carry it until gke-iam.sh moves their Workload Identity binding. */
+export function agentMayActForRun(email: string, provider: string | undefined, config: Config): boolean {
+  if (config.sandboxSaEmail === "" || email !== config.sandboxSaEmail || email === config.agentSaEmail) return true;
+  return provider === "gke";
 }
 
 /** Fastify preHandler guarding every /api/operator/* route (routes/operator.ts): 403 unless the

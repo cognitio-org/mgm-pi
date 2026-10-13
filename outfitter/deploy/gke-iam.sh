@@ -6,11 +6,16 @@
 # wants to re-check the logWriter guard below):
 #   DRY_RUN=1 ./gke-iam.sh
 #   ./gke-iam.sh
+#   DROP_LEGACY_WI=1 ./gke-iam.sh   # #202, a day after the switch: see "Legacy binding" below
 #
 # Creates/checks:
-# - the outfitter-sandboxes namespace and its outfitter-agent KSA (deploy/gke/namespace.yaml)
-# - roles/iam.workloadIdentityUser on outfitter-agent@ for that KSA (Workload Identity, GSA
-#   impersonation form -- keeps agentd's ID token `email` unchanged, spec §3.2)
+# - outfitter-sandbox@, the sandboxes' own GSA with no project roles (#202), and
+#   roles/iam.workloadIdentityUser on it for the outfitter-agent KSA (Workload Identity, GSA
+#   impersonation form: agentd's ID token `email` is outfitter-sandbox@)
+# - that both Cloud Run roles already accept that identity (SANDBOX_SA_EMAIL, set by service.sh
+#   since #202), before the KSA is pointed at it: an api that doesn't would refuse every GKE run 4401
+# - the outfitter-sandboxes namespace and its outfitter-agent KSA (deploy/gke/namespace.yaml),
+#   annotated with outfitter-sandbox@
 # - roles/container.clusterViewer on the project for outfitter-api@ (both Cloud Run roles dial the
 #   cluster's DNS endpoint as this account)
 # - the outfitter-sandboxes log bucket and the sink that copies agentd's logs into it,
@@ -27,6 +32,13 @@
 #   that account's permissions ARE the model's permissions inside a run. See env.sh's
 #   assert_agent_sa_logwriter_only and assert_agent_sa_no_unexpected_bindings for exactly what these
 #   do and do NOT cover (folder/org-level grants are a known gap, documented there).
+# - outfitter-sandbox@ must hold no project IAM role at all, and nothing on its own IAM policy but
+#   the KSA's workloadIdentityUser (env.sh's assert_sandbox_sa_*)
+#
+# Legacy binding (#202): before outfitter-sandbox@, the KSA impersonated outfitter-agent@, whose
+# roles/logging.logWriter let a sandbox forge other runs' log entries. This script no longer grants
+# that binding; DROP_LEGACY_WI=1 removes it. Wait a day after the switch (a sandbox lives at most
+# 24 h) so no sandbox still holding an outfitter-agent@ identity has to refresh it.
 set -euo pipefail
 
 # shellcheck source=env.sh
@@ -37,6 +49,8 @@ GKE_NAMESPACE="${GKE_NAMESPACE:-outfitter-sandboxes}"
 # different GKE_NAMESPACE would need a different patch file, which nothing here generates.
 [[ "${GKE_NAMESPACE}" == outfitter-sandboxes ]] || deploy_fail "GKE_NAMESPACE=${GKE_NAMESPACE}, but deploy/gke/hardening-exemption.json only exempts 'outfitter-sandboxes'; use that namespace, or update the patch file to match"
 AGENT_SA_EMAIL="outfitter-agent@${PROJECT}.iam.gserviceaccount.com"
+SANDBOX_SA_EMAIL="$(sandbox_sa_email)"
+KSA_MEMBER="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent]"
 API_SA_EMAIL="outfitter-api@${PROJECT}.iam.gserviceaccount.com"
 GKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/gke" && pwd)"
 
@@ -57,15 +71,64 @@ echo "== Guard: ${AGENT_SA_EMAIL} has no unexpected binding on its own IAM polic
 assert_agent_sa_no_unexpected_bindings
 echo "   ok"
 
-echo "== Namespace and KSA (${GKE_NAMESPACE}/outfitter-agent) =="
+echo "== Guard: ${SANDBOX_SA_EMAIL} holds no project role (#202) =="
+assert_sandbox_sa_no_project_roles
+echo "   ok"
+
+sandbox_sa_exists=0
+if gcloud iam service-accounts describe "${SANDBOX_SA_EMAIL}" --project="${PROJECT}" >/dev/null 2>&1; then
+  sandbox_sa_exists=1
+  echo "== Guard: ${SANDBOX_SA_EMAIL} has no unexpected binding on its own IAM policy (#202) =="
+  assert_sandbox_sa_no_unexpected_bindings
+  echo "   ok"
+fi
+
+# Before anything moves: the KSA annotation below switches every new sandbox token to
+# outfitter-sandbox@, which an api without SANDBOX_SA_EMAIL refuses (4401, terminal for agentd).
+echo "== Both Cloud Run roles accept ${SANDBOX_SA_EMAIL} (SANDBOX_SA_EMAIL, #202) =="
+for service in outfitter-api outfitter-link; do
+  accepted="$(gcloud run services describe "${service}" --project="${PROJECT}" --region="${REGION}" \
+    --format='value(spec.template.spec.containers[0].env)' 2>/dev/null || true)"
+  if [[ "${accepted}" != *"'name': 'SANDBOX_SA_EMAIL', 'value': '${SANDBOX_SA_EMAIL}'"* ]]; then
+    msg="${service} doesn't have SANDBOX_SA_EMAIL=${SANDBOX_SA_EMAIL} yet: release first (tag-release.sh), or every GKE run would be refused once the KSA moves to the new identity"
+    if [[ "${DRY_RUN:-0}" == 1 ]]; then echo "   DRY_RUN: would refuse: ${msg}"; else deploy_fail "${msg}"; fi
+  else
+    echo "   ${service}: ok"
+  fi
+done
+
+echo "== ${SANDBOX_SA_EMAIL}: the sandboxes' own GSA, no project roles (#202) =="
+if [[ "${sandbox_sa_exists}" == 1 ]]; then
+  echo "   exists"
+else
+  run gcloud iam service-accounts create outfitter-sandbox --project="${PROJECT}" \
+    --display-name="Outfitter GKE sandboxes" \
+    --description="agentd's identity in GKE sandboxes (#202). Holds no project roles: the model can reach the metadata server." \
+    --quiet
+fi
+
+echo "== Workload Identity: ${SANDBOX_SA_EMAIL} impersonated by ${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent] =="
+run gcloud iam service-accounts add-iam-policy-binding "${SANDBOX_SA_EMAIL}" \
+  --project="${PROJECT}" --member="${KSA_MEMBER}" --role=roles/iam.workloadIdentityUser --quiet
+
+echo "== Namespace and KSA (${GKE_NAMESPACE}/outfitter-agent -> ${SANDBOX_SA_EMAIL}) =="
 gke_kubeconfig || deploy_fail "could not obtain a kubeconfig for ${GKE_CLUSTER}"
 run kubectl --kubeconfig="${KUBECONFIG}" apply --server-side -f "${GKE_DIR}/namespace.yaml"
 
-echo "== Workload Identity: ${AGENT_SA_EMAIL} impersonated by ${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent] =="
-run gcloud iam service-accounts add-iam-policy-binding "${AGENT_SA_EMAIL}" \
-  --project="${PROJECT}" \
-  --member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent]" \
-  --role=roles/iam.workloadIdentityUser --quiet
+echo "== Legacy Workload Identity binding on ${AGENT_SA_EMAIL} (#202) =="
+legacy_present=0
+gcloud iam service-accounts get-iam-policy "${AGENT_SA_EMAIL}" --project="${PROJECT}" \
+  --flatten="bindings[].members" --format="csv[no-heading](bindings.role,bindings.members)" 2>/dev/null \
+  | grep -qxF "roles/iam.workloadIdentityUser,${KSA_MEMBER}" && legacy_present=1
+if [[ "${legacy_present}" == 0 ]]; then
+  echo "   already gone"
+elif [[ "${DROP_LEGACY_WI:-0}" == 1 ]]; then
+  run gcloud iam service-accounts remove-iam-policy-binding "${AGENT_SA_EMAIL}" \
+    --project="${PROJECT}" --member="${KSA_MEMBER}" --role=roles/iam.workloadIdentityUser --quiet
+else
+  echo "   still present: sandboxes started before the switch may hold that identity for up to 24 h."
+  echo "   Remove it a day from now with: DROP_LEGACY_WI=1 ./gke-iam.sh"
+fi
 
 echo "== ${API_SA_EMAIL}: roles/container.clusterViewer (project-wide, permanent) =="
 run gcloud projects add-iam-policy-binding "${PROJECT}" \

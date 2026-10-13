@@ -150,5 +150,7 @@ remove_binding_if_present gcloud iam service-accounts remove-iam-policy-binding 
   --project="${PROJECT}" \
   --member="serviceAccount:${PROJECT}.svc.id.goog[${GKE_NAMESPACE}/outfitter-agent]" \
   --role=roles/iam.workloadIdentityUser --quiet
+# #202: the sandboxes' own GSA exists only for GKE, so it goes with the cluster (with its binding).
+remove_binding_if_present gcloud iam service-accounts delete "$(sandbox_sa_email)" --project="${PROJECT}" --quiet
 
 echo "== Done. Empty GKE_CLUSTER in config.env (and merge) before the next release, or gke-template.sh fails trying to reach a cluster that no longer exists. =="

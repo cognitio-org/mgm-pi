@@ -65,8 +65,10 @@ this rather than change the protocol, because a leaked token alone can't drive a
   `outfitter-agent@` (see deploy/README.md: a stolen deployer token is about as powerful as a
   malicious release), so reading a run token gives neither anything new.
 - **A second credential is needed.** A connection must also present an id token for the
-  `outfitter-agent@` service account. That account holds only `roles/logging.logWriter`, and
-  `assert_agent_sa_no_unexpected_bindings` (`deploy/env.sh`) keeps it that way.
+  `outfitter-agent@` service account (Cloud Run) or, for a run the gke provider started,
+  `outfitter-sandbox@` (`SANDBOX_SA_EMAIL`, #202). The first holds only `roles/logging.logWriter`,
+  the second no project role at all, and `deploy/env.sh`'s `assert_agent_sa_*` and
+  `assert_sandbox_sa_*` guards keep it that way.
 - **The token is short-lived.** It is only good for its own run, and only while that run is live.
 - **Only one connection wins.** A second socket for a run that already has one is refused ("One
   live agent connection per run", below).

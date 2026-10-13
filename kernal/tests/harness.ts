@@ -79,6 +79,7 @@ export function makeCtx(opts: { model?: FakeModel; models?: FakeModel[]; auth?: 
   const statuses = new Map<string, string | undefined>();
   const widgets = new Map<string, any>();
   const answers: (string | undefined)[] = [];   // scripted select/input answers, FIFO
+  const terminalInputs: ((data: string) => any)[] = [];   // live onTerminalInput listeners
   const compactCalls: any[] = [];
   const completes: any[] = [];
   let header: any;
@@ -97,6 +98,7 @@ export function makeCtx(opts: { model?: FakeModel; models?: FakeModel[]; auth?: 
       input: async (_title: string, _placeholder?: string) => answers.shift(),
       editor: async (_title: string, _prefill?: string) => answers.shift(),
       confirm: async () => true,
+      onTerminalInput: (fn: (data: string) => any) => { terminalInputs.push(fn); return () => { const i = terminalInputs.indexOf(fn); if (i >= 0) terminalInputs.splice(i, 1); }; },
     },
     modelRegistry: {
       find: (p: string, id: string) => models.find((m) => m.provider === p && m.id === id),
@@ -108,7 +110,9 @@ export function makeCtx(opts: { model?: FakeModel; models?: FakeModel[]; auth?: 
     sessionManager: { getEntries: () => opts.entries ?? [], getBranch: () => opts.entries ?? [] },
     getContextUsage: () => opts.usage ?? { tokens: 0, contextWindow: opts.model?.contextWindow ?? 128_000, percent: 0 },
     compact: (o: any) => compactCalls.push(o),
-    notices, statuses, widgets, answers, compactCalls, completes, get header() { return header; },
+    notices, statuses, widgets, answers, terminalInputs, compactCalls, completes, get header() { return header; },
+    /** Deliver a raw key sequence to every subscribed terminal listener, as pi's TUI would. */
+    press(data: string) { return [...terminalInputs].map((fn) => fn(data)); },
   };
   return ctx;
 }

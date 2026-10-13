@@ -163,6 +163,73 @@ describe("/context command", async () => {
     assert.equal(ctx.widgets.get("context"), undefined);
   });
 
+  test("the panel is a toggle: a second /context hides it and clears the status entry", async () => {
+    const { pi, ctx } = await start();
+    await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
+    const cmd = pi.commands.get("context")!;
+    await cmd.handler("", ctx);
+    assert.equal(typeof ctx.widgets.get("context"), "function", "first run opens");
+    assert.equal(ctx.statuses.get("context"), "◧ 31%");
+    await cmd.handler("", ctx);
+    assert.equal(ctx.widgets.get("context"), undefined, "second run closes");
+    assert.equal(ctx.statuses.get("context"), undefined, "and the footer entry goes with it");
+    await cmd.handler("", ctx);
+    assert.equal(typeof ctx.widgets.get("context"), "function", "and it opens again");
+  });
+
+  test("off, hide and close are the same dismissal, and all are offered", async () => {
+    for (const word of ["off", "hide", "close"]) {
+      const { pi, ctx } = await start();
+      await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
+      await pi.commands.get("context")!.handler("", ctx);
+      await pi.commands.get("context")!.handler(word, ctx);
+      assert.equal(ctx.widgets.get("context"), undefined, word);
+      assert.equal(ctx.statuses.get("context"), undefined, word);
+    }
+    const { pi } = await start();
+    assert.deepEqual((pi.commands.get("context") as any).getArgumentCompletions("").map((o: any) => o.value), ["export", "off", "hide", "close"]);
+  });
+
+  test("Esc dismisses an open panel and consumes the key", async () => {
+    const { pi, ctx } = await start();
+    await pi.emit("session_start", {}, ctx);
+    await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
+    await pi.commands.get("context")!.handler("", ctx);
+    const results = ctx.press("\x1b");
+    assert.equal(ctx.widgets.get("context"), undefined, "the panel closes");
+    assert.equal(ctx.statuses.get("context"), undefined, "the footer entry goes too");
+    assert.ok(results.some((r: any) => r?.consume === true), "pi must not also act on the key");
+  });
+
+  test("Esc is left alone when the panel is closed, and arrow keys never close it", async () => {
+    const { pi, ctx } = await start();
+    await pi.emit("session_start", {}, ctx);
+    assert.ok(!ctx.press("\x1b").some((r: any) => r?.consume === true), "a closed panel does not swallow Esc");
+    await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
+    await pi.commands.get("context")!.handler("", ctx);
+    assert.ok(!ctx.press("\x1b[A").some((r: any) => r?.consume === true), "up-arrow is not escape");
+    assert.equal(typeof ctx.widgets.get("context"), "function", "so the panel stays open");
+  });
+
+  test("the Esc listener is re-subscribed, not stacked, on each session_start", async () => {
+    const { pi, ctx } = await start();
+    await pi.emit("session_start", {}, ctx);
+    await pi.emit("session_start", {}, ctx);
+    assert.equal(ctx.terminalInputs.length, 1, "one listener, not two");
+    await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
+    await pi.commands.get("context")!.handler("", ctx);
+    ctx.press("\x1b");
+    assert.equal(ctx.widgets.get("context"), undefined);
+  });
+
+  test("without a UI there is no panel to hide, and no terminal listener to leave behind", async () => {
+    const pi = makePi();
+    await mod.default(pi as any);
+    const ctx: any = makeCtx({ hasUI: false });
+    await pi.emit("session_start", {}, ctx);
+    assert.equal(ctx.terminalInputs.length, 0);
+  });
+
   test("the payload is observed, never altered", async () => {
     const { pi, ctx } = await start();
     const before = JSON.stringify(payload);
@@ -196,7 +263,7 @@ describe("/context command", async () => {
     await pi.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
     await pi.commands.get("context")!.handler("nope", ctx);
     assert.equal(ctx.notices.at(-1)!.type, "error");
-    assert.match(ctx.notices.at(-1)!.msg, /Try: export, off/);
+    assert.match(ctx.notices.at(-1)!.msg, /Try: export, off, hide, close/);
   });
 });
 

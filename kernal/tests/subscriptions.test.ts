@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { login } from "../.pi/extensions/_shared/outfitter-session.ts";
-import { binaryOnPath, localVendorLogin } from "../.pi/extensions/kernal-subscriptions/local-login.ts";
+import { binaryOnPath, localVendorLogin, usableClaudeCredentials } from "../.pi/extensions/kernal-subscriptions/local-login.ts";
 import {
   extractSetupToken, formatStatus, main, redactSetupOutput, type SubscriptionIo,
 } from "../.pi/extensions/kernal-subscriptions/commands.ts";
@@ -104,6 +104,20 @@ describe("status lines and local checks", () => {
     assert.equal(line, "claude  mode=sandboxed  binary=yes  local-login=no  account-secret=yes  api-key=set:ANTHROPIC_API_KEY+ANTHROPIC_AUTH_TOKEN");
     assert.equal(formatStatus({ vendor: "gemini", mode: "off", binary: false, localLogin: false, accountSecret: "signed-out", apiKeyVars: [] }), "gemini  mode=off  binary=no  local-login=no  account-secret=signed-out  api-key=unset");
     assert.doesNotMatch(line, /sk-|Bearer/);
+  });
+
+  test("a stored credential only counts as a login when it can actually authenticate", () => {
+    const at = (oauth: unknown) => JSON.stringify({ claudeAiOauth: oauth });
+    // The false positive this guards against: the keychain item exists but holds nothing, so the
+    // worker would spawn and fail with "OAuth session expired" instead of asking to connect.
+    assert.equal(usableClaudeCredentials(at({ accessToken: "", refreshToken: "", expiresAt: 0 })), false, "empty item");
+    assert.equal(usableClaudeCredentials(at({})), false, "no oauth block");
+    assert.equal(usableClaudeCredentials(at(null)), false);
+    assert.equal(usableClaudeCredentials("not json"), false);
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok" })), true, "no expiry info is usable");
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 })), true);
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() - 1000, refreshToken: "ref" })), true, "expired but refreshable");
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() - 1000 })), false, "expired with nothing to refresh it");
   });
 
   test("binaryOnPath checks PATH entries and not a path-shaped name", () => {
@@ -438,6 +452,13 @@ describe("the coordinator uses the Claude runner", () => {
     assert.match(spent.text, /Do not retry with an API key/);
     assert.match(spent.text, /grok is next/);
     assert.match(spent.text, /router subagent/);
+    // A settings refusal must not read like stray output: it says what happened and where to go.
+    const refused = subscriptionToolText({ kind: "refused", vendor: "claude", text: "user settings set env.ANTHROPIC_API_KEY" });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /Claude refused to start/);
+    assert.match(refused.text, /user settings set env\.ANTHROPIC_API_KEY/);
+    assert.match(refused.text, /router subagent/);
+    assert.notEqual(refused.text.trim(), "user settings set env.ANTHROPIC_API_KEY");
     const calls: string[] = [];
     const ran = await executeSubscriptionWorker({ prompt: "  edit it  ", memoryBrief: "brief" }, {
       cwd: "/work",

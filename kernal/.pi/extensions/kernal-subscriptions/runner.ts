@@ -28,6 +28,7 @@ export type SubscriptionRunResult =
   | { kind: "connect"; vendor: SubscriptionVendor; text: string }
   | { kind: "exhausted"; vendor: SubscriptionVendor; text: string }
   | { kind: "error"; vendor: SubscriptionVendor; text: string }
+  | { kind: "refused"; vendor: SubscriptionVendor; text: string }
   | { kind: "unsupported"; vendor: SubscriptionVendor; text: string };
 
 export interface WorkerInput {
@@ -103,10 +104,23 @@ export function claudeMcpServers(servers: Record<string, unknown> | undefined): 
   return out;
 }
 
+/**
+ * A user settings file may set `apiKeyHelper`; Claude applies it after spawn, so the child would
+ * authenticate with an API key and bill it instead of the plan. `--settings` is the documented way
+ * to override a settings-file value, and an empty helper means "none". This is a neutralisation,
+ * not a refusal: the child can then only use `CLAUDE_CODE_OAUTH_TOKEN`.
+ *
+ * Verified against claude 2.1.295: with this override a `full` child authenticates on the plan and
+ * its tools work headless (a Read of a file in the cwd returned the file's contents).
+ */
+export const NO_API_KEY_HELPER = JSON.stringify({ apiKeyHelper: "" });
+
 export function claudeArgs(mode: "sandboxed" | "full", prompt: string, mcpPath: string): string[] {
   const args = ["--strict-mcp-config", "--mcp-config", mcpPath];
   if (mode === "sandboxed") args.push("--permission-mode", "plan", "--setting-sources", "user", "--disallowedTools", "Bash");
   else args.push("--setting-sources", "user,project");
+  // Before `-p`, and after the sources it overrides. See NO_API_KEY_HELPER.
+  args.push("--settings", NO_API_KEY_HELPER);
   // `-p` is last so a flag isn't read as the prompt. No `--resume`, no skip-permissions.
   args.push("--no-session-persistence", "-p", prompt);
   return args;
@@ -159,15 +173,18 @@ export function claudeSettingsRefusal(sources: readonly ClaudeSettingsSource[]):
   return undefined;
 }
 
+/**
+ * Fields `--settings` does not neutralise for us, so they stay refusals. `apiKeyHelper` is not
+ * here: `claudeArgs` clears it (NO_API_KEY_HELPER) instead of refusing.
+ */
 function settingsLeakField(settings: unknown): string | undefined {
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return undefined;
-  const record = settings as { env?: unknown; apiKeyHelper?: unknown };
+  const record = settings as { env?: unknown };
   const env = record.env && typeof record.env === "object" && !Array.isArray(record.env)
     ? record.env as Record<string, unknown>
     : undefined;
   if (env && nonEmptyString(env.ANTHROPIC_API_KEY)) return "env.ANTHROPIC_API_KEY";
   if (env && nonEmptyString(env.ANTHROPIC_AUTH_TOKEN)) return "env.ANTHROPIC_AUTH_TOKEN";
-  if (nonEmptyString(record.apiKeyHelper)) return "apiKeyHelper";
   if (env && nonEmptyString(env.ANTHROPIC_BASE_URL) && !isAnthropicApiBase(env.ANTHROPIC_BASE_URL)) return "env.ANTHROPIC_BASE_URL";
   return undefined;
 }
@@ -283,7 +300,7 @@ export async function runClaudeWorker(input: WorkerInput, deps: WorkerDeps = {})
 
   // Before the MCP file and spawn. Clearing the child env does not stop Claude from applying these.
   const blocked = settingsBlock(mode, input.cwd, deps);
-  if (blocked) return { kind: "error", vendor: "claude", text: blocked };
+  if (blocked) return { kind: "refused", vendor: "claude", text: blocked };
 
   const prompt = promptFor(mode, input.prompt, input.memoryBrief);
   const servers = mode === "sandboxed" ? {} : claudeMcpServers(input.mcpServers);

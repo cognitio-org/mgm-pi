@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { login } from "../.pi/extensions/_shared/outfitter-session.ts";
-import { binaryOnPath, localVendorLogin } from "../.pi/extensions/kernal-subscriptions/local-login.ts";
+import { binaryOnPath, localVendorLogin, usableClaudeCredentials } from "../.pi/extensions/kernal-subscriptions/local-login.ts";
 import {
   extractSetupToken, formatStatus, main, redactSetupOutput, type SubscriptionIo,
 } from "../.pi/extensions/kernal-subscriptions/commands.ts";
@@ -106,6 +106,20 @@ describe("status lines and local checks", () => {
     assert.doesNotMatch(line, /sk-|Bearer/);
   });
 
+  test("a stored credential only counts as a login when it can actually authenticate", () => {
+    const at = (oauth: unknown) => JSON.stringify({ claudeAiOauth: oauth });
+    // The false positive this guards against: the keychain item exists but holds nothing, so the
+    // worker would spawn and fail with "OAuth session expired" instead of asking to connect.
+    assert.equal(usableClaudeCredentials(at({ accessToken: "", refreshToken: "", expiresAt: 0 })), false, "empty item");
+    assert.equal(usableClaudeCredentials(at({})), false, "no oauth block");
+    assert.equal(usableClaudeCredentials(at(null)), false);
+    assert.equal(usableClaudeCredentials("not json"), false);
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok" })), true, "no expiry info is usable");
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 })), true);
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() - 1000, refreshToken: "ref" })), true, "expired but refreshable");
+    assert.equal(usableClaudeCredentials(at({ accessToken: "tok", expiresAt: Date.now() - 1000 })), false, "expired with nothing to refresh it");
+  });
+
   test("binaryOnPath checks PATH entries and not a path-shaped name", () => {
     const root = mkdtempSync(join(tmpdir(), "kernal-path-"));
     const bin = join(root, "bin");
@@ -126,6 +140,18 @@ describe("status lines and local checks", () => {
     assert.equal(localVendorLogin("claude", { env, home, keychain: () => false }), true);
     assert.equal(localVendorLogin("claude", { env: { CLAUDE_CODE_OAUTH_TOKEN: ACCOUNT_SECRET }, home: join(home, "empty"), keychain: () => false }), true);
     assert.equal(localVendorLogin("claude", { env, home: join(home, "empty"), keychain: () => true }), true);
+
+    // The on-disk file is held to the same standard as the keychain: a stale credential with no
+    // refresh token is not a login, so the worker asks to connect instead of spawning into a failure.
+    const stale = mkdtempSync(join(tmpdir(), "kernal-login-stale-"));
+    mkdirSync(join(stale, ".claude"), { recursive: true });
+    const staleEnv = { HOME: stale, CLAUDE_CODE_OAUTH_TOKEN: "" };
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: ACCOUNT_SECRET, expiresAt: Date.now() - 1000 } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), false, "expired with nothing to refresh");
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: ACCOUNT_SECRET, expiresAt: Date.now() - 1000, refreshToken: "refresh" } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), true, "expired but refreshable");
+    writeFileSync(join(stale, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { refreshToken: "refresh" } }));
+    assert.equal(localVendorLogin("claude", { env: staleEnv, home: stale, keychain: () => false }), false, "a refresh token alone is not a login");
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), "");
     assert.equal(localVendorLogin("grok", { env, home }), false);
@@ -438,6 +464,37 @@ describe("the coordinator uses the Claude runner", () => {
     assert.match(spent.text, /Do not retry with an API key/);
     assert.match(spent.text, /grok is next/);
     assert.match(spent.text, /router subagent/);
+    // A settings refusal must not read like stray output: it says what happened and where to go.
+    const refused = subscriptionToolText({ kind: "refused", vendor: "claude", text: "user settings set env.ANTHROPIC_API_KEY" });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /Claude refused to start/);
+    assert.match(refused.text, /user settings set env\.ANTHROPIC_API_KEY/);
+    assert.match(refused.text, /router subagent/);
+    // Exact equality on the texts the runner really emits for a non-leak refusal. Substring checks
+    // alone let the round-1 bug back in, where every refusal claimed an API key would be billed.
+    for (const text of ["user settings could not be read", "user settings are not valid JSON"]) {
+      const out = subscriptionToolText({ kind: "refused", vendor: "claude", text });
+      assert.equal(out.text, `Claude refused to start: ${text}. Fix that settings file, or use a router subagent for this task.`);
+      assert.doesNotMatch(out.text, /bill an API key/);
+    }
+    // End to end: both non-leak refusals are produced by the real runner, so neither expected
+    // string is typed by hand and a reworded runner breaks this rather than drifting silently.
+    for (const [reason, readSettingsFile] of [
+      ["could not be read", () => { throw new Error("unreadable"); }],
+      ["are not valid JSON", () => "{"],
+    ] as const) {
+      const refusedRun = await executeSubscriptionWorker({ prompt: "x" }, {
+        run: async (_vendor, input) => runClaudeWorker({ prompt: input.prompt, cwd: input.cwd }, {
+          mode: () => "full" as const,
+          secret: { ok: true, value: "secret" },
+          home: "/tmp/kernal-refusal-home",
+          readSettingsFile,
+        } as any),
+      });
+      assert.equal(refusedRun.isError, true, reason);
+      assert.equal(refusedRun.text, `Claude refused to start: user settings ${reason}. Fix that settings file, or use a router subagent for this task.`);
+      assert.doesNotMatch(refusedRun.text, /bill an API key/);
+    }
     const calls: string[] = [];
     const ran = await executeSubscriptionWorker({ prompt: "  edit it  ", memoryBrief: "brief" }, {
       cwd: "/work",

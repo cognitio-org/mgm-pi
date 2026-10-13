@@ -360,6 +360,15 @@ export function subscriptionToolText(
   follow: readonly { vendor: SubscriptionVendor; action: "run" | "connect" }[] = [],
 ): { text: string; isError: boolean } {
   if (result.kind === "ok") return { text: result.text, isError: false };
+  // A refusal is a dead end for this vendor. The runner text says what it found and why it matters;
+  // this adds only where to go next, so it stays true for a leak, an unreadable file, and bad JSON.
+  if (result.kind === "refused") {
+    const name = result.vendor.charAt(0).toUpperCase() + result.vendor.slice(1);
+    return {
+      text: `${name} refused to start: ${result.text}. Fix that settings file, or use a router subagent for this task.`,
+      isError: true,
+    };
+  }
   if (result.kind !== "exhausted") return { text: result.text, isError: true };
   const lines = [result.text, "Do not retry with an API key."];
   for (const step of follow) {

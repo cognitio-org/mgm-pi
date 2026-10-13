@@ -23,22 +23,43 @@ function nonEmpty(path: string): boolean {
   }
 }
 
+/**
+ * Whether Claude Code's stored credential is actually usable. An item that exists but holds no
+ * access token — or an expired one with nothing to refresh it — is not a login. Treating mere
+ * existence as a login makes the worker spawn and then fail with an opaque "OAuth session expired"
+ * error instead of asking this person to connect.
+ */
+export function usableClaudeCredentials(raw: string): boolean {
+  let oauth: { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
+  try {
+    oauth = (JSON.parse(raw) as { claudeAiOauth?: typeof oauth } | null)?.claudeAiOauth ?? {};
+  } catch {
+    return false;
+  }
+  if (typeof oauth.accessToken !== "string" || oauth.accessToken.trim() === "") return false;
+  const refresh = typeof oauth.refreshToken === "string" && oauth.refreshToken.trim() !== "";
+  const expiresAt = typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
+  // An expired access token is still a login while a refresh token can renew it.
+  return !(expiresAt > 0 && expiresAt <= Date.now() && !refresh);
+}
+
 /** Claude Code's on-disk login: `claudeAiOauth.accessToken` in ~/.claude/.credentials.json. */
 function claudeFile(home: string): boolean {
   try {
-    const j = JSON.parse(readFileSync(join(home, ".claude", ".credentials.json"), "utf8")) as { claudeAiOauth?: { accessToken?: unknown } };
-    return typeof j?.claudeAiOauth?.accessToken === "string" && j.claudeAiOauth.accessToken.trim() !== "";
+    return usableClaudeCredentials(readFileSync(join(home, ".claude", ".credentials.json"), "utf8"));
   } catch {
     return false;
   }
 }
 
-/** macOS Keychain item Claude Code writes. Exit status only; stdout is discarded. */
+/** macOS Keychain item Claude Code writes. Read only to check it holds a usable token, never logged. */
 function darwinKeychain(service: string): boolean {
   if (process.env.KERNAL_TEST_NO_KEYCHAIN === "1" || process.platform !== "darwin") return false;
   try {
-    execFileSync("security", ["find-generic-password", "-s", service], { stdio: "ignore" });
-    return true;
+    // Reading the secret (rather than just the attributes) can raise a Keychain ACL prompt, which
+    // would block this synchronous call forever; the timeout turns that into "not logged in".
+    const raw = execFileSync("security", ["find-generic-password", "-s", service, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 });
+    return usableClaudeCredentials(raw);
   } catch {
     return false;
   }

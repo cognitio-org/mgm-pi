@@ -477,18 +477,24 @@ describe("the coordinator uses the Claude runner", () => {
       assert.equal(out.text, `Claude refused to start: ${text}. Fix that settings file, or use a router subagent for this task.`);
       assert.doesNotMatch(out.text, /bill an API key/);
     }
-    // End to end: the real worker's refusal reaches the model as the tool text.
-    const refusedRun = await executeSubscriptionWorker({ prompt: "x" }, {
-      run: async (_vendor, input) => runClaudeWorker({ prompt: input.prompt, cwd: input.cwd }, {
-        mode: () => "full" as const,
-        secret: { ok: true, value: "secret" },
-        home: "/tmp/kernal-refusal-home",
-        readSettingsFile: () => { throw new Error("unreadable"); },
-      } as any),
-    });
-    assert.equal(refusedRun.isError, true);
-    assert.match(refusedRun.text, /Claude refused to start: user settings could not be read/);
-    assert.doesNotMatch(refusedRun.text, /bill an API key/);
+    // End to end: both non-leak refusals are produced by the real runner, so neither expected
+    // string is typed by hand and a reworded runner breaks this rather than drifting silently.
+    for (const [reason, readSettingsFile] of [
+      ["could not be read", () => { throw new Error("unreadable"); }],
+      ["are not valid JSON", () => "{"],
+    ] as const) {
+      const refusedRun = await executeSubscriptionWorker({ prompt: "x" }, {
+        run: async (_vendor, input) => runClaudeWorker({ prompt: input.prompt, cwd: input.cwd }, {
+          mode: () => "full" as const,
+          secret: { ok: true, value: "secret" },
+          home: "/tmp/kernal-refusal-home",
+          readSettingsFile,
+        } as any),
+      });
+      assert.equal(refusedRun.isError, true, reason);
+      assert.equal(refusedRun.text, `Claude refused to start: user settings ${reason}. Fix that settings file, or use a router subagent for this task.`);
+      assert.doesNotMatch(refusedRun.text, /bill an API key/);
+    }
     const calls: string[] = [];
     const ran = await executeSubscriptionWorker({ prompt: "  edit it  ", memoryBrief: "brief" }, {
       cwd: "/work",

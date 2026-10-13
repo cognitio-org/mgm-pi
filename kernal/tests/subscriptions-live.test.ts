@@ -71,7 +71,9 @@ function runClaude(args: string[], home: string, cwd: string): { code: number; o
 describe("live: the apiKeyHelper override", { skip: gate }, () => {
   test("the installed CLI supports --settings, which the override depends on", () => {
     const help = execFileSync("claude", ["--help"], { encoding: "utf8", timeout: 60_000 });
-    assert.match(help, /--settings/, "an older CLI would reject the flag and the checks below would pass for the wrong reason");
+    // Anchored to a flag line, so a mention of --settings inside another flag's description
+    // cannot stand in for the real thing. A hidden flag fails this loudly, which is the safe way.
+    assert.match(help, /^\s+--settings\b/m, "an older CLI would reject the flag and the checks below would pass for the wrong reason");
   });
 
   for (const where of ["user", "project"] as const) {
@@ -86,6 +88,11 @@ describe("live: the apiKeyHelper override", { skip: gate }, () => {
       const res = runClaude(claudeArgs("full", PROMPT, mcp), home, cwd);
       assert.equal(existsSync(canary), false, `the helper must not run; claude said: ${res.out.slice(0, 400)}`);
       assert.doesNotMatch(res.out, /unknown (option|argument|flag)|unrecognized|invalid option/i, `--settings must be accepted: ${res.out.slice(0, 400)}`);
+      // "The helper did not run" would also be true if the CLI rejected the flag's value and
+      // exited early, so require the run to have reached auth: either it worked, or it failed for
+      // a reason that is about the login and not about the arguments.
+      const reachedAuth = res.code === 0 || /not logged in|oauth|authenticat|credit|plan|rate limit/i.test(res.out);
+      assert.ok(reachedAuth, `expected the run to get past argument parsing and settings: ${res.out.slice(0, 400)}`);
     });
   }
 });

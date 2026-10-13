@@ -1,0 +1,16 @@
+kernal/tests/subscriptions-live.test.ts
+  h_69b863911ebf05 74-76,91-95
+kernal/tests/subscriptions.test.ts
+  h_69b863911ebf05 480-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "a4044eb0593fb2bed51ec7f83ca9f9b9eaf9ab24",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

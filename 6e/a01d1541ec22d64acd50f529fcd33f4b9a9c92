@@ -1,0 +1,18 @@
+kernal/.pi/extensions/kernal-context/index.ts
+  h_69b863911ebf05 10,19-20,130-154,207-208,211,226,229,235
+kernal/tests/context.test.ts
+  h_69b863911ebf05 166-232,266
+kernal/tests/harness.ts
+  h_69b863911ebf05 82,101,113-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.7.3",
+  "base_commit_sha": "6ea01d1541ec22d64acd50f529fcd33f4b9a9c92",
+  "prompts": {},
+  "humans": {
+    "h_69b863911ebf05": {
+      "author": "Matthew Monteleone <mgm@augmentcode.com>"
+    }
+  }
+}

@@ -470,7 +470,25 @@ describe("the coordinator uses the Claude runner", () => {
     assert.match(refused.text, /Claude refused to start/);
     assert.match(refused.text, /user settings set env\.ANTHROPIC_API_KEY/);
     assert.match(refused.text, /router subagent/);
-    assert.notEqual(refused.text.trim(), "user settings set env.ANTHROPIC_API_KEY");
+    // Exact equality on the texts the runner really emits for a non-leak refusal. Substring checks
+    // alone let the round-1 bug back in, where every refusal claimed an API key would be billed.
+    for (const text of ["user settings could not be read", "user settings are not valid JSON"]) {
+      const out = subscriptionToolText({ kind: "refused", vendor: "claude", text });
+      assert.equal(out.text, `Claude refused to start: ${text}. Fix that settings file, or use a router subagent for this task.`);
+      assert.doesNotMatch(out.text, /bill an API key/);
+    }
+    // End to end: the real worker's refusal reaches the model as the tool text.
+    const refusedRun = await executeSubscriptionWorker({ prompt: "x" }, {
+      run: async (_vendor, input) => runClaudeWorker({ prompt: input.prompt, cwd: input.cwd }, {
+        mode: () => "full" as const,
+        secret: { ok: true, value: "secret" },
+        home: "/tmp/kernal-refusal-home",
+        readSettingsFile: () => { throw new Error("unreadable"); },
+      } as any),
+    });
+    assert.equal(refusedRun.isError, true);
+    assert.match(refusedRun.text, /Claude refused to start: user settings could not be read/);
+    assert.doesNotMatch(refusedRun.text, /bill an API key/);
     const calls: string[] = [];
     const ran = await executeSubscriptionWorker({ prompt: "  edit it  ", memoryBrief: "brief" }, {
       cwd: "/work",

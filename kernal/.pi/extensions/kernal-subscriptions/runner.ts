@@ -115,9 +115,16 @@ export function claudeMcpServers(servers: Record<string, unknown> | undefined): 
  * its tools work headless (a Read of a file in the cwd returned the file's contents). It is not a
  * proof for every version, so `tests/subscriptions-live.test.ts` pins the semantics with a canary.
  *
- * Not exhaustive: managed/policy settings rank above `--settings`, and `claudeChildEnv` strips only
- * `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so a Bedrock/Vertex variable in the parent process
- * still passes through. Both predate this override and neither is covered by the guard.
+ * Deliberately not exhaustive, and the guard is narrower than "no API key can be billed":
+ * - managed/policy settings rank above `--settings`;
+ * - `claudeChildEnv` strips only `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so an
+ *   `ANTHROPIC_BASE_URL` in the parent process still reaches the child;
+ * - a settings-file `env` naming a third-party provider (`CLAUDE_CODE_USE_BEDROCK`,
+ *   `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_FOUNDRY_*`, or `awsAuthRefresh`/`awsCredentialExport`) is
+ *   not refused either. Those are legitimate setups for some people, so they are left alone rather
+ *   than refused; what the guard actually enforces is that this child cannot silently pick up an
+ *   Anthropic API key in place of the plan.
+ * All three predate the `apiKeyHelper` override.
  */
 export const NO_API_KEY_HELPER = JSON.stringify({ apiKeyHelper: "" });
 

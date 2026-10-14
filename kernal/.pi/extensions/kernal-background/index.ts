@@ -18,6 +18,7 @@
  * turn. Every job is stopped when the session ends or pi exits.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { BACKGROUND_COUNT_EVENT } from "../kernal-warp/lib.ts";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { JobManager, MAX_TIMEOUT_SECONDS, describeJob, type Job, type JobKind } from "./jobs.ts";
@@ -106,6 +107,9 @@ export default function (pi: ExtensionAPI) {
   const refreshStatus = () => {
     const n = manager?.list().filter((j) => j.status === "running").length ?? 0;
     try { statusCtx?.ui?.setStatus?.("kernal-background", n > 0 ? `${n} background job${n === 1 ? "" : "s"}` : undefined); } catch { /* no UI */ }
+    // Warp keeps the tab "working" for these; a server runs until stopped, so only batch jobs count.
+    const batches = manager?.list().filter((j) => j.status === "running" && j.kind === "batch").length ?? 0;
+    pi.events?.emit?.(BACKGROUND_COUNT_EVENT, batches);
   };
 
   const jobs = (): JobManager => {

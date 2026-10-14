@@ -2,7 +2,8 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { makePi, makeCtx } from "./harness.ts";
-import { BACKGROUND_COUNT_EVENT, clip, emitWarp, warpSequence, warpSupported } from "../.pi/extensions/kernal-warp/lib.ts";
+import { _resetTmuxCheck, clip, emitWarp, tmuxClientIsWarp, warpSequence, warpSupported } from "../.pi/extensions/kernal-warp/lib.ts";
+import { BACKGROUND_COUNT_EVENT } from "../.pi/extensions/kernal-background/jobs.ts";
 import mod from "../.pi/extensions/kernal-warp/index.ts";
 import background from "../.pi/extensions/kernal-background/index.ts";
 
@@ -46,6 +47,35 @@ describe("warp escape sequence", () => {
     assert.equal(out.text, "");
     emitWarp("stop", {}, WARP, out);
     assert.equal(events(out.text).length, 1);
+  });
+
+  test("escapes C1 controls, which Warp would read as the end of the sequence", () => {
+    const seq = warpSequence("prompt_submit", { query: "a\u009cb\u009dc" }, {});
+    assert.doesNotMatch(seq, /[\u0080-\u009f]/);
+    assert.equal(events(seq)[0].query, "a\u009cb\u009dc");
+  });
+
+  test("inside tmux, writes only while the attached terminal is Warp", () => {
+    const out = { isTTY: true, text: "", write(s: string) { this.text += s; } };
+    const tmux = { ...WARP, TMUX: "/tmp/tmux-501/default,1,0" };
+    emitWarp("stop", {}, tmux, out, () => false);
+    assert.equal(out.text, "");
+    emitWarp("stop", {}, tmux, out, () => true);
+    assert.ok(out.text.startsWith("\x1bPtmux;"));
+  });
+
+  test("the tmux check reads client_termtype, and is cached for 10 s", () => {
+    _resetTmuxCheck();
+    let calls = 0;
+    const answer = (s: string) => () => { calls++; return s; };
+    assert.equal(tmuxClientIsWarp(answer("Warp(v0.2026.10.08.08.08.stable_01)\n"), 1_000), true);
+    assert.equal(tmuxClientIsWarp(answer("ghostty 1.2.0"), 5_000), true, "still cached");
+    assert.equal(calls, 1);
+    assert.equal(tmuxClientIsWarp(answer("ghostty 1.2.0"), 12_000), false, "re-checked after 10 s");
+    _resetTmuxCheck();
+    assert.equal(tmuxClientIsWarp(() => { throw new Error("tmux 3.2: unknown format"); }, 0), false);
+    assert.equal(tmuxClientIsWarp(answer(""), 20_000), false);
+    _resetTmuxCheck();
   });
 
   test("clips whitespace and never splits a surrogate pair", () => {
@@ -147,23 +177,39 @@ describe("kernal-warp extension", () => {
     assert.equal(got[3].response, "Interrupted");
   });
 
-  test("a dialog during a run is a block; one while idle is not", async () => {
+  test("an approval or a tool's dialog during a run is a block; the person's own dialogs are not", async () => {
     const pi = load();
     const ctx = makeCtx();
-    // /connect while idle: the person is driving.
-    await pi.emit("ui_prompt_start", { kind: "select", title: "Connect to" }, ctx);
-    await pi.emit("ui_prompt_end", { kind: "select" }, ctx);
+    const dialog = async (kind: string, title: string) => {
+      await pi.emit("ui_prompt_start", { kind, title }, ctx);
+      await pi.emit("ui_prompt_end", { kind }, ctx);
+    };
+    await dialog("select", "Connect to");   // /connect while idle
     assert.deepEqual(names(), []);
 
     await pi.emit("agent_start", {}, ctx);
-    await pi.emit("ui_prompt_start", { kind: "confirm", title: "Allow this write?" }, ctx);
-    await pi.emit("ui_prompt_end", { kind: "confirm" }, ctx);
-    await pi.emit("ui_prompt_start", { kind: "select", title: "Include the transcript?" }, ctx);
-    await pi.emit("ui_prompt_end", { kind: "select" }, ctx);
+    await dialog("confirm", "Allow this write?");
+    await dialog("custom", "Voice");   // the voice overlay, opened by the person mid-run
+    await pi.emit("tool_execution_start", { toolName: "ask" }, ctx);
+    await dialog("select", "Which branch?");
+    await pi.emit("tool_execution_end", { toolName: "ask" }, ctx);
+    await dialog("select", "Steer");   // after the tool: the person again
     const got = events(written);
-    assert.deepEqual(names(), ["prompt_submit", "permission_request", "permission_replied", "question_asked", "permission_replied"]);
+    assert.deepEqual(names(), ["prompt_submit", "permission_request", "permission_replied", "question_asked", "permission_replied", "tool_complete"]);
     assert.equal(got[1].summary, "Allow this write?");
-    assert.equal(got[3].summary, "Include the transcript?");
+    assert.equal(got[3].summary, "Which branch?");
+  });
+
+  test("a settle with no run behind it (failed before the agent started) reports nothing", async () => {
+    const pi = load();
+    const ctx = makeCtx();
+    await pi.emit("before_agent_start", { prompt: "first" }, ctx);
+    await pi.emit("agent_start", {}, ctx);
+    await pi.emit("agent_end", reply("First answer."), ctx);
+    await pi.emit("agent_settled", {}, ctx);
+    await pi.emit("before_agent_start", { prompt: "second" }, ctx);
+    await pi.emit("agent_settled", {}, ctx);   // no API key: pi settles without starting
+    assert.deepEqual(names(), ["prompt_submit", "stop"]);
   });
 
   test("a dialog still open when the run settles sends no late reply", async () => {

@@ -18,10 +18,9 @@
  * turn. Every job is stopped when the session ends or pi exits.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BACKGROUND_COUNT_EVENT } from "../kernal-warp/lib.ts";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
-import { JobManager, MAX_TIMEOUT_SECONDS, describeJob, type Job, type JobKind } from "./jobs.ts";
+import { BACKGROUND_COUNT_EVENT, JobManager, MAX_TIMEOUT_SECONDS, describeJob, type Job, type JobKind } from "./jobs.ts";
 import {
   PreviewError, closeDrivePreview, desktopPreview, driveEndpoint, driveHasIde, drivePreview, explainPreviewError, inDrive,
   requestDriveIde, validPort,

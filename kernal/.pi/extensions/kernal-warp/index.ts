@@ -3,21 +3,12 @@
  * blocked while a dialog waits for an answer during that run, and done or failed once pi has
  * settled. Outside Warp the extension registers nothing.
  */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BACKGROUND_COUNT_EVENT, clip, emitWarp, warpSupported } from "./lib.ts";
-
-const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
-
-function kernalVersion(): string {
-  try {
-    return readFileSync(join(dirname(agentDir()), "VERSION"), "utf8").split("\n")[0].trim() || "source";
-  } catch {
-    return "source";
-  }
-}
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { kernalVersion } from "../_shared/version.ts";
+import { BACKGROUND_COUNT_EVENT } from "../kernal-background/jobs.ts";
+import { clip, emitWarp, warpSupported } from "./lib.ts";
 
 type Message = { role?: string; content?: unknown; stopReason?: string; errorMessage?: string };
 
@@ -34,6 +25,7 @@ export default function (pi: ExtensionAPI) {
   let last: Message | undefined;
   let running = false;
   let blocked = false;
+  let toolsRunning = 0;
   let backgroundJobs = 0;
 
   pi.events?.on?.(BACKGROUND_COUNT_EVENT, (n: unknown) => { backgroundJobs = typeof n === "number" ? n : 0; });
@@ -43,7 +35,7 @@ export default function (pi: ExtensionAPI) {
       session_id: ctx?.sessionManager?.getSessionId?.(),
       cwd: ctx?.cwd,
       project: ctx?.cwd ? basename(ctx.cwd) : undefined,
-      plugin_version: `kernal ${kernalVersion()}`,
+      plugin_version: `kernal ${kernalVersion(dirname(getAgentDir()))}`,
     });
   }) as any);
 
@@ -58,17 +50,23 @@ export default function (pi: ExtensionAPI) {
     pending = undefined;
     last = undefined;
     running = true;
+    toolsRunning = 0;
     emitWarp("prompt_submit", { query });
   }) as any);
 
+  pi.on("tool_execution_start", (async () => { toolsRunning++; }) as any);
+
   pi.on("tool_execution_end", (async (event: any) => {
+    toolsRunning = Math.max(0, toolsRunning - 1);
     emitWarp("tool_complete", { tool_name: event?.toolName });
   }) as any);
 
   // pi wraps every ctx.ui dialog (any extension's approval, select or input) in these, counting
-  // nested ones. A dialog outside a run (/connect, /admin) is the person driving, not a block.
+  // nested ones. Only an approval (confirm) or a dialog a tool raised is the agent waiting on the
+  // person; a dialog outside a run (/connect) or one the person opened mid-run (the voice
+  // overlay) is the person driving.
   pi.on("ui_prompt_start", (async (event: any) => {
-    if (!running) return;
+    if (!running || (event?.kind !== "confirm" && toolsRunning === 0)) return;
     blocked = true;
     const summary = typeof event?.title === "string" ? clip(event.title, 160) : undefined;
     emitWarp(event?.kind === "confirm" ? "permission_request" : "question_asked", { summary });
@@ -87,9 +85,14 @@ export default function (pi: ExtensionAPI) {
   }) as any);
 
   pi.on("agent_settled", (async () => {
+    const ran = running;
     running = false;
     blocked = false;
     pending = undefined;
+    toolsRunning = 0;
+    // pi settles after every attempt, including one that failed before the agent started (no API
+    // key); that has nothing to report, and `last` would still be the previous run's reply.
+    if (!ran) return;
     if (last?.stopReason === "error") {
       emitWarp("stop_failure", { query, error_type: "error", response: clip(last.errorMessage ?? "The run failed") });
       return;

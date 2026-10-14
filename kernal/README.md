@@ -479,7 +479,7 @@ is not worth a few hundred megabytes for a picture a good text layout beats.
 ## Running in Warp (`kernal-warp`)
 
 Inside [Warp](https://www.warp.dev), Kernal reports its state the way Claude Code and Codex do: the
-tab shows it working, blocked while a dialog waits for you during a run (an approval, a question),
+tab shows it working, blocked while it waits for you during a run (an approval, or a question a tool asks),
 done or failed, and Warp sends a "completed" notification when the window is in the background.
 While batch background jobs are running the tab stays "working", because their end wakes Kernal
 again (a dev server does not count: it runs until stopped).
@@ -489,7 +489,9 @@ Warp only accepts agents it knows, so Kernal reports as **pi** (it runs on pi) a
 name and icon. The events are Warp's `OSC 777 ; notify ; warp://cli-agent` protocol, written only
 when Warp's `WARP_CLI_AGENT_PROTOCOL_VERSION` and `WARP_CLIENT_VERSION` are set and never in a
 Drive. Inside tmux they are sent through tmux passthrough, which tmux drops unless
-`set -g allow-passthrough on` is in your tmux config. The format is in `.pi/extensions/kernal-warp/lib.ts`.
+`set -g allow-passthrough on` is in your tmux config, and only while the attached terminal is Warp
+(tmux 3.3 or later reports it as `#{client_termtype}`): a tmux server started from Warp keeps
+Warp's variables when you attach from another terminal. The format is in `.pi/extensions/kernal-warp/lib.ts`.
 
 Copying a selection in pi's fullscreen mode (`--tui-mode fullscreen`) uses OSC 52, which Warp
 denies by default: set Warp's `terminal.osc52_clipboard_access` to `write_only` to allow it.

@@ -23,6 +23,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
+/** The running batch-job count, emitted on pi.events whenever it may have changed (kernal-warp reads it). */
+export const BACKGROUND_COUNT_EVENT = "kernal-background:running";
+
 export type JobKind = "server" | "batch";
 /** exited: the command exited 0. failed: non-zero or killed by a signal it didn't get from us.
  * timed_out: its deadline passed. killed: the model or the person stopped it. reaped: stopped

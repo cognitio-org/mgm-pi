@@ -5,10 +5,10 @@
  *
  * Built-ins and relative imports only (§4.3).
  */
-import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { reresolve, refreshConfig, webOrigin } from "../_shared/central-config.ts";
+import { kernalVersion } from "../_shared/version.ts";
 import { defaultTargets, discoverLocalModels, serverRoot } from "../_shared/local-discovery.ts";
 import { getAccessToken, loginState, outfitterApi } from "../_shared/outfitter-session.ts";
 import { installNgrok, ngrokProvider, type InstallResult } from "../_shared/tunnel/ngrok.ts";
@@ -90,14 +90,7 @@ function serviceDeps(io: LocalIo): ServiceDeps {
   };
 }
 
-/** VERSION's first line in a release bundle, "source" in a checkout. */
-export function kernalVersion(root: string): string {
-  try {
-    return readFileSync(join(root, "VERSION"), "utf8").split("\n")[0].trim() || "source";
-  } catch {
-    return "source";
-  }
-}
+export { kernalVersion };
 
 const sourceText = (s: string) => (s === "default" ? "the default" : s === "local" ? "this machine's config.local.json" : s);
 

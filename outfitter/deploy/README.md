@@ -3,6 +3,11 @@
 `gcloud` scripts for the GCP side of the control plane (EPIC.md E0.2, E2.7). Every script is
 idempotent and **none of them run on their own** — review, then run by hand in this order.
 
+A plan for running this same fleet on AWS, and for a `HOST_PROVIDER=gcp|aws` seam that leaves
+these scripts in charge until that happens, is
+[`docs/specs/provider-neutral-hosting-plan.md`](../docs/specs/provider-neutral-hosting-plan.md).
+Nothing in that plan is built. Production stays on GCP.
+
 **`env.sh`.** Every script sources `env.sh` right after `set -euo pipefail`. It pins `PROJECT`
 (default `outfitter-509211`), `REGION` (default `us-central1`) and `ACCOUNT` (default
 `mgm@mgms.eu`) and exports them as `CLOUDSDK_CORE_PROJECT` / `CLOUDSDK_CORE_ACCOUNT` /
